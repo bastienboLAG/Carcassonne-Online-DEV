@@ -274,6 +274,11 @@ export function applyPreset(preset) {
     _updateInnsCthdAvailability();
     _updateDragonAvailability();
 
+    // ✅ FIX : recalculer la coche maître globale "all-extensions" après application
+    // d'un preset — elle dépend des 5 sous-coches maîtres, pas d'un data-group direct,
+    // donc _updateMasterCheckboxSafe('all-extensions') ci-dessus est un no-op silencieux.
+    _updateAllExtensionsMaster();
+
     saveLobbyOptions();
 }
 
@@ -428,6 +433,14 @@ function loadLobbyOptions() {
     document.querySelectorAll('.ext-master').forEach(master => {
         if (master.id) _updateMasterCheckboxSafe(master.id);
     });
+    // ✅ FIX BUG : "all-extensions" n'a pas de data-group, donc
+    // _updateMasterCheckboxSafe('all-extensions') ci-dessus ne fait rien
+    // (aucun input[data-group="all-extensions"] n'existe dans le HTML).
+    // Il faut appeler explicitement _updateAllExtensionsMaster(), qui
+    // dérive son état des 5 sous-coches maîtres (all-base, all-abbot, ...).
+    // Sans cet appel, un refresh de page avec toutes les extensions actives
+    // laissait la coche maître globale décochée à tort.
+    _updateAllExtensionsMaster();
 }
 
 export function updateMasterCheckboxes() {
@@ -511,6 +524,9 @@ export function initLobbyOptions({ getIsHost, getInLobby, multiplayer }) {
     });
 
     MASTER_IDS.forEach(_updateMasterCheckboxSafe);
+    // ✅ FIX : même raison que dans loadLobbyOptions() — "all-extensions" doit être
+    // recalculée explicitement, _updateMasterCheckboxSafe ne peut pas le faire seule.
+    _updateAllExtensionsMaster();
 
     // Sauvegarde auto à chaque changement
     document.querySelectorAll(
