@@ -206,7 +206,7 @@ export class MeepleCursorsUI {
                         // Zone vide : cochon/bâtisseur ne peuvent pas être posés seuls
                         // L'abbé peut être posé seul sur abbey
                         const canPlaceAlone = hasMeeples || hasLarge ||
-                            (zoneType === 'abbey' && hasAbbot);
+                            ((zoneType === 'abbey' || zoneType === 'garden') && hasAbbot);
                         if (!canPlaceAlone) return;
                     }
                 } else {
