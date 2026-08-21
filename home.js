@@ -207,6 +207,26 @@ eventBus.on('tile-drawn', (data) => {
     tuilePosee           = false;
     updateTurnDisplay(); // corriger l'état du bouton dès la réception de la tuile
 
+    // ── Extension Dragon : tuile dragon piochée sans volcan sur le plateau ──
+    // Cette tuile ne peut légalement pas être posée (règle spéciale hors du
+    // check géométrique de Board.canPlaceTile), et une modale d'alerte va
+    // s'afficher pour forcer sa repioche. Tant que cette situation n'est pas
+    // résolue (le joueur a effectivement repioché une nouvelle tuile valide),
+    // on bloque les slots de placement en lecture seule — sinon les pointillés
+    // dorés restent affichés et cliquables, permettant de poser la tuile
+    // dragon prématurément (bug). Ce check s'exécute pour l'hôte ET l'invité,
+    // car 'tile-drawn' est émis des deux côtés à la réception de la tuile.
+    // Le flag se remet automatiquement à false au prochain tile-drawn si la
+    // nouvelle tuile ne pose plus problème (repioche effectuée).
+    if (slotsUI) {
+        const _isDragonPrematureTile = !!(
+            gameConfig?.tileGroups?.dragon && gameConfig?.extensions?.dragon &&
+            tileHasDragonZone(tuileEnMain) &&
+            !Object.values(plateau.placedTiles ?? {}).some(t => tileHasVolcanoZone(t))
+        );
+        slotsUI.setBlocked(_isDragonPrematureTile);
+    }
+
     // Mettre à jour isRiverPhase : true si la tuile courante est une tuile river
     if (slotsUI) slotsUI.isRiverPhase = tuileEnMain.id.startsWith('river-');
 

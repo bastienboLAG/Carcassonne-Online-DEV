@@ -8,6 +8,11 @@ import { Tile } from '../Tile.js';
  * si une tuile est vraiment en main CE tour-ci.
  * Cela évite que le refresh déclenché par turn-changed affiche des slots
  * alors que le joueur inactif n'a pas de tuile à poser.
+ *
+ * Fix (tuile dragon prématurée) : `this.isBlocked` permet de forcer les
+ * slots en lecture seule (contour gris, non cliquables) même si c'est le
+ * tour du joueur, le temps que la modale "tuile implaçable" (dragon sans
+ * volcan) soit résolue. Positionné depuis l'extérieur via setBlocked().
  */
 export class SlotsUI {
     constructor(plateau, gameSync, eventBus, getTileEnMain) {
@@ -25,6 +30,11 @@ export class SlotsUI {
         // ✅ Flag interne : une tuile est-elle disponible pour CE joueur CE tour ?
         // Mis à true par tile-drawn, remis à false par tile-placed.
         this.tileAvailable = false;
+
+        // ✅ Flag interne : les slots doivent-ils être forcés en lecture seule,
+        // indépendamment du tour du joueur ? (ex: tuile dragon sans volcan en
+        // attente de confirmation via la modale implaçable)
+        this.isBlocked = false;
 
         // Binder pour que off() retrouve la même référence
         this._onTileDrawn   = this.onTileDrawn.bind(this);
@@ -44,6 +54,32 @@ export class SlotsUI {
 
     setSlotClickHandler(callback) {
         this.onSlotClick = callback;
+    }
+
+    /**
+     * Force (ou lève) le mode lecture seule des slots, indépendamment du tour.
+     * Utilisé pour bloquer le placement pendant qu'une tuile dragon posée
+     * sans volcan sur le plateau attend confirmation (modale implaçable).
+     * Patch immédiatement les slots déjà affichés, et la condition est
+     * aussi respectée par toute régénération future (generateSlotsAround /
+     * createCentralSlot) tant que le flag reste actif.
+     */
+    setBlocked(blocked) {
+        if (this.isBlocked === blocked) return;
+        this.isBlocked = blocked;
+        console.log('🚫 SlotsUI.setBlocked —', blocked);
+
+        document.querySelectorAll('.slot').forEach(slot => {
+            if (!this.isMyTurn || this.isBlocked) {
+                slot.classList.add('slot-readonly');
+                slot.style.cursor        = 'default';
+                slot.style.pointerEvents = 'none';
+            } else {
+                slot.classList.remove('slot-readonly');
+                slot.style.cursor        = 'pointer';
+                slot.style.pointerEvents = 'auto';
+            }
+        });
     }
 
     // ─── Handlers événements ─────────────────────────────────────────────────
@@ -82,7 +118,7 @@ export class SlotsUI {
 
         // Sinon on met à jour le mode (readonly/actif) des slots existants
         document.querySelectorAll('.slot').forEach(slot => {
-            if (!this.isMyTurn) {
+            if (!this.isMyTurn || this.isBlocked) {
                 slot.classList.add('slot-readonly');
                 slot.style.cursor        = 'default';
                 slot.style.pointerEvents = 'none';
@@ -118,7 +154,7 @@ export class SlotsUI {
         slot.style.gridColumn = 50;
         slot.style.gridRow    = 50;
 
-        if (!this.isMyTurn) {
+        if (!this.isMyTurn || this.isBlocked) {
             slot.classList.add('slot-readonly');
             slot.style.cursor        = 'default';
             slot.style.pointerEvents = 'none';
@@ -170,7 +206,7 @@ export class SlotsUI {
             slot.style.gridColumn = nx;
             slot.style.gridRow    = ny;
 
-            if (!this.isMyTurn) {
+            if (!this.isMyTurn || this.isBlocked) {
                 slot.classList.add('slot-readonly');
                 slot.style.cursor        = 'default';
                 slot.style.pointerEvents = 'none';
