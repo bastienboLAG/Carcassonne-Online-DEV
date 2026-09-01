@@ -269,7 +269,7 @@ export class ScorePanelUI {
         }
 
         // ✨ NOUVEAU : construit un chip icône + "×N", grisé si count <= 0
-        const addMeepleChip = (type, imgFile, count) => {
+        const buildMeepleChip = (type, imgFile, count) => {
             const wrap = document.createElement('span');
             wrap.className = 'meeple-chip';
 
@@ -288,40 +288,47 @@ export class ScorePanelUI {
             countEl.textContent = `×${count}`;
             wrap.appendChild(countEl);
 
-            container.appendChild(wrap);
+            return wrap;
         };
 
-        // Meeple normal — compteur variable (0 à 7)
-        addMeepleChip('Normal', 'Normal.png', player.meeples);
+        // ✨ NOUVEAU — Ligne 1 : meeples classiques + spéciaux (séparés par une barre)
+        // (Emplacement réservé pour une future ligne "structures" entre celle-ci et les marchandises)
+        const meeplesRow = document.createElement('div');
+        meeplesRow.className = 'meeples-row';
 
-        // Abbé — objet unique, ×1 ou ×0
+        meeplesRow.appendChild(buildMeepleChip('Normal', 'Normal.png', player.meeples));
         if (this.config?.extensions?.abbot) {
-            addMeepleChip('Abbot', 'Abbot.png', player.hasAbbot ? 1 : 0);
+            meeplesRow.appendChild(buildMeepleChip('Abbot', 'Abbot.png', player.hasAbbot ? 1 : 0));
         }
-
-        // Grand meeple — objet unique, ×1 ou ×0
         if (this.config?.extensions?.largeMeeple) {
-            addMeepleChip('Large', 'Large.png', player.hasLargeMeeple ? 1 : 0);
+            meeplesRow.appendChild(buildMeepleChip('Large', 'Large.png', player.hasLargeMeeple ? 1 : 0));
         }
 
-        // Bâtisseur — objet unique, ×1 ou ×0
+        // Pions spéciaux (bâtisseur, cochon) — séparés visuellement des meeples classiques
+        const specialChips = [];
         if (this.config?.extensions?.tradersBuilders) {
-            addMeepleChip('Builder', 'Builder.png', player.hasBuilder ? 1 : 0);
+            specialChips.push(buildMeepleChip('Builder', 'Builder.png', player.hasBuilder ? 1 : 0));
         }
-
-        // Cochon — objet unique, ×1 ou ×0
         if (this.config?.extensions?.pig) {
-            addMeepleChip('Pig', 'Pig.png', player.hasPig ? 1 : 0);
+            specialChips.push(buildMeepleChip('Pig', 'Pig.png', player.hasPig ? 1 : 0));
+        }
+        if (specialChips.length > 0) {
+            const divider = document.createElement('span');
+            divider.style.cssText = 'width:1px;align-self:stretch;background:rgba(255,255,255,0.2);margin:0 2px;';
+            meeplesRow.appendChild(divider);
+            specialChips.forEach(chip => meeplesRow.appendChild(chip));
         }
 
-        // Jetons marchandises (PC + mobile) — déjà icône + compteur, inchangé
+        container.appendChild(meeplesRow);
+
+        // ✨ NOUVEAU — Ligne 2 : marchandises, sur sa propre ligne (plus de séparateur inline)
+        // (Emplacement réservé pour une future ligne "prison + tuile bonus" en dessous)
         if (!isSpectator && this.config?.extensions?.merchants) {
             const goods     = player.goods || { cloth: 0, wheat: 0, wine: 0 };
             const goodsSize = getGoodsSize(context === 'panel' ? 'panel' : 'panelMobile');
 
-            const separator = document.createElement('span');
-            separator.style.cssText = 'display:inline-block;width:1px;background:rgba(255,255,255,0.2);height:20px;margin:0 6px;vertical-align:middle;align-self:center;';
-            container.appendChild(separator);
+            const goodsRow = document.createElement('div');
+            goodsRow.className = 'goods-row';
 
             [
                 { key: 'cloth', src: './assets/Misc/C2/Cloth.png', alt: 'Tissu' },
@@ -344,8 +351,10 @@ export class ScorePanelUI {
                 count.style.cssText = 'color:white;font-size:11px;font-weight:bold;min-width:10px;';
                 wrap.appendChild(count);
 
-                container.appendChild(wrap);
+                goodsRow.appendChild(wrap);
             });
+
+            container.appendChild(goodsRow);
         }
     }
 

@@ -987,9 +987,17 @@ h3 .ext-master {
 
 .player-meeples-display {
     display: flex;
-    align-items: flex-end;
-    gap: 5px;
+    flex-direction: column; /* ✨ NOUVEAU : empile les lignes (meeples+spéciaux / marchandises) au lieu d'une seule ligne */
+    gap: 4px;
+}
+
+/* ✨ NOUVEAU : une "ligne" de groupe (meeples+spéciaux, ou marchandises) — flex-wrap à l'intérieur d'elle-même */
+.meeples-row,
+.goods-row {
+    display: flex;
     flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
 }
 
 .player-meeples-display img {
@@ -1264,10 +1272,15 @@ h3 .ext-master {
         box-shadow: 0 0 8px rgba(200, 50, 0, 0.5);
     }
 
-    /* ✨ NOUVEAU : carte dont le détail est actuellement ouvert */
+    /* ✨ NOUVEAU : carte dont le détail est actuellement ouvert.
+       ⚠️ Ne touche PAS border-color/background : ces propriétés sont réservées
+       à l'indicateur de tour (vert=normal, gold=bonus, rouge=dragon) et ne
+       doivent jamais être écrasées par l'état d'ouverture du panel. On utilise
+       outline (propriété distincte) pour ne rien entrer en conflit. */
     .mobile-player-card.open {
-        border-color: gold;
         opacity: 1;
+        outline: 2px solid rgba(255,255,255,0.55);
+        outline-offset: 2px;
     }
 
     .mobile-player-name {
@@ -1300,9 +1313,8 @@ h3 .ext-master {
 
     .mobile-player-meeples {
         display: flex;
-        flex-wrap: wrap;
-        align-items: flex-end;
-        gap: 2px;
+        flex-direction: column; /* ✨ NOUVEAU : empile les lignes au lieu d'une seule ligne */
+        gap: 3px;
         margin-top: 2px;
     }
 
