@@ -1002,6 +1002,18 @@ h3 .ext-master {
     filter: grayscale(100%) brightness(3);
 }
 
+/* ✨ NOUVEAU : chip icône + compteur "×N" — remplace la répétition d'icônes par exemplaire */
+.meeple-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+.meeple-chip-count {
+    font-size: 11px;
+    font-weight: bold;
+    color: #ecf0f1;
+}
+
 /* Les 3 boutons principaux ont la même largeur */
 #end-turn-btn, #undo-btn {
     width: 100%;
@@ -1206,7 +1218,7 @@ h3 .ext-master {
 
     #mobile-players-scores {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap; /* ✅ FIX : garantit une seule ligne quel que soit le nombre de joueurs (au lieu de wrap qui repassait sur 2 lignes) */
         gap: 6px;
         width: 100%;
     }
@@ -1219,12 +1231,13 @@ h3 .ext-master {
         background: rgba(0,0,0,0.3);
         border: 2px solid rgba(255,255,255,0.1);
         border-radius: 8px;
-        padding: 4px 8px;
-        min-width: 80px;
-        flex: 1;
+        padding: 4px 6px;
+        min-width: 0;   /* ✅ FIX : plus de largeur minimale fixe, autorise le rétrécissement pour tenir sur une ligne */
+        flex: 1 1 0;    /* ✅ FIX : répartition égale et rétrécissable (au lieu de flex:1 avec min-width:80px) */
         transition: all 0.2s;
         opacity: 0.7;
         transform: scale(0.95);
+        cursor: pointer; /* ✨ NOUVEAU : la carte est cliquable pour ouvrir/fermer le détail */
     }
 
     .mobile-player-card.active {
@@ -1251,6 +1264,12 @@ h3 .ext-master {
         box-shadow: 0 0 8px rgba(200, 50, 0, 0.5);
     }
 
+    /* ✨ NOUVEAU : carte dont le détail est actuellement ouvert */
+    .mobile-player-card.open {
+        border-color: gold;
+        opacity: 1;
+    }
+
     .mobile-player-name {
         font-size: 11px;
         font-weight: bold;
@@ -1258,13 +1277,25 @@ h3 .ext-master {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 80px;
+        max-width: 100%; /* ✅ FIX : suit désormais la largeur réelle (rétrécissable) de la carte plutôt qu'une valeur fixe de 80px */
     }
 
     .mobile-player-score {
         font-size: 14px;
         font-weight: bold;
         color: gold;
+    }
+
+    /* ✨ NOUVEAU : chevron indiquant l'état ouvert/fermé du détail */
+    .mobile-player-chevron {
+        font-size: 9px;
+        color: rgba(255,255,255,0.5);
+        margin-top: 2px;
+        transition: transform 0.15s;
+        line-height: 1;
+    }
+    .mobile-player-card.open .mobile-player-chevron {
+        transform: rotate(180deg);
     }
 
     .mobile-player-meeples {
@@ -1282,6 +1313,48 @@ h3 .ext-master {
     .mobile-player-meeples img.unavailable {
         opacity: 0.2;
         filter: grayscale(100%) brightness(3);
+    }
+
+    /* ✨ NOUVEAU : chip icône + compteur en contexte mobile (même logique que PC) */
+    .mobile-player-meeples .meeple-chip-count {
+        font-size: 10px;
+    }
+
+    /* ✨ NOUVEAU : panel détaillé d'un joueur — détaché de la barre, centré, un seul ouvert à la fois */
+    #mobile-player-detail {
+        display: flex;
+        justify-content: center;
+        position: fixed;
+        top: 56px; /* sous la barre de cartes */
+        left: 0;
+        right: 0;
+        z-index: 49;
+        padding: 0 10px;
+        pointer-events: none; /* laisse passer les clics sauf sur le contenu de la carte */
+    }
+    #mobile-player-detail:empty {
+        display: none;
+    }
+    .mobile-player-detail-card {
+        pointer-events: auto;
+        background: rgba(30, 45, 60, 0.95);
+        border: 1px solid rgba(255,255,255,0.15);
+        border-radius: 10px;
+        padding: 8px 12px 10px;
+        max-width: 320px;
+        width: 100%;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    }
+    .mobile-player-detail-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: bold;
+        color: white;
+        margin-bottom: 6px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
     }
 
     /* ── Plateau prend tout l'espace restant ───────────── */

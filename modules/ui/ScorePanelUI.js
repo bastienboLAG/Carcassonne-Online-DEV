@@ -5,6 +5,12 @@ import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
  *
  * Toute la logique de rendu des meeples est centralisée dans
  * _buildMeeplesDisplay(), appelée par les deux rendus (PC et mobile).
+ *
+ * ✨ NOUVEAU : sur mobile, la barre de cartes reste toujours visible et fermée
+ * (nom + score + chevron). Un clic sur une carte ouvre son détail (meeples +
+ * marchandises) dans un conteneur séparé (#mobile-player-detail), centré,
+ * un seul joueur ouvert à la fois (accordéon — cohérent avec l'espace limité).
+ * Le panel PC (#players-scores) n'est pas concerné, il reste toujours déplié.
  */
 export class ScorePanelUI {
     constructor(eventBus, gameState, config = {}) {
@@ -20,6 +26,9 @@ export class ScorePanelUI {
 
         this._isBonusTurn  = false;
         this._isDragonTurn = false;
+
+        // ✨ NOUVEAU : id du joueur dont le détail mobile est actuellement ouvert (un seul à la fois)
+        this._mobileOpenPlayerId = null;
     }
 
     onScoreUpdated() { this.update(this._isBonusTurn, this._isDragonTurn); }
@@ -126,7 +135,7 @@ export class ScorePanelUI {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Rendu mobile
+    // Rendu mobile — carte fermée (nom + score + chevron) + détail séparé
     // ─────────────────────────────────────────────────────────────
 
     _updateMobile(isBonusTurn, isDragonTurn = false) {
@@ -154,10 +163,11 @@ export class ScorePanelUI {
                 ? player.id === dragonMoverM.id
                 : currentPlayer && player.id === currentPlayer.id;
             const isGhost  = player.disconnected || player.kicked;
+            const isOpen   = this._mobileOpenPlayerId === player.id; // ✨ NOUVEAU
 
             const activeClass = isDragonTurn ? ' active active-dragon' : isBonusTurn ? ' active active-bonus' : ' active';
             const card = document.createElement('div');
-            card.className = 'mobile-player-card' + (isActive ? activeClass : '');
+            card.className = 'mobile-player-card' + (isActive ? activeClass : '') + (isOpen ? ' open' : ''); // ✨ NOUVEAU : classe open
             if (isGhost) card.style.opacity = '0.45';
             card.dataset.playerId = player.id;
 
@@ -173,18 +183,71 @@ export class ScorePanelUI {
                 card.appendChild(score);
             }
 
-            const meeplesDiv = document.createElement('div');
-            meeplesDiv.className = 'mobile-player-meeples';
-            this._buildMeeplesDisplay(meeplesDiv, player, 'panelMobile');
+            // ✨ NOUVEAU : chevron — la carte ne montre plus les meeples en ligne,
+            // il faut l'ouvrir pour voir le détail (ci-dessous)
+            const chevron = document.createElement('div');
+            chevron.className   = 'mobile-player-chevron';
+            chevron.textContent = '▼';
+            card.appendChild(chevron);
 
-            card.appendChild(meeplesDiv);
+            // ✨ NOUVEAU : clic = ouvrir/fermer le détail de ce joueur (un seul à la fois)
+            card.onclick = () => {
+                this._mobileOpenPlayerId = isOpen ? null : player.id;
+                this._updateMobile(this._isBonusTurn, this._isDragonTurn);
+            };
+
             container.appendChild(card);
         });
+
+        this._renderMobileDetail(); // ✨ NOUVEAU
+    }
+
+    /**
+     * ✨ NOUVEAU : affiche le détail (meeples + marchandises) du joueur actuellement ouvert
+     * dans le conteneur séparé #mobile-player-detail, centré sous la barre de cartes.
+     */
+    _renderMobileDetail() {
+        const container = document.getElementById('mobile-player-detail');
+        if (!container) return;
+        container.innerHTML = '';
+
+        if (!this._mobileOpenPlayerId || !this.gameState) return;
+
+        const player = this.gameState.players.find(p => p.id === this._mobileOpenPlayerId);
+        if (!player) { this._mobileOpenPlayerId = null; return; } // joueur parti/déconnecté
+
+        const card = document.createElement('div');
+        card.className = 'mobile-player-detail-card';
+
+        const header = document.createElement('div');
+        header.className = 'mobile-player-detail-header';
+        if (player.color !== 'spectator') {
+            const dot = document.createElement('span');
+            dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${player.color};flex-shrink:0;`;
+            header.appendChild(dot);
+        }
+        const name = document.createElement('span');
+        name.textContent = (player.kicked ? '🚪 ' : '') + player.name;
+        header.appendChild(name);
+        card.appendChild(header);
+
+        const meeplesDisplay = document.createElement('div');
+        meeplesDisplay.className = 'mobile-player-meeples';
+        this._buildMeeplesDisplay(meeplesDisplay, player, 'panelMobile');
+        card.appendChild(meeplesDisplay);
+
+        container.appendChild(card);
     }
 
     // ─────────────────────────────────────────────────────────────
     // Méthode partagée : construit les meeples dans un container
     // context : 'panel' (PC) | 'panelMobile' (mobile)
+    //
+    // ✨ NOUVEAU : icône unique + compteur "×N" pour chaque type de meeple,
+    // au lieu de répéter une icône par exemplaire (7 icônes normal meeple,
+    // ou une icône par exemplaire pour abbé/grand meeple/bâtisseur/cochon).
+    // Grisée (classe .unavailable) quand le compteur est à 0.
+    // Appliqué de façon identique PC et mobile.
     // ─────────────────────────────────────────────────────────────
 
     _buildMeeplesDisplay(container, player, context) {
@@ -205,64 +268,53 @@ export class ScorePanelUI {
             return;
         }
 
-        const applySize = (el, type) => {
+        // ✨ NOUVEAU : construit un chip icône + "×N", grisé si count <= 0
+        const addMeepleChip = (type, imgFile, count) => {
+            const wrap = document.createElement('span');
+            wrap.className = 'meeple-chip';
+
+            const img = document.createElement('img');
+            img.src = `./assets/Meeples/${colorCap}/${imgFile}`;
+            img.alt = type;
             const { width, height } = getMeepleSize(type, context);
-            el.style.width     = width;
-            el.style.height    = height;
-            el.style.objectFit = 'contain';
+            img.style.width     = width;
+            img.style.height    = height;
+            img.style.objectFit = 'contain';
+            if (count <= 0) img.classList.add('unavailable');
+            wrap.appendChild(img);
+
+            const countEl = document.createElement('span');
+            countEl.className   = 'meeple-chip-count';
+            countEl.textContent = `×${count}`;
+            wrap.appendChild(countEl);
+
+            container.appendChild(wrap);
         };
 
-        // 7 meeples normaux
-        for (let i = 0; i < 7; i++) {
-            const img = document.createElement('img');
-            img.src = `./assets/Meeples/${colorCap}/Normal.png`;
-            img.alt = 'Meeple';
-            applySize(img, 'Normal');
-            if (i >= player.meeples) img.classList.add('unavailable');
-            container.appendChild(img);
+        // Meeple normal — compteur variable (0 à 7)
+        addMeepleChip('Normal', 'Normal.png', player.meeples);
+
+        // Abbé — objet unique, ×1 ou ×0
+        if (this.config?.extensions?.abbot) {
+            addMeepleChip('Abbot', 'Abbot.png', player.hasAbbot ? 1 : 0);
         }
 
-        // Abbé
-        if (!isSpectator && this.config?.extensions?.abbot) {
-            const img = document.createElement('img');
-            img.src = `./assets/Meeples/${colorCap}/Abbot.png`;
-            img.alt = 'Abbé';
-            applySize(img, 'Abbot');
-            if (!player.hasAbbot) img.classList.add('unavailable');
-            container.appendChild(img);
+        // Grand meeple — objet unique, ×1 ou ×0
+        if (this.config?.extensions?.largeMeeple) {
+            addMeepleChip('Large', 'Large.png', player.hasLargeMeeple ? 1 : 0);
         }
 
-        // Grand meeple
-        if (!isSpectator && this.config?.extensions?.largeMeeple) {
-            const img = document.createElement('img');
-            img.src = `./assets/Meeples/${colorCap}/Large.png`;
-            img.alt = 'Grand Meeple';
-            applySize(img, 'Large');
-            if (!player.hasLargeMeeple) img.classList.add('unavailable');
-            container.appendChild(img);
+        // Bâtisseur — objet unique, ×1 ou ×0
+        if (this.config?.extensions?.tradersBuilders) {
+            addMeepleChip('Builder', 'Builder.png', player.hasBuilder ? 1 : 0);
         }
 
-        // Bâtisseur
-        if (!isSpectator && this.config?.extensions?.tradersBuilders) {
-            const img = document.createElement('img');
-            img.src = `./assets/Meeples/${colorCap}/Builder.png`;
-            img.alt = 'Bâtisseur';
-            applySize(img, 'Builder');
-            if (!player.hasBuilder) img.classList.add('unavailable');
-            container.appendChild(img);
+        // Cochon — objet unique, ×1 ou ×0
+        if (this.config?.extensions?.pig) {
+            addMeepleChip('Pig', 'Pig.png', player.hasPig ? 1 : 0);
         }
 
-        // Cochon
-        if (!isSpectator && this.config?.extensions?.pig) {
-            const img = document.createElement('img');
-            img.src = `./assets/Meeples/${colorCap}/Pig.png`;
-            img.alt = 'Cochon';
-            applySize(img, 'Pig');
-            if (!player.hasPig) img.classList.add('unavailable');
-            container.appendChild(img);
-        }
-
-        // Jetons marchandises (PC + mobile)
+        // Jetons marchandises (PC + mobile) — déjà icône + compteur, inchangé
         if (!isSpectator && this.config?.extensions?.merchants) {
             const goods     = player.goods || { cloth: 0, wheat: 0, wine: 0 };
             const goodsSize = getGoodsSize(context === 'panel' ? 'panel' : 'panelMobile');
@@ -303,6 +355,9 @@ export class ScorePanelUI {
         if (desktopDiv) desktopDiv.innerHTML = '';
         const mobileDiv = document.getElementById('mobile-players-scores');
         if (mobileDiv) mobileDiv.innerHTML = '';
+        const detailDiv = document.getElementById('mobile-player-detail'); // ✨ NOUVEAU
+        if (detailDiv) detailDiv.innerHTML = '';
+        this._mobileOpenPlayerId = null; // ✨ NOUVEAU
 
         this.eventBus.off('score-updated',        this._onScoreUpdated);
         this.eventBus.off('meeple-count-updated', this._onMeepleCountUpdated);
