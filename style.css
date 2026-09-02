@@ -985,6 +985,29 @@ h3 .ext-master {
     color: gold;
 }
 
+/* ✨ NOUVEAU : carte cliquable pour déplier/replier le détail (plusieurs peuvent rester ouvertes sur PC) */
+.player-score-card {
+    cursor: pointer;
+}
+
+/* ✨ NOUVEAU : chevron indicateur d'ouverture */
+.player-score-chevron {
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    margin-left: 4px;
+    transition: transform 0.15s;
+}
+.player-score-card.open .player-score-chevron {
+    transform: rotate(180deg);
+}
+
+/* ⚠️ Ne touche PAS border-color/background : réservés à l'indicateur de tour
+   (vert=normal, gold=bonus, rouge=dragon). L'ouverture utilise outline. */
+.player-score-card.open {
+    outline: 2px solid rgba(255,255,255,0.35);
+    outline-offset: 2px;
+}
+
 .player-meeples-display {
     display: flex;
     flex-direction: column; /* ✨ NOUVEAU : empile les lignes (meeples+spéciaux / marchandises) au lieu d'une seule ligne */
@@ -1284,13 +1307,29 @@ h3 .ext-master {
     }
 
     .mobile-player-name {
+        display: flex; /* ✨ NOUVEAU : accueille l'icône meeple colorée à côté du pseudo */
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        max-width: 100%;
+        overflow: hidden;
+    }
+
+    /* ✨ NOUVEAU : petit meeple normal coloré, identifie le joueur même panel fermé */
+    .mobile-player-color-icon {
+        width: 11px;
+        height: 13px;
+        object-fit: contain;
+        flex-shrink: 0;
+    }
+
+    .mobile-player-name-text {
         font-size: 11px;
         font-weight: bold;
         color: white;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 100%; /* ✅ FIX : suit désormais la largeur réelle (rétrécissable) de la carte plutôt qu'une valeur fixe de 80px */
     }
 
     .mobile-player-score {
@@ -1356,17 +1395,6 @@ h3 .ext-master {
         max-width: 320px;
         width: 100%;
         box-shadow: 0 6px 20px rgba(0,0,0,0.5);
-    }
-    .mobile-player-detail-header {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        font-weight: bold;
-        color: white;
-        margin-bottom: 6px;
-        padding-bottom: 6px;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
     }
 
     /* ── Plateau prend tout l'espace restant ───────────── */

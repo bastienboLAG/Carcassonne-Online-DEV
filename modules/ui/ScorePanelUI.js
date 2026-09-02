@@ -29,6 +29,9 @@ export class ScorePanelUI {
 
         // ✨ NOUVEAU : id du joueur dont le détail mobile est actuellement ouvert (un seul à la fois)
         this._mobileOpenPlayerId = null;
+
+        // ✨ NOUVEAU : ids des joueurs dont le détail PC est actuellement ouvert (plusieurs simultanément)
+        this._desktopOpenPlayerIds = new Set();
     }
 
     onScoreUpdated() { this.update(this._isBonusTurn, this._isDragonTurn); }
@@ -88,6 +91,15 @@ export class ScorePanelUI {
             if (isActive) card.classList.add(isDragonTurn ? 'active-dragon' : isBonusTurn ? 'active-bonus' : 'active');
             if (isGhost)  card.style.opacity = '0.45';
 
+            // ✨ NOUVEAU : état d'ouverture indépendant par joueur (plusieurs cartes peuvent rester ouvertes)
+            const isOpen = this._desktopOpenPlayerIds.has(player.id);
+            if (isOpen) card.classList.add('open');
+            card.onclick = () => {
+                if (isOpen) this._desktopOpenPlayerIds.delete(player.id);
+                else this._desktopOpenPlayerIds.add(player.id);
+                this._updateDesktop(this._isBonusTurn, this._isDragonTurn);
+            };
+
             // En-tête : indicateur tour + nom + score
             const header = document.createElement('div');
             header.className = 'player-score-header';
@@ -122,14 +134,22 @@ export class ScorePanelUI {
                 header.appendChild(points);
             }
 
+            // ✨ NOUVEAU : chevron indicateur d'ouverture
+            const chevron = document.createElement('span');
+            chevron.className   = 'player-score-chevron';
+            chevron.textContent = '▼';
+            header.appendChild(chevron);
+
             card.appendChild(header);
 
-            // Meeples
-            const meeplesDisplay = document.createElement('div');
-            meeplesDisplay.className = 'player-meeples-display';
-            this._buildMeeplesDisplay(meeplesDisplay, player, 'panel');
+            // ✨ NOUVEAU : meeples affichés uniquement si la carte est ouverte
+            if (isOpen) {
+                const meeplesDisplay = document.createElement('div');
+                meeplesDisplay.className = 'player-meeples-display';
+                this._buildMeeplesDisplay(meeplesDisplay, player, 'panel');
+                card.appendChild(meeplesDisplay);
+            }
 
-            card.appendChild(meeplesDisplay);
             container.appendChild(card);
         });
     }
@@ -172,8 +192,20 @@ export class ScorePanelUI {
             card.dataset.playerId = player.id;
 
             const name = document.createElement('div');
-            name.className   = 'mobile-player-name';
-            name.textContent = (player.kicked ? '🚪 ' : '') + player.name;
+            name.className = 'mobile-player-name';
+            // ✨ NOUVEAU : petit meeple normal coloré à côté du pseudo — identifie le joueur même panel fermé
+            if (player.color !== 'spectator') {
+                const colorCap = player.color.charAt(0).toUpperCase() + player.color.slice(1);
+                const colorIcon = document.createElement('img');
+                colorIcon.className = 'mobile-player-color-icon';
+                colorIcon.src = `./assets/Meeples/${colorCap}/Normal.png`;
+                colorIcon.alt = player.color;
+                name.appendChild(colorIcon);
+            }
+            const nameText = document.createElement('span');
+            nameText.className   = 'mobile-player-name-text';
+            nameText.textContent = (player.kicked ? '🚪 ' : '') + player.name;
+            name.appendChild(nameText);
             card.appendChild(name);
 
             if (player.color !== 'spectator') {
@@ -219,18 +251,8 @@ export class ScorePanelUI {
         const card = document.createElement('div');
         card.className = 'mobile-player-detail-card';
 
-        const header = document.createElement('div');
-        header.className = 'mobile-player-detail-header';
-        if (player.color !== 'spectator') {
-            const dot = document.createElement('span');
-            dot.style.cssText = `width:10px;height:10px;border-radius:50%;background:${player.color};flex-shrink:0;`;
-            header.appendChild(dot);
-        }
-        const name = document.createElement('span');
-        name.textContent = (player.kicked ? '🚪 ' : '') + player.name;
-        header.appendChild(name);
-        card.appendChild(header);
-
+        // ✨ NOUVEAU : plus d'en-tête pseudo/pastille ici — déjà visible dans la carte fermée juste au-dessus,
+        // la couleur des meeples affichés suffit à identifier de qui il s'agit.
         const meeplesDisplay = document.createElement('div');
         meeplesDisplay.className = 'mobile-player-meeples';
         this._buildMeeplesDisplay(meeplesDisplay, player, 'panelMobile');
@@ -367,6 +389,7 @@ export class ScorePanelUI {
         const detailDiv = document.getElementById('mobile-player-detail'); // ✨ NOUVEAU
         if (detailDiv) detailDiv.innerHTML = '';
         this._mobileOpenPlayerId = null; // ✨ NOUVEAU
+        this._desktopOpenPlayerIds.clear(); // ✨ NOUVEAU
 
         this.eventBus.off('score-updated',        this._onScoreUpdated);
         this.eventBus.off('meeple-count-updated', this._onMeepleCountUpdated);
