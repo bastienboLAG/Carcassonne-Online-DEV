@@ -47,6 +47,9 @@ export class Deck {
             optionalFetches.push(_loadGroup('Traders_Builders', ['01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24']));
         if (tileGroups.dragon)
             optionalFetches.push(_loadGroup('Dragon', ['01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16','17','18','19','20','21','22','23','24','25','26','27','28','29']));
+        // ✨ NOUVEAU : extension Tour
+        if (tileGroups.tower)
+            optionalFetches.push(_loadGroup('Tower', ['01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16','17']));
 
         const optionalResults = await Promise.all(optionalFetches);
         optionalResults.forEach(group => normalTiles.push(...group));

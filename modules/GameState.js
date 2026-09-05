@@ -26,6 +26,17 @@ export class GameState {
             ownerId: null,    // playerId du propriétaire de la fée
             meepleKey: null,  // clé "x,y,position" du meeple attaché
         };
+
+        // ── Extension Tour ───────────────────────────────────────────────
+        // Map "x,y" -> { height, lockedBy, contributions: { playerId: count } }
+        // lockedBy réservé pour une passe future (toujours null pour l'instant)
+        this.towers = {};
+
+        // Meeples capturés par une tour : Map playerId (capturant) -> [{ type, ownerId }]
+        this.prisoners = {};
+
+        // ✨ NOUVEAU : cible de capture en attente après pose d'un étage (comme _pendingPrincessTile)
+        this._pendingTowerCapture = null;
     }
 
     // ── Dragon ───────────────────────────────────────────────────────────
@@ -142,6 +153,7 @@ export class GameState {
             hasBuilder:     false,
             hasPig:         false,
             hasFairy:       false,
+            towerPieces:    0, // ✨ NOUVEAU : défini au démarrage de partie selon le nombre de joueurs
             goods: { cloth: 0, wheat: 0, wine: 0 },
             scoreDetail: { cities: 0, roads: 0, monasteries: 0, fields: 0, goods: 0, fairy: 0 }
         });
@@ -180,6 +192,8 @@ export class GameState {
             dragonPos:          this.dragonPos,
             dragonPhase:        this.dragonPhase,
             fairyState:         this.fairyState,
+            towers:             this.towers,     // ✨ NOUVEAU
+            prisoners:          this.prisoners,  // ✨ NOUVEAU
         };
     }
 
@@ -195,6 +209,7 @@ export class GameState {
             hasBuilder:     p.hasBuilder     ?? false,
             hasPig:         p.hasPig         ?? false,
             hasFairy:       p.hasFairy       ?? false,
+            towerPieces:    p.towerPieces    ?? 0, // ✨ NOUVEAU
             goods:          p.goods          ?? { cloth: 0, wheat: 0, wine: 0 },
             scoreDetail:    p.scoreDetail    || { cities: 0, roads: 0, monasteries: 0, fields: 0, goods: 0, fairy: 0 },
             disconnected:   p.disconnected   ?? false,
@@ -217,5 +232,9 @@ export class GameState {
             ownerId:   data.fairyState?.ownerId   ?? null,
             meepleKey: data.fairyState?.meepleKey ?? null,
         };
+
+        // ✨ NOUVEAU
+        this.towers    = data.towers    ?? {};
+        this.prisoners = data.prisoners ?? {};
     }
 }

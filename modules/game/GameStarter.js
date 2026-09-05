@@ -4,6 +4,8 @@ import { TurnManager } from './TurnManager.js';
 import { ReconnectionManager } from './ReconnectionManager.js';
 import { initTurnUI } from '../ui/TurnUI.js';
 import { initDragonUI } from './DragonUI.js';
+import { initTowerUI } from './TowerUI.js'; // ✨ NOUVEAU
+import { getTowerPiecesForPlayerCount } from '../rules/TowerConfig.js'; // ✨ NOUVEAU
 import { initMeepleActionsUI, initNetworkMeepleListeners } from '../ui/MeepleActionsUI.js';
 import { initGameMenu } from '../ui/GameMenuUI.js';
 
@@ -40,6 +42,13 @@ export class GameStarter {
         if (ext.largeMeeple)     { gameState.players.forEach(p => { p.hasLargeMeeple = true; }); }
         if (ext.tradersBuilders) { gameState.players.forEach(p => { p.hasBuilder     = true; }); }
         if (ext.pig)             { gameState.players.forEach(p => { p.hasPig         = true; }); }
+
+        // ✨ NOUVEAU — Extension Tour : stock de pièces selon le nombre de joueurs (hors spectateurs)
+        if (ext.tower) {
+            const activePlayerCount = gameState.players.filter(p => p.color !== 'spectator').length;
+            const pieces = getTowerPiecesForPlayerCount(activePlayerCount);
+            gameState.players.forEach(p => { if (p.color !== 'spectator') p.towerPieces = pieces; });
+        }
 
         return gameState;
     }
@@ -79,6 +88,7 @@ export class GameStarter {
 
         // ── Bloc A : init UI modules (TurnUI déjà initialisé avant _initTurnManager) ──
         initDragonUI(d.getDragonUIDeps());
+        initTowerUI(d.getTowerUIDeps()); // ✨ NOUVEAU
         initMeepleActionsUI(d.getMeepleActionsUIDeps());
         initNetworkMeepleListeners(d.getEventBus());
 

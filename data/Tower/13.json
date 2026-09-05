@@ -1,0 +1,48 @@
+{
+  "id": "13",
+  "quantity": 1,
+  "extension": "Tower",
+  "image": "./assets/Tower/C2/13.png",
+  "zones": [
+    {
+      "id": 1,
+      "type": "city",
+      "edges": ["north"],
+      "features": [],
+      "meeplePosition": "3"
+    },
+    {
+      "id": 2,
+      "type": "field",
+      "edges": ["west", "south-left"],
+      "features": {
+   	 "adjacentCities": [1]
+		  },
+      "meeplePosition": "21"
+    },
+    {
+      "id": 3,
+      "type": "road",
+      "edges": ["south"],
+      "features": [],
+      "meeplePosition": "23"
+    },
+    {
+      "id": 4,
+      "type": "field",
+      "edges": ["east", "south-right"],
+      "features": {
+   	 "adjacentCities": [1]
+		  },
+      "meeplePosition": "20"
+    },
+    {
+      "id": 5,
+      "type": "tower",
+      "edges": [],
+      "features": [],
+      "meeplePosition": "12"
+    }
+  ]
+
+}

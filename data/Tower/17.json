@@ -1,0 +1,32 @@
+{
+  "id": "17",
+  "quantity": 1,
+  "extension": "Tower",
+  "image": "./assets/Tower/C2/17.png",
+  "zones": [
+    {
+      "id": 1,
+      "type": "city",
+      "edges": ["west", "north"],
+      "features": [],
+      "meeplePosition": "7"
+    },
+    {
+      "id": 2,
+      "type": "field",
+      "edges": ["east", "south"],
+      "features": {
+   	 "adjacentCities": [1]
+		  },
+      "meeplePosition": "22"
+    },
+    {
+      "id": 3,
+      "type": "tower",
+      "edges": [],
+      "features": [],
+      "meeplePosition": "19"
+    }
+  ]
+
+}

@@ -203,6 +203,8 @@ export class GameEventSetup {
             document.querySelectorAll('.meeple-cursors-container').forEach(c => c.remove());
             gameState._pendingPrincessTile = null;
             gameState._pendingPortalTile   = null;
+            gameState._pendingTowerCapture = null; // ✨ NOUVEAU
+            d.clearTowerCursors?.();               // ✨ NOUVEAU
             if (d.getUndoManager()) d.getUndoManager().reset();
 
             if (gameConfig.tileGroups?.dragon && gameConfig.extensions?.dragon && d.getDragonRules() && gameState._pendingDragonTile) {

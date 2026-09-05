@@ -27,6 +27,8 @@ import {
     onDragonPhaseEnded, advanceDragonTurnHost,
     renderDragonPiece, renderFairyPiece, removeFairyPiece, releaseFairyIfDetached,
 } from './modules/game/DragonUI.js';
+import { initTowerUI, clearTowerCursors } from './modules/game/TowerUI.js'; // ✨ NOUVEAU
+import { TowerRules } from './modules/rules/TowerRules.js'; // ✨ NOUVEAU (import direct non utilisé ici mais gardé pour clarté — l'instanciation réelle se fait dans GameModuleInitializer)
 import {
     initTurnUI,
     updateTurnDisplay, updateMobileButtons, updateMobileTilePreview,
@@ -153,6 +155,7 @@ let meepleDisplayUI = null;
 
 let unplaceableManager = null;
 let dragonRules = null;   // Extension Princesse & Dragon
+let towerRules  = null;   // ✨ NOUVEAU — Extension Tour
 let finalScoresManager = null;
 
 // ── Reconnexion / Pause ──────────────────────────────────────────────────────
@@ -523,7 +526,7 @@ document.getElementById('create-game-btn').addEventListener('click', async () =>
         lobbyUI.setPlayers(players);
 
         // Sync temps réel de toutes les options vers les invités
-        ['base-fields', 'list-remaining', 'use-test-deck', 'enable-debug', 'ext-abbot', 'tiles-abbot', 'ext-large-meeple', 'ext-cathedrals', 'ext-inns', 'tiles-inns-cathedrals', 'tiles-traders-builders', 'ext-builder', 'ext-merchants', 'ext-pig', 'tiles-dragon', 'ext-dragon', 'ext-princess', 'ext-portal', 'ext-fairy-protection', 'ext-fairy-score-turn', 'ext-fairy-score-zone'].forEach(id => {
+        ['base-fields', 'list-remaining', 'use-test-deck', 'enable-debug', 'ext-abbot', 'tiles-abbot', 'ext-large-meeple', 'ext-cathedrals', 'ext-inns', 'tiles-inns-cathedrals', 'tiles-traders-builders', 'ext-builder', 'ext-merchants', 'ext-pig', 'tiles-dragon', 'ext-dragon', 'ext-princess', 'ext-portal', 'ext-fairy-protection', 'ext-fairy-score-turn', 'ext-fairy-score-zone', 'tiles-tower', 'ext-tower'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.addEventListener('change', (e) => {
                 multiplayer.broadcast({ type: 'option-change', option: id, value: e.target.checked });
@@ -613,6 +616,8 @@ document.getElementById('create-game-btn').addEventListener('click', async () =>
                     'ext-fairy-protection':  document.getElementById('ext-fairy-protection')?.checked  ?? false,
                     'ext-fairy-score-turn':  document.getElementById('ext-fairy-score-turn')?.checked  ?? false,
                     'ext-fairy-score-zone':  document.getElementById('ext-fairy-score-zone')?.checked  ?? false,
+                    'tiles-tower':           document.getElementById('tiles-tower')?.checked           ?? false, // ✨ NOUVEAU
+                    'ext-tower':             document.getElementById('ext-tower')?.checked             ?? false, // ✨ NOUVEAU
                     'start':                 document.querySelector('input[name="start"]:checked')?.value ?? 'unique',
                 };
                 multiplayer.sendTo(from, { type: 'options-sync', options: currentOptions });
@@ -784,7 +789,8 @@ document.getElementById('start-game-btn').addEventListener('click', async () => 
             portal:          document.getElementById('ext-portal')?.checked              ?? false,
             fairyProtection: document.getElementById('ext-fairy-protection')?.checked     ?? false,
             fairyScoreTurn:  document.getElementById('ext-fairy-score-turn')?.checked     ?? false,
-            fairyScoreZone:  document.getElementById('ext-fairy-score-zone')?.checked     ?? false
+            fairyScoreZone:  document.getElementById('ext-fairy-score-zone')?.checked     ?? false,
+            tower:           document.getElementById('ext-tower')?.checked               ?? false // ✨ NOUVEAU
         },
         tileGroups: {
             base:  true,
@@ -792,6 +798,7 @@ document.getElementById('start-game-btn').addEventListener('click', async () => 
             inns_cathedrals:  document.getElementById('tiles-inns-cathedrals')?.checked   ?? false,
             traders_builders: document.getElementById('tiles-traders-builders')?.checked  ?? false,
             dragon:           document.getElementById('tiles-dragon')?.checked            ?? false,
+            tower:            document.getElementById('tiles-tower')?.checked             ?? false, // ✨ NOUVEAU
             river: document.querySelector('input[name="start"]:checked')?.value === 'river'
         }
     };
@@ -832,6 +839,7 @@ function initializeGameModules() {
         getTilePreviewUI:     () => tilePreviewUI,
         getUnplaceableManager:() => unplaceableManager,
         getDragonRules:       () => dragonRules,
+        getTowerRules:        () => towerRules, // ✨ NOUVEAU
         getSlotsUI:           () => slotsUI,
         getLastPlacedTile:    () => lastPlacedTile,
         getScoring:           () => scoring,
@@ -848,6 +856,7 @@ function initializeGameModules() {
         setMeepleDisplayUI:   (v) => { meepleDisplayUI  = v; },
         setUndoManager:       (v) => { undoManager      = v; },
         setDragonRules:       (v) => { dragonRules      = v; },
+        setTowerRules:        (v) => { towerRules       = v; }, // ✨ NOUVEAU
         setUnplaceableManager:(v) => { unplaceableManager = v; },
         setFinalScoresManager:(v) => { finalScoresManager = v; },
         setTuileEnMain:       (v) => { tuileEnMain = v; },
@@ -1177,6 +1186,21 @@ function _makeStarter() {
             getRuleRegistry:      () => ruleRegistry,
             afficherToast,
         }),
+        // ✨ NOUVEAU — deps pour initTowerUI
+        getTowerUIDeps: () => ({
+            getGameState:        () => gameState,
+            getGameConfig:       () => gameConfig,
+            getMultiplayer:      () => multiplayer,
+            getGameSync:         () => gameSync,
+            getTowerRules:       () => towerRules,
+            getZoneMerger:       () => zoneMerger,
+            getPlacedMeeples:    () => placedMeeples,
+            getPlateau:          () => plateau,
+            getUndoManager:      () => undoManager,
+            getIsHost:           () => isHost,
+            getIsMyTurn:         () => isMyTurn,
+            onUpdateTurnDisplay: () => updateTurnDisplay(),
+        }),
         // deps pour initMeepleActionsUI
         getMeepleActionsUIDeps: () => ({
             getGameState:           () => gameState,
@@ -1364,6 +1388,7 @@ function setupEventListeners() {
         hostDrawAndSend:         _hostDrawAndSend,
         hideAllCursors,
         clearDragonCursors,
+        clearTowerCursors, // ✨ NOUVEAU
         broadcastDragonState,
         startDragonTurnUI,
         advanceDragonTurnHost,
@@ -1418,6 +1443,7 @@ function _makeLobbyNavigator() {
             tilePlacement = null; meeplePlacement = null; turnManager = null;
             unplaceableManager = null; finalScoresManager = null;
             waitingToRedraw = false; pendingAbbePoints = null;
+            towerRules = null; // ✨ NOUVEAU
             ruleRegistry.disable('base'); ruleRegistry.disable('abbot');
             ruleRegistry.disable('inns'); ruleRegistry.disable('builders');
         },

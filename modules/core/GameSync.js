@@ -29,6 +29,9 @@ export class GameSync {
         this.onUnplaceableRedraw  = null;
         this.onYourTurn           = null;
         this.onDeckReshuffled = null;
+        // ✨ NOUVEAU — Extension Tour
+        this.onTowerFloorPlaced     = null;
+        this.onTowerCaptureExecuted = null;
     }
 
     /**
@@ -63,7 +66,8 @@ export class GameSync {
             'turn-undo-request', 'your-turn', 'tile-placed-request', 'meeple-placed-request',
             'dragon-state-update', 'dragon-move-request', 'fairy-placed-sync',
             'dragon-premature-tile', 'dragon-end-turn-request', 'princess-ejected', 'princess-eject-request',
-            'portal-meeple-placed', 'portal-meeple-request'
+            'portal-meeple-placed', 'portal-meeple-request',
+            'tower-floor-placed', 'tower-capture-executed' // ✨ NOUVEAU
             // NOTE: 'return-to-lobby', 'player-order-update' et 'game-starting' 
             //       sont gérés par le lobby handler
         ];
@@ -414,6 +418,26 @@ export class GameSync {
     }
 
     /**
+     * ✨ NOUVEAU — Extension Tour : hôte → tous, pose d'étage appliquée
+     */
+    syncTowerFloorPlaced(x, y, height, playerId, towerPieces) {
+        this.multiplayer.broadcast({
+            type: 'tower-floor-placed',
+            x, y, height, playerId, towerPieces
+        });
+    }
+
+    /**
+     * ✨ NOUVEAU — Extension Tour : hôte → tous, capture exécutée
+     */
+    syncTowerCaptureExecuted(meepleKey, playerId, selfCapture) {
+        this.multiplayer.broadcast({
+            type: 'tower-capture-executed',
+            meepleKey, playerId, selfCapture
+        });
+    }
+
+    /**
      * Gérer les messages reçus
      * @private
      */
@@ -617,6 +641,15 @@ export class GameSync {
                 if (data.playerId !== this.multiplayer.playerId) {
                     this.eventBus?.emit('network-portal-meeple-placed', data);
                 }
+                break;
+
+            // ✨ NOUVEAU — Extension Tour
+            case 'tower-floor-placed':
+                if (this.onTowerFloorPlaced) this.onTowerFloorPlaced(data);
+                break;
+
+            case 'tower-capture-executed':
+                if (this.onTowerCaptureExecuted) this.onTowerCaptureExecuted(data);
                 break;
             
             case 'game-paused':

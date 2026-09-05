@@ -12,6 +12,7 @@ import { UndoManager }         from './UndoManager.js';
 import { UnplaceableTileManager } from './UnplaceableTileManager.js';
 import { FinalScoresManager }  from './FinalScoresManager.js';
 import { DragonRules }         from '../rules/DragonRules.js';
+import { TowerRules }          from '../rules/TowerRules.js'; // ✨ NOUVEAU
 
 /**
  * GameModuleInitializer — Instancie tous les modules de jeu.
@@ -146,6 +147,15 @@ export class GameModuleInitializer {
             console.log('🐉 [Dragon] DragonRules initialisé');
         } else {
             d.setDragonRules(null);
+        }
+
+        // ✨ NOUVEAU — Extension Tour
+        if (gameConfig.tileGroups?.tower && gameConfig.extensions?.tower) {
+            const towerRules = new TowerRules({ gameState, plateau });
+            d.setTowerRules(towerRules);
+            console.log('🗼 [Tour] TowerRules initialisé');
+        } else {
+            d.setTowerRules(null);
         }
 
         const unplaceableManager = new UnplaceableTileManager({

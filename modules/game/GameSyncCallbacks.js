@@ -1,4 +1,5 @@
 import { Tile } from '../Tile.js';
+import { executeAddFloorHost, executeTowerCaptureHost } from './TowerUI.js'; // ✨ NOUVEAU
 
 /**
  * GameSyncCallbacks - Factorise tous les callbacks réseau (hôte et invités)
@@ -202,6 +203,16 @@ export class GameSyncCallbacks {
             this.onDeckReshuffled(tiles, currentIndex);
         };
 
+        // ✨ NOUVEAU — Extension Tour : reçu par tous (guest ET host via echo, mais host ignore son propre echo)
+        gs.onTowerFloorPlaced = (data) => {
+            if (this.isHost) return; // l'hôte a déjà appliqué localement dans executeAddFloorHost
+            this.eventBus.emit('network-tower-floor-placed', data);
+        };
+        gs.onTowerCaptureExecuted = (data) => {
+            if (this.isHost) return;
+            this.eventBus.emit('network-tower-capture-executed', data);
+        };
+
         if (isHost) this._attachHostCallbacks(gs);
     }
 
@@ -363,6 +374,7 @@ export class GameSyncCallbacks {
             if (this.gameConfig.tileGroups?.dragon && this.gameConfig.extensions?.dragon && this.dragonRules && this.gameState._pendingDragonTile) {
                 const { playerIndex } = this.gameState._pendingDragonTile;
                 this.gameState._pendingDragonTile = null; this.gameState._pendingPrincessTile = null; this.gameState._pendingPortalTile = null;
+                this.gameState._pendingTowerCapture = null; // ✨ NOUVEAU
                 if (this.undoManager) this.undoManager.reset();
                 const started = this.dragonRules.onDragonTilePlaced(playerIndex);
                 if (started) {
@@ -371,6 +383,7 @@ export class GameSyncCallbacks {
                 }
             }
             this.gameState._pendingPrincessTile = null; this.gameState._pendingPortalTile = null;
+            this.gameState._pendingTowerCapture = null; // ✨ NOUVEAU
             if (this.undoManager) this.undoManager.reset();
             if (this.turnManager) this.turnManager.endTurnRemote(isBonusTurn);
             if (isBonusTurn) this.ruleRegistry.rules?.get('builders')?.resetLastPlacedTile?.();
@@ -433,6 +446,17 @@ export class GameSyncCallbacks {
                 if (this.meepleDisplayUI) this.meepleDisplayUI.showMeeple(x, y, position, meepleType, pColor);
                 gs.multiplayer.broadcast({ type: 'portal-meeple-placed', x, y, position, meepleType, playerId: fromId, color: pColor });
                 this.eventBus.emit('meeple-count-updated', { playerId: fromId }); return;
+            }
+            // ✨ NOUVEAU — Extension Tour : requêtes invité → hôte
+            if (data.type === 'tower-floor-request') {
+                if (this.gameState.getCurrentPlayer()?.id !== from) { console.warn('⚠️ tower-floor-request rejeté de', from); return; }
+                executeAddFloorHost(data.x, data.y, from);
+                return;
+            }
+            if (data.type === 'tower-capture-request') {
+                if (this.gameState.getCurrentPlayer()?.id !== from) { console.warn('⚠️ tower-capture-request rejeté de', from); return; }
+                executeTowerCaptureHost(data.meepleKey, from);
+                return;
             }
             if (prev) prev(data, from);
         })(gs.multiplayer.onDataReceived);

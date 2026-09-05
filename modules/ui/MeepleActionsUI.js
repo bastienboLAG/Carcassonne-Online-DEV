@@ -1,9 +1,14 @@
 /**
  * MeepleActionsUI — UI des actions meeple sur le plateau
- * (rappel abbé, fée, princesse, portail magique)
+ * (rappel abbé, fée, princesse, portail magique, tour)
  *
  * Dépendances injectées via initMeepleActionsUI()
  */
+
+import {
+    clearTowerCursors, showTowerCursors, showPendingTowerCaptureIfAny,
+    applyFloorPlaced, applyCaptureExecuted,
+} from '../game/TowerUI.js'; // ✨ NOUVEAU
 
 let _deps = null;
 
@@ -23,6 +28,7 @@ function _isMyTurn()      { return _deps.getIsMyTurn(); }
 
 export function showMeepleActionCursors() {
     document.querySelectorAll('.meeple-action-cursor, .meeple-action-overlay').forEach(el => el.remove());
+    clearTowerCursors(); // ✨ NOUVEAU
 
     const gameState = _gs();
     const multiplayer = _mp();
@@ -36,6 +42,11 @@ export function showMeepleActionCursors() {
     if (!gameState || !_deps.getMeepleCursorsUI()) return;
     const boardEl = document.getElementById('board');
     if (!boardEl) return;
+
+    // ✨ NOUVEAU — Extension Tour : indépendant des autres actions ci-dessous,
+    // toujours évalué (pose d'étage + capture en attente éventuelle)
+    showTowerCursors();
+    showPendingTowerCaptureIfAny();
 
     const currentFairyKey   = gameState.fairyState?.meepleKey ?? null;
     const pendingPrincess   = gameState._pendingPrincessTile ?? null;
@@ -216,6 +227,7 @@ export function clearFairyCursors() {
 export function hideAllCursors() {
     _deps.getMeepleCursorsUI()?.hideCursors();
     clearFairyCursors();
+    clearTowerCursors(); // ✨ NOUVEAU
 }
 
 export function showFairyTargets() {
@@ -577,7 +589,7 @@ export function placerMeeple(x, y, position, meepleType) {
     hideAllCursors();
 }
 
-// ── Listeners réseau (portail & princesse) ─────────────────────────────────
+// ── Listeners réseau (portail, princesse, tour) ─────────────────────────────
 
 export function initNetworkMeepleListeners(eventBus) {
     // Portail Magique : réception d'un placement via portail
@@ -650,6 +662,15 @@ export function initNetworkMeepleListeners(eventBus) {
         }
 
         eventBus.emit('meeple-count-updated', {});
+        eventBus.emit('score-updated');
+    });
+
+    // ✨ NOUVEAU — Extension Tour : pose d'étage et capture reçues du réseau (invités)
+    eventBus.on('network-tower-floor-placed', (data) => {
+        applyFloorPlaced(data.x, data.y, data.height, data.playerId, data.towerPieces);
+    });
+    eventBus.on('network-tower-capture-executed', (data) => {
+        applyCaptureExecuted(data.meepleKey);
         eventBus.emit('score-updated');
     });
 }

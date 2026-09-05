@@ -1,0 +1,30 @@
+{
+  "id": "09",
+  "quantity": 1,
+  "extension": "Tower",
+  "image": "./assets/Tower/C2/09.png",
+  "zones": [
+    {
+      "id": 1,
+      "type": "garden",
+      "edges": [],
+      "features": [],
+      "meeplePosition": "2"
+    },
+    {
+      "id": 2,
+      "type": "field",
+      "edges": ["west", "north", "east", "south"],
+      "features": [],
+      "meeplePosition": "21"
+    },
+    {
+      "id": 3,
+      "type": "tower",
+      "edges": [],
+      "features": [],
+      "meeplePosition": "18"
+    }
+  ]
+
+}

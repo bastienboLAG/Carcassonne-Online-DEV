@@ -1,0 +1,30 @@
+{
+  "id": "10",
+  "quantity": 1,
+  "extension": "Tower",
+  "image": "./assets/Tower/C2/10.png",
+  "zones": [
+    {
+      "id": 1,
+      "type": "abbey",
+      "edges": [],
+      "features": [],
+      "meeplePosition": "17"
+    },
+    {
+      "id": 2,
+      "type": "field",
+      "edges": ["west", "north", "east", "south"],
+      "features": [],
+      "meeplePosition": "1"
+    },
+    {
+      "id": 3,
+      "type": "tower",
+      "edges": [],
+      "features": [],
+      "meeplePosition": "9"
+    }
+  ]
+
+}

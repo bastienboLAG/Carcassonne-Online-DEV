@@ -107,10 +107,27 @@ function _updateDragonAvailability() {
     saveLobbyOptions();
 }
 
+// ✨ NOUVEAU : disponibilité de l'extension Tour — dépend uniquement des tuiles Tour
+function _updateTowerAvailability() {
+    const tilesOn = _checked('tiles-tower');
+    const cb    = _id('ext-tower');
+    const label = cb?.closest('label');
+    if (!cb) return;
+    if (!tilesOn) {
+        cb.checked = false; cb.disabled = true;
+        if (label) { label.style.opacity = '0.4'; label.style.pointerEvents = 'none'; }
+    } else {
+        cb.disabled = false;
+        if (label) { label.style.opacity = ''; label.style.pointerEvents = ''; }
+    }
+    _updateMasterCheckboxSafe('all-tower');
+    saveLobbyOptions();
+}
+
 // ── Coches maîtres ─────────────────────────────────────────────────────────
 
 function _updateAllExtensionsMaster() {
-    const subMasters = ['all-base', 'all-abbot', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon'];
+    const subMasters = ['all-base', 'all-abbot', 'all-tower', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon'];
     const master = _id('all-extensions');
     if (!master) return;
     const checked   = subMasters.filter(id => { const el = _id(id); return el && el.checked && !el.indeterminate; }).length;
@@ -159,6 +176,9 @@ function _onMasterChange(masterId) {
             applyGroup('all-traders-builders'); // coche Bâtisseur + Cochon (si dispo)
             _updateMerchantsAvailability(); // débloque Marchands si tuiles TB actives
             applyGroup('all-abbot');
+            applyGroup('all-tower');        // ✨ NOUVEAU
+            _updateTowerAvailability();     // ✨ NOUVEAU
+            applyGroup('all-tower');        // ✨ NOUVEAU : re-coche si maintenant dispo
             applyGroup('all-inns-cathedrals'); // Cathédrales/Auberges si tuiles actives
             _updateInnsCthdAvailability();
             applyGroup('all-dragon');       // Dragon/Princesse/Portail si tuiles actives
@@ -166,15 +186,16 @@ function _onMasterChange(masterId) {
             applyGroup('all-dragon');       // re-coche Protection Fée si maintenant dispo
         } else {
             // Décocher : pas de dépendances à respecter, on décoche tout directement
-            ['all-base', 'all-abbot', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon']
+            ['all-base', 'all-abbot', 'all-tower', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon']
                 .forEach(applyGroup);
             _updatePigAvailability();
             _updateMerchantsAvailability();
+            _updateTowerAvailability();
             _updateInnsCthdAvailability();
             _updateDragonAvailability();
         }
 
-        ['all-base', 'all-abbot', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon']
+        ['all-base', 'all-abbot', 'all-tower', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon']
             .forEach(id => _updateMasterCheckboxSafe(id));
         _updateAllExtensionsMaster();
         saveLobbyOptions();
@@ -210,12 +231,35 @@ function _onMasterChange(masterId) {
         return;
     }
 
+    // ✨ NOUVEAU : "all-tower" — même schéma que "all-dragon" mais plus simple (pas de sous-dépendances)
+    if (masterId === 'all-tower') {
+        if (checked) {
+            const tilesTower = _id('tiles-tower');
+            if (tilesTower && !tilesTower.disabled) tilesTower.checked = true;
+            _updateTowerAvailability();
+            document.querySelectorAll(`input[data-group="${masterId}"]`)
+                .forEach(c => { if (!c.disabled) c.checked = true; });
+            if (tilesTower && !tilesTower.disabled) {
+                tilesTower.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        } else {
+            document.querySelectorAll(`input[data-group="${masterId}"]`)
+                .forEach(c => { c.checked = false; });
+            _updateTowerAvailability();
+        }
+        document.querySelectorAll(`input[data-group="${masterId}"]`)
+            .forEach(c => c.dispatchEvent(new Event('change', { bubbles: true })));
+        saveLobbyOptions();
+        return;
+    }
+
     const children = [...document.querySelectorAll(`input[data-group="${masterId}"]`)]
         .filter(el => !el.disabled);
     children.forEach(c => { c.checked = checked; });
 
     _updatePigAvailability();
     _updateMerchantsAvailability();
+    _updateTowerAvailability();
     _updateInnsCthdAvailability();
     _updateDragonAvailability();
 
@@ -250,6 +294,8 @@ const PRESET_MAP = {
     'ext_fairy_protection':   'ext-fairy-protection',
     'ext_fairy_score_turn':   'ext-fairy-score-turn',
     'ext_fairy_score_zone':   'ext-fairy-score-zone',
+    'tiles_tower':            'tiles-tower', // ✨ NOUVEAU
+    'ext_tower':              'ext-tower',   // ✨ NOUVEAU
 };
 
 export function applyPreset(preset) {
@@ -273,6 +319,7 @@ export function applyPreset(preset) {
     _updatePigAvailability();
     _updateInnsCthdAvailability();
     _updateDragonAvailability();
+    _updateTowerAvailability(); // ✨ NOUVEAU
 
     // ✅ FIX : recalculer la coche maître globale "all-extensions" après application
     // d'un preset — elle dépend des 5 sous-coches maîtres, pas d'un data-group direct,
@@ -306,6 +353,8 @@ export function saveLobbyOptions() {
         ext_fairy_protection:     _checked('ext-fairy-protection'),
         ext_fairy_score_turn:     _checked('ext-fairy-score-turn'),
         ext_fairy_score_zone:     _checked('ext-fairy-score-zone'),
+        tiles_tower:              _checked('tiles-tower'), // ✨ NOUVEAU
+        ext_tower:                _checked('ext-tower'),   // ✨ NOUVEAU
         unplaceable:              document.querySelector('input[name="unplaceable"]:checked')?.value ?? 'reshuffle',
     };
     localStorage.setItem(LS_KEY, JSON.stringify(state));
@@ -334,6 +383,8 @@ export function syncAllOptions() {
         'ext-fairy-protection':  _checked('ext-fairy-protection'),
         'ext-fairy-score-turn':  _checked('ext-fairy-score-turn'),
         'ext-fairy-score-zone':  _checked('ext-fairy-score-zone'),
+        'tiles-tower':           _checked('tiles-tower'), // ✨ NOUVEAU
+        'ext-tower':             _checked('ext-tower'),   // ✨ NOUVEAU
         'unplaceable':           document.querySelector('input[name="unplaceable"]:checked')?.value ?? 'reshuffle',
         'start':                 document.querySelector('input[name="start"]:checked')?.value ?? 'unique',
     };
@@ -444,7 +495,7 @@ function loadLobbyOptions() {
 }
 
 export function updateMasterCheckboxes() {
-    const MASTER_IDS = ['all-base', 'all-abbot', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon', 'all-tiles'];
+    const MASTER_IDS = ['all-base', 'all-abbot', 'all-tower', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon', 'all-tiles'];
     MASTER_IDS.forEach(_updateMasterCheckboxSafe);
     _updateAllExtensionsMaster();
 }
@@ -457,6 +508,7 @@ function _updateTileCount() {
     if (_checked('tiles-inns-cathedrals')) total += 18;
     if (_checked('tiles-traders-builders'))total += 24;
     if (_checked('tiles-dragon'))          total += 29;
+    if (_checked('tiles-tower'))           total += 18; // ✨ NOUVEAU
     // Rivière : +12 si startType river (radio)
     const startVal = document.querySelector('input[name="start"]:checked')?.value;
     if (startVal === 'river') total += 12;
@@ -468,13 +520,14 @@ export function updateAllAvailability() {
     _updateMerchantsAvailability();
     _updateInnsCthdAvailability();
     _updateDragonAvailability();
+    _updateTowerAvailability(); // ✨ NOUVEAU
     _updateTileCount();
     updateMasterCheckboxes();
 }
 
 // ── Initialisation ─────────────────────────────────────────────────────────
 
-const MASTER_IDS = ['all-extensions', 'all-base', 'all-abbot', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon', 'all-tiles'];
+const MASTER_IDS = ['all-extensions', 'all-base', 'all-abbot', 'all-tower', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon', 'all-tiles'];
 
 /**
  * @param {object} deps
@@ -505,6 +558,10 @@ export function initLobbyOptions({ getIsHost, getInLobby, multiplayer }) {
     _id('ext-dragon')?.addEventListener('change', _updateDragonAvailability);
     _updateDragonAvailability();
 
+    // ✨ NOUVEAU : disponibilité Tour
+    _id('tiles-tower')?.addEventListener('change', _updateTowerAvailability);
+    _updateTowerAvailability();
+
     // Coches maîtres
     MASTER_IDS.forEach(masterId => {
         const master = _id(masterId);
@@ -530,13 +587,13 @@ export function initLobbyOptions({ getIsHost, getInLobby, multiplayer }) {
 
     // Sauvegarde auto à chaque changement
     document.querySelectorAll(
-        '#base-fields, #list-remaining, #use-test-deck, #enable-debug, #ext-abbot, #tiles-abbot, #ext-large-meeple, #ext-cathedrals, #ext-inns, #tiles-inns-cathedrals, #tiles-traders-builders, #ext-builder, #ext-merchants, #ext-pig, #tiles-dragon, #ext-dragon, #ext-princess, #ext-portal, #ext-fairy-protection, #ext-fairy-score-turn, #ext-fairy-score-zone'
+        '#base-fields, #list-remaining, #use-test-deck, #enable-debug, #ext-abbot, #tiles-abbot, #ext-large-meeple, #ext-cathedrals, #ext-inns, #tiles-inns-cathedrals, #tiles-traders-builders, #ext-builder, #ext-merchants, #ext-pig, #tiles-dragon, #ext-dragon, #ext-princess, #ext-portal, #ext-fairy-protection, #ext-fairy-score-turn, #ext-fairy-score-zone, #tiles-tower, #ext-tower'
     ).forEach(el => el.addEventListener('change', saveLobbyOptions));
     document.querySelectorAll('input[name="unplaceable"], input[name="start"]')
         .forEach(el => el.addEventListener('change', saveLobbyOptions));
 
     // Compteur de tuiles — mis à jour à chaque changement de tuile ou de départ
-    ['tiles-abbot', 'tiles-inns-cathedrals', 'tiles-traders-builders', 'tiles-dragon'].forEach(id => {
+    ['tiles-abbot', 'tiles-inns-cathedrals', 'tiles-traders-builders', 'tiles-dragon', 'tiles-tower'].forEach(id => {
         _id(id)?.addEventListener('change', _updateTileCount);
     });
     document.querySelectorAll('input[name="start"]')
