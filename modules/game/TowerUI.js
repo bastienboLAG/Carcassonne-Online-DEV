@@ -89,8 +89,8 @@ export function showTowerCursors() {
         btn.style.cssText = `position:absolute;left:${offsetX}px;top:${offsetY}px;width:38px;height:38px;border-radius:50%;border:3px solid #8e44ad;box-shadow:0 0 10px 3px rgba(142,68,173,0.7),inset 0 0 4px rgba(0,0,0,0.8);cursor:pointer;pointer-events:auto;transform:translate(-50%,-50%);animation:abbeRecallPulse 1.2s ease-in-out infinite;`;
         btn.title = 'Poser un étage de tour';
 
-        btn.addEventListener('click', (e) => { e.stopPropagation(); onTowerFloorConfirm(x, y); });
-        btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); onTowerFloorConfirm(x, y); }, { passive: false });
+        btn.addEventListener('click', (e) => { e.stopPropagation(); _openTowerFloorSelector(x, y, e.clientX, e.clientY); });
+        btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); _openTowerFloorSelector(x, y, e.changedTouches[0].clientX, e.changedTouches[0].clientY); }, { passive: false });
 
         overlay.appendChild(btn);
         boardEl.appendChild(overlay);
@@ -98,6 +98,39 @@ export function showTowerCursors() {
 }
 
 // ── Pose d'étage ───────────────────────────────────────────────────────────
+
+/**
+ * Ouvre un mini-sélecteur avec l'icône de tour, pour confirmer explicitement
+ * l'intention de poser un étage (même pattern que le sélecteur abbé/fée).
+ */
+function _openTowerFloorSelector(x, y, clientX, clientY) {
+    document.getElementById('meeple-selector')?.remove();
+
+    const selector = document.createElement('div');
+    selector.id = 'meeple-selector';
+    selector.style.cssText = `position:fixed;left:${clientX}px;top:${clientY - 80}px;transform:translateX(-50%);z-index:1000;display:flex;align-items:flex-end;gap:0;padding:2px;background:rgba(44,62,80,0.5);border-radius:8px;border:2px solid #8e44ad;box-shadow:0 4px 20px rgba(0,0,0,0.5);`;
+
+    const option = document.createElement('div');
+    option.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;';
+    const img = document.createElement('img');
+    img.src = './assets/Meeples/Tower01.png';
+    img.style.cssText = 'width:40px;height:auto;display:block;';
+    option.appendChild(img);
+    option.onmouseenter = () => { option.style.background = 'rgba(142,68,173,0.2)'; };
+    option.onmouseleave = () => { option.style.background = 'transparent'; };
+    option.onclick = (e) => {
+        e.stopPropagation();
+        selector.remove();
+        onTowerFloorConfirm(x, y);
+    };
+    selector.appendChild(option);
+
+    document.body.appendChild(selector);
+    setTimeout(() => {
+        const close = (e) => { if (!selector.contains(e.target)) { selector.remove(); document.removeEventListener('click', close); } };
+        document.addEventListener('click', close);
+    }, 0);
+}
 
 export function onTowerFloorConfirm(x, y) {
     clearTowerCursors();
@@ -277,10 +310,10 @@ export function executeTowerCaptureHost(meepleKey, playerId) {
     const result = towerRules.executeCapture(meepleKey, playerId, _deps.getPlacedMeeples());
     if (!result) return;
 
+    applyCaptureExecuted(meepleKey);
+
     if (sync()) {
         sync().syncTowerCaptureExecuted(meepleKey, playerId, result.selfCapture);
-    } else {
-        applyCaptureExecuted(meepleKey);
     }
     _deps.onUpdateTurnDisplay();
 }

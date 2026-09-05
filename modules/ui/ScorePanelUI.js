@@ -334,6 +334,24 @@ export class ScorePanelUI {
         if (this.config?.extensions?.pig) {
             specialChips.push(buildMeepleChip('Pig', 'Pig.png', player.hasPig ? 1 : 0));
         }
+        // ✨ NOUVEAU : stock de pièces de tour restant
+        if (this.config?.extensions?.tower) {
+            const wrap = document.createElement('span');
+            wrap.className = 'meeple-chip';
+            const img = document.createElement('img');
+            img.src = './assets/Meeples/Tower01.png';
+            img.alt = 'Tour';
+            img.style.width  = '16px';
+            img.style.height = 'auto';
+            img.style.objectFit = 'contain';
+            if ((player.towerPieces ?? 0) <= 0) img.classList.add('unavailable');
+            wrap.appendChild(img);
+            const countEl = document.createElement('span');
+            countEl.className   = 'meeple-chip-count';
+            countEl.textContent = `×${player.towerPieces ?? 0}`;
+            wrap.appendChild(countEl);
+            specialChips.push(wrap);
+        }
         if (specialChips.length > 0) {
             const divider = document.createElement('span');
             divider.style.cssText = 'width:1px;align-self:stretch;background:rgba(255,255,255,0.2);margin:0 2px;';
