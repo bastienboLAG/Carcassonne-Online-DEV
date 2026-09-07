@@ -1,5 +1,5 @@
 import { Tile } from '../Tile.js';
-import { executeAddFloorHost, executeTowerCaptureHost } from './TowerUI.js'; // ✨ NOUVEAU
+import { executeAddFloorHost, executeTowerCaptureHost, executeLockHost } from './TowerUI.js'; // ✨ NOUVEAU
 
 /**
  * GameSyncCallbacks - Factorise tous les callbacks réseau (hôte et invités)
@@ -211,6 +211,10 @@ export class GameSyncCallbacks {
         gs.onTowerCaptureExecuted = (data) => {
             if (this.isHost) return;
             this.eventBus.emit('network-tower-capture-executed', data);
+        };
+        gs.onTowerLockExecuted = (data) => {
+            if (this.isHost) return;
+            this.eventBus.emit('network-tower-lock-executed', data);
         };
 
         if (isHost) this._attachHostCallbacks(gs);
@@ -456,6 +460,11 @@ export class GameSyncCallbacks {
             if (data.type === 'tower-capture-request') {
                 if (this.gameState.getCurrentPlayer()?.id !== from) { console.warn('⚠️ tower-capture-request rejeté de', from); return; }
                 executeTowerCaptureHost(data.meepleKey, from);
+                return;
+            }
+            if (data.type === 'tower-lock-request') {
+                if (this.gameState.getCurrentPlayer()?.id !== from) { console.warn('⚠️ tower-lock-request rejeté de', from); return; }
+                executeLockHost(data.x, data.y, from, data.meepleType);
                 return;
             }
             if (prev) prev(data, from);

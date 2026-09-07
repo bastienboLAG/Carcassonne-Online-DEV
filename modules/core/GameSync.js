@@ -32,6 +32,7 @@ export class GameSync {
         // ✨ NOUVEAU — Extension Tour
         this.onTowerFloorPlaced     = null;
         this.onTowerCaptureExecuted = null;
+        this.onTowerLockExecuted    = null;
     }
 
     /**
@@ -67,7 +68,7 @@ export class GameSync {
             'dragon-state-update', 'dragon-move-request', 'fairy-placed-sync',
             'dragon-premature-tile', 'dragon-end-turn-request', 'princess-ejected', 'princess-eject-request',
             'portal-meeple-placed', 'portal-meeple-request',
-            'tower-floor-placed', 'tower-capture-executed' // ✨ NOUVEAU
+            'tower-floor-placed', 'tower-capture-executed', 'tower-lock-executed' // ✨ NOUVEAU
             // NOTE: 'return-to-lobby', 'player-order-update' et 'game-starting' 
             //       sont gérés par le lobby handler
         ];
@@ -438,6 +439,16 @@ export class GameSync {
     }
 
     /**
+     * ✨ NOUVEAU — Extension Tour : hôte → tous, verrouillage exécuté
+     */
+    syncTowerLockExecuted(x, y, playerId, meepleType, color, meeples, hasLargeMeeple) {
+        this.multiplayer.broadcast({
+            type: 'tower-lock-executed',
+            x, y, playerId, meepleType, color, meeples, hasLargeMeeple
+        });
+    }
+
+    /**
      * Gérer les messages reçus
      * @private
      */
@@ -650,6 +661,10 @@ export class GameSync {
 
             case 'tower-capture-executed':
                 if (this.onTowerCaptureExecuted) this.onTowerCaptureExecuted(data);
+                break;
+
+            case 'tower-lock-executed':
+                if (this.onTowerLockExecuted) this.onTowerLockExecuted(data);
                 break;
             
             case 'game-paused':

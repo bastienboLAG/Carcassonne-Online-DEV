@@ -7,7 +7,7 @@
 
 import {
     clearTowerCursors, showTowerCursors, showPendingTowerCaptureIfAny,
-    applyFloorPlaced, applyCaptureExecuted,
+    applyFloorPlaced, applyCaptureExecuted, applyLockExecuted,
 } from '../game/TowerUI.js'; // ✨ NOUVEAU
 
 let _deps = null;
@@ -672,5 +672,9 @@ export function initNetworkMeepleListeners(eventBus) {
     eventBus.on('network-tower-capture-executed', (data) => {
         applyCaptureExecuted(data.meepleKey);
         eventBus.emit('score-updated');
+    });
+    eventBus.on('network-tower-lock-executed', (data) => {
+        applyLockExecuted(data.x, data.y, data.playerId, data.meepleType, data.color, data.meeples, data.hasLargeMeeple);
+        eventBus.emit('meeple-count-updated', { playerId: data.playerId });
     });
 }

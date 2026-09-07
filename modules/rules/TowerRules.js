@@ -191,4 +191,33 @@ export class TowerRules {
             default:             if (player.meeples < 7) player.meeples++; break;
         }
     }
+
+    /**
+     * Verrouille une tour avec un meeple du joueur (n'importe quel joueur, avec ses propres
+     * ressources). Nécessite qu'un étage existe déjà. Consomme la phase meeple.
+     * @returns {boolean} true si le verrouillage a réussi
+     */
+    lockTower(x, y, playerId, meepleType) {
+        const key = `${x},${y}`;
+        if (this.isLocked(x, y)) return false;
+        if ((this.gameState.towers[key]?.height ?? 0) <= 0) return false;
+
+        const player = this.gameState.players.find(p => p.id === playerId);
+        if (!player) return false;
+
+        if (meepleType === 'Normal' || meepleType === 'Farmer') {
+            if ((player.meeples ?? 0) <= 0) return false;
+            player.meeples--;
+        } else if (meepleType === 'Large' || meepleType === 'Large-Farmer') {
+            if (!player.hasLargeMeeple) return false;
+            player.hasLargeMeeple = false;
+        } else {
+            return false; // type non autorisé au verrouillage
+        }
+
+        this.gameState.towers[key].lockedBy         = playerId;
+        this.gameState.towers[key].lockMeepleType   = meepleType;
+        this.gameState.towers[key].lockMeepleColor  = player.color.charAt(0).toUpperCase() + player.color.slice(1);
+        return true;
+    }
 }

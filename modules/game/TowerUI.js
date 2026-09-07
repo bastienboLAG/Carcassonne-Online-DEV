@@ -89,8 +89,8 @@ export function showTowerCursors() {
         btn.style.cssText = `position:absolute;left:${offsetX}px;top:${offsetY}px;width:38px;height:38px;border-radius:50%;border:3px solid #8e44ad;box-shadow:0 0 10px 3px rgba(142,68,173,0.7),inset 0 0 4px rgba(0,0,0,0.8);cursor:pointer;pointer-events:auto;transform:translate(-50%,-50%);animation:abbeRecallPulse 1.2s ease-in-out infinite;`;
         btn.title = 'Poser un étage de tour';
 
-        btn.addEventListener('click', (e) => { e.stopPropagation(); _openTowerFloorSelector(x, y, e.clientX, e.clientY); });
-        btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); _openTowerFloorSelector(x, y, e.changedTouches[0].clientX, e.changedTouches[0].clientY); }, { passive: false });
+        btn.addEventListener('click', (e) => { e.stopPropagation(); _openTowerFloorSelector(x, y, height, e.clientX, e.clientY); });
+        btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); _openTowerFloorSelector(x, y, height, e.changedTouches[0].clientX, e.changedTouches[0].clientY); }, { passive: false });
 
         overlay.appendChild(btn);
         boardEl.appendChild(overlay);
@@ -103,7 +103,7 @@ export function showTowerCursors() {
  * Ouvre un mini-sélecteur avec l'icône de tour, pour confirmer explicitement
  * l'intention de poser un étage (même pattern que le sélecteur abbé/fée).
  */
-function _openTowerFloorSelector(x, y, clientX, clientY) {
+function _openTowerFloorSelector(x, y, height, clientX, clientY) {
     document.getElementById('meeple-selector')?.remove();
 
     const selector = document.createElement('div');
@@ -124,6 +124,39 @@ function _openTowerFloorSelector(x, y, clientX, clientY) {
         onTowerFloorConfirm(x, y);
     };
     selector.appendChild(option);
+
+    // ✨ NOUVEAU — Verrouillage : proposé uniquement si une tour existe déjà (au moins 1 étage)
+    if (height >= 1) {
+        const player = gs().players.find(p => p.id === mp().playerId);
+        if (player) {
+            const colorCap = player.color.charAt(0).toUpperCase() + player.color.slice(1);
+            const lockOptions = [];
+            if ((player.meeples ?? 0) > 0) lockOptions.push({ type: 'Normal', src: `./assets/Meeples/${colorCap}/Normal.png` });
+            if (player.hasLargeMeeple)     lockOptions.push({ type: 'Large',  src: `./assets/Meeples/${colorCap}/Large.png`  });
+
+            lockOptions.forEach(({ type, src }) => {
+                const lockOpt = document.createElement('div');
+                lockOpt.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;position:relative;';
+                const lockImg = document.createElement('img');
+                lockImg.src = src;
+                lockImg.style.cssText = 'width:40px;height:auto;display:block;';
+                lockOpt.appendChild(lockImg);
+                const badge = document.createElement('span');
+                badge.textContent = '🔒';
+                badge.style.cssText = 'position:absolute;top:-4px;right:-4px;font-size:12px;text-shadow:0 0 3px rgba(0,0,0,0.8);';
+                lockOpt.appendChild(badge);
+                lockOpt.title = 'Verrouiller la tour avec ce meeple';
+                lockOpt.onmouseenter = () => { lockOpt.style.background = 'rgba(142,68,173,0.2)'; };
+                lockOpt.onmouseleave = () => { lockOpt.style.background = 'transparent'; };
+                lockOpt.onclick = (e) => {
+                    e.stopPropagation();
+                    selector.remove();
+                    onTowerLockConfirm(x, y, type);
+                };
+                selector.appendChild(lockOpt);
+            });
+        }
+    }
 
     document.body.appendChild(selector);
     setTimeout(() => {
@@ -224,8 +257,8 @@ export function renderTowerHeight(x, y, height) {
     img.src = `./assets/Meeples/Tower${String(clampedHeight).padStart(2, '0')}.png`;
     img.style.position  = 'absolute';
     img.style.left      = '104px';
-    img.style.top       = '104px';
-    img.style.transform = 'translate(-50%, -50%)';
+    img.style.bottom    = '104px'; // ✅ FIX : ancré au centre de la tuile (comme un meeple), grandit vers le haut
+    img.style.transform = 'translateX(-50%)'; // centrage horizontal uniquement — le vertical est géré par "bottom"
     img.style.width     = '90px';
     img.style.height    = 'auto';
     img.style.zIndex    = '55';
@@ -233,6 +266,109 @@ export function renderTowerHeight(x, y, height) {
     img.style.pointerEvents = 'none';
 
     container.appendChild(img);
+
+    // Repositionner le meeple de verrouillage (s'il existe) une fois la hauteur réelle de l'image connue
+    const reposition = () => _positionLockMeepleOverTower(container, img);
+    if (img.complete) reposition();
+    else img.addEventListener('load', reposition);
+}
+
+/**
+ * Positionne le meeple de verrouillage juste au-dessus du sommet réel de l'image de tour.
+ * @private
+ */
+function _positionLockMeepleOverTower(container, towerImg) {
+    const lockImg = container.querySelector('.tower-lock-meeple');
+    if (!lockImg || !towerImg) return;
+    const h = towerImg.offsetHeight || 90;
+    lockImg.style.bottom = `${104 + h - 6}px`; // léger chevauchement pour un rendu "posé au sommet"
+}
+
+/**
+ * Rend le meeple de verrouillage au sommet de la tour.
+ */
+export function renderTowerLockMeeple(x, y, type, color) {
+    const boardEl = document.getElementById('board');
+    const container = boardEl?.querySelector(`.meeple-container[data-pos="${x},${y}"]`);
+    if (!container) return;
+
+    container.querySelector('.tower-lock-meeple')?.remove();
+
+    const img = document.createElement('img');
+    img.className = 'tower-lock-meeple';
+    img.src = `./assets/Meeples/${color}/${type}.png`;
+    img.style.position  = 'absolute';
+    img.style.left      = '104px';
+    img.style.bottom    = '104px'; // repositionné précisément par _positionLockMeepleOverTower
+    img.style.transform = 'translateX(-50%)';
+    img.style.width     = '40px';
+    img.style.height    = 'auto';
+    img.style.zIndex    = '56';
+    img.style.pointerEvents = 'none';
+    container.appendChild(img);
+
+    const towerImg = container.querySelector('.tower-piece');
+    if (towerImg) _positionLockMeepleOverTower(container, towerImg);
+}
+
+// ── Verrouillage ─────────────────────────────────────────────────────────
+
+export function onTowerLockConfirm(x, y, meepleType) {
+    clearTowerCursors();
+    if (_deps.getIsHost()) {
+        executeLockHost(x, y, mp().playerId, meepleType);
+    } else {
+        const hostConn = sync()?.multiplayer?.connections?.[0];
+        if (hostConn?.open) {
+            hostConn.send({ type: 'tower-lock-request', x, y, meepleType, playerId: mp().playerId });
+        }
+    }
+}
+
+/**
+ * [HÔTE] Applique le verrouillage, broadcast à tous.
+ */
+export function executeLockHost(x, y, playerId, meepleType) {
+    const towerRules = tr();
+    const ok = towerRules.lockTower(x, y, playerId, meepleType);
+    if (!ok) return;
+
+    const gameState = gs();
+    const player = gameState.players.find(p => p.id === playerId);
+    const color  = player.color.charAt(0).toUpperCase() + player.color.slice(1);
+
+    applyLockExecuted(x, y, playerId, meepleType, color, player.meeples, player.hasLargeMeeple);
+
+    if (sync()) {
+        sync().syncTowerLockExecuted(x, y, playerId, meepleType, color, player.meeples, player.hasLargeMeeple);
+    }
+    _deps.onUpdateTurnDisplay();
+}
+
+/**
+ * Applique localement un verrouillage reçu du réseau (ou en solo).
+ */
+export function applyLockExecuted(x, y, playerId, meepleType, color, meeples, hasLargeMeeple) {
+    const gameState = gs();
+    const key = `${x},${y}`;
+    if (!gameState.towers[key]) gameState.towers[key] = { height: 0, lockedBy: null, contributions: {} };
+    gameState.towers[key].lockedBy        = playerId;
+    gameState.towers[key].lockMeepleType  = meepleType;
+    gameState.towers[key].lockMeepleColor = color;
+
+    const player = gameState.players.find(p => p.id === playerId);
+    if (player) {
+        player.meeples        = meeples;
+        player.hasLargeMeeple = hasLargeMeeple;
+    }
+
+    renderTowerLockMeeple(x, y, meepleType, color);
+
+    if (playerId === mp().playerId) {
+        const undoManager = _deps.getUndoManager();
+        if (undoManager) undoManager.markMeeplePlaced(x, y, -1, null);
+    }
+    _deps.onUpdateTurnDisplay();
 }
 
 // ── Capture ──────────────────────────────────────────────────────────────
@@ -244,7 +380,7 @@ export function showTowerCaptureCursors(targets) {
     const boardEl = document.getElementById('board');
     if (!boardEl) return;
 
-    targets.forEach(({ key }) => {
+    targets.forEach(({ key, meeple }) => {
         const parts = key.split(',');
         const mx = Number(parts[0]), my = Number(parts[1]), mp2 = Number(parts[2]);
         const row = Math.floor((mp2 - 1) / 5);
@@ -261,12 +397,47 @@ export function showTowerCaptureCursors(targets) {
         btn.style.cssText = `position:absolute;left:${offsetX}px;top:${offsetY}px;width:32px;height:32px;border-radius:50%;border:3px solid rgb(200,0,175);box-shadow:0 0 8px 2px rgba(200,0,175,0.7),inset 0 0 4px rgba(0,0,0,0.8);cursor:pointer;pointer-events:auto;transform:translate(-50%,-50%);animation:abbeRecallPulse 1.2s ease-in-out infinite;`;
         btn.title = 'Capturer ce meeple';
 
-        btn.addEventListener('click', (e) => { e.stopPropagation(); handleTowerCapture(key); });
-        btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); handleTowerCapture(key); }, { passive: false });
+        btn.addEventListener('click', (e) => { e.stopPropagation(); _openTowerCaptureSelector(key, meeple, e.clientX, e.clientY); });
+        btn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); _openTowerCaptureSelector(key, meeple, e.changedTouches[0].clientX, e.changedTouches[0].clientY); }, { passive: false });
 
         overlay.appendChild(btn);
         boardEl.appendChild(overlay);
     });
+}
+
+/**
+ * Sélecteur de confirmation de capture — montre le meeple derrière des barreaux
+ * pour prévisualiser qu'il deviendra prisonnier.
+ */
+function _openTowerCaptureSelector(key, meeple, clientX, clientY) {
+    document.getElementById('meeple-selector')?.remove();
+
+    const selector = document.createElement('div');
+    selector.id = 'meeple-selector';
+    selector.style.cssText = `position:fixed;left:${clientX}px;top:${clientY - 80}px;transform:translateX(-50%);z-index:1000;display:flex;align-items:flex-end;gap:0;padding:2px;background:rgba(44,62,80,0.5);border-radius:8px;border:2px solid rgb(200,0,175);box-shadow:0 4px 20px rgba(0,0,0,0.5);`;
+
+    const option = document.createElement('div');
+    option.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;';
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'position:relative;width:40px;height:40px;';
+    const img = document.createElement('img');
+    img.src = `./assets/Meeples/${meeple.color}/${meeple.type}.png`;
+    img.style.cssText = 'width:40px;height:40px;object-fit:contain;display:block;';
+    wrapper.appendChild(img);
+    const bars = document.createElement('div');
+    bars.style.cssText = 'position:absolute;inset:0;background:repeating-linear-gradient(90deg, rgba(0,0,0,0.9) 0 2px, transparent 2px 8px);pointer-events:none;';
+    wrapper.appendChild(bars);
+    option.appendChild(wrapper);
+    option.onmouseenter = () => { option.style.background = 'rgba(200,0,175,0.2)'; };
+    option.onmouseleave = () => { option.style.background = 'transparent'; };
+    option.onclick = (e) => { e.stopPropagation(); selector.remove(); handleTowerCapture(key); };
+    selector.appendChild(option);
+
+    document.body.appendChild(selector);
+    setTimeout(() => {
+        const close = (e) => { if (!selector.contains(e.target)) { selector.remove(); document.removeEventListener('click', close); } };
+        document.addEventListener('click', close);
+    }, 0);
 }
 
 /**
