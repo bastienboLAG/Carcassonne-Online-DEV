@@ -68,7 +68,7 @@ export function showTowerCursors() {
     const boardEl    = document.getElementById('board');
     if (!boardEl) return;
 
-    eligible.forEach(({ x, y, zoneIndex }) => {
+    eligible.forEach(({ x, y, height, zoneIndex }) => {
         const tile = plateau.placedTiles[`${x},${y}`];
         const zone = tile?.zones?.[zoneIndex];
         if (!zone || zone.meeplePosition == null) return;
