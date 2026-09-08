@@ -145,51 +145,17 @@ export class TowerRules {
     }
 
     /**
-     * Exécute une capture.
-     * - Si le meeple appartient au joueur capturant : retour direct en réserve.
-     * - Sinon : retiré du plateau et ajouté aux prisonniers du capturant (gameState.prisoners).
-     * @returns {{ key, meeple, selfCapture: boolean }|null}
+     * Valide une demande de capture et retourne les infos nécessaires, sans muter l'état.
+     * La mutation réelle (retrait du plateau, ajout aux prisonniers ou retour réserve)
+     * est appliquée de façon identique côté hôte et invités par TowerUI.applyCaptureExecuted,
+     * pour garantir que gameState.prisoners est cohérent partout (pas seulement chez l'hôte).
+     * @returns {{ key, meeple, selfCapture }|null}
      */
     executeCapture(meepleKey, capturingPlayerId, placedMeeples) {
         const meeple = placedMeeples[meepleKey];
         if (!meeple) return null;
-
         const selfCapture = meeple.playerId === capturingPlayerId;
-
-        if (selfCapture) {
-            const player = this.gameState.players.find(p => p.id === capturingPlayerId);
-            if (player) this._returnMeeple(player, meeple.type);
-        } else {
-            if (!this.gameState.prisoners[capturingPlayerId]) this.gameState.prisoners[capturingPlayerId] = [];
-            this.gameState.prisoners[capturingPlayerId].push({
-                type: meeple.type,
-                ownerId: meeple.playerId,
-            });
-        }
-
-        delete placedMeeples[meepleKey];
-
-        // Si la fée était attachée à ce meeple, la retirer (même traitement que le dragon)
-        if (this.gameState.fairyState?.meepleKey === meepleKey) {
-            this.gameState.removeFairy();
-        }
-
         return { key: meepleKey, meeple, selfCapture };
-    }
-
-    /**
-     * Rend un meeple à son joueur selon le type (même logique que DragonRules._returnMeeple).
-     * @private
-     */
-    _returnMeeple(player, type) {
-        switch (type) {
-            case 'Abbot':        player.hasAbbot       = true; break;
-            case 'Large':
-            case 'Large-Farmer': player.hasLargeMeeple = true; break;
-            case 'Builder':      player.hasBuilder     = true; break;
-            case 'Pig':          player.hasPig         = true; break;
-            default:             if (player.meeples < 7) player.meeples++; break;
-        }
     }
 
     /**

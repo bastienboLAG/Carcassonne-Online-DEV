@@ -481,18 +481,54 @@ export function executeTowerCaptureHost(meepleKey, playerId) {
     const result = towerRules.executeCapture(meepleKey, playerId, _deps.getPlacedMeeples());
     if (!result) return;
 
-    applyCaptureExecuted(meepleKey);
+    applyCaptureExecuted(meepleKey, playerId, result.selfCapture, result.meeple.type, result.meeple.playerId);
 
     if (sync()) {
-        sync().syncTowerCaptureExecuted(meepleKey, playerId, result.selfCapture);
+        sync().syncTowerCaptureExecuted(meepleKey, playerId, result.selfCapture, result.meeple.type, result.meeple.playerId);
     }
     _deps.onUpdateTurnDisplay();
 }
 
 /**
- * Applique localement le retrait visuel d'un meeple capturé (reçu du réseau ou en solo).
+ * Applique la capture de façon identique côté hôte ET invités : retrait du plateau,
+ * mutation de gameState.prisoners (ou retour réserve si auto-capture), retrait visuel.
+ * ⚠️ C'est ici et uniquement ici que la mutation a lieu — appelé par le hôte directement
+ * et par les invités via le listener réseau, pour que gameState.prisoners soit cohérent partout.
  */
-export function applyCaptureExecuted(meepleKey) {
+export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, meepleType, ownerId) {
+    const gameState     = gs();
+    const placedMeeples = _deps.getPlacedMeeples();
+
+    if (selfCapture) {
+        const player = gameState.players.find(p => p.id === capturingPlayerId);
+        if (player) _returnCapturedMeeple(player, meepleType);
+    } else if (capturingPlayerId) {
+        if (!gameState.prisoners[capturingPlayerId]) gameState.prisoners[capturingPlayerId] = [];
+        gameState.prisoners[capturingPlayerId].push({ type: meepleType, ownerId });
+    }
+
+    if (gameState.fairyState?.meepleKey === meepleKey) {
+        gameState.removeFairy();
+    }
+
+    delete placedMeeples[meepleKey];
     document.querySelectorAll(`.meeple[data-key="${meepleKey}"]`).forEach(el => el.remove());
     clearTowerCursors();
+}
+
+/**
+ * Rend un meeple capturé (auto-capture) à son propriétaire — même logique que TowerRules,
+ * dupliquée ici volontairement pour que host et invités appliquent la même mutation locale
+ * sans dépendre d'une instance TowerRules (les invités n'en ont pas forcément une active).
+ * @private
+ */
+function _returnCapturedMeeple(player, type) {
+    switch (type) {
+        case 'Abbot':        player.hasAbbot       = true; break;
+        case 'Large':
+        case 'Large-Farmer': player.hasLargeMeeple = true; break;
+        case 'Builder':      player.hasBuilder     = true; break;
+        case 'Pig':          player.hasPig         = true; break;
+        default:             if (player.meeples < 7) player.meeples++; break;
+    }
 }

@@ -670,7 +670,7 @@ export function initNetworkMeepleListeners(eventBus) {
         applyFloorPlaced(data.x, data.y, data.height, data.playerId, data.towerPieces);
     });
     eventBus.on('network-tower-capture-executed', (data) => {
-        applyCaptureExecuted(data.meepleKey);
+        applyCaptureExecuted(data.meepleKey, data.playerId, data.selfCapture, data.meepleType, data.ownerId);
         eventBus.emit('score-updated');
     });
     eventBus.on('network-tower-lock-executed', (data) => {

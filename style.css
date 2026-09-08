@@ -1014,9 +1014,10 @@ h3 .ext-master {
     gap: 4px;
 }
 
-/* ✨ NOUVEAU : une "ligne" de groupe (meeples+spéciaux, ou marchandises) — flex-wrap à l'intérieur d'elle-même */
+/* ✨ NOUVEAU : une "ligne" de groupe (meeples+spéciaux, marchandises, ou prison) — flex-wrap à l'intérieur d'elle-même */
 .meeples-row,
-.goods-row {
+.goods-row,
+.prison-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;

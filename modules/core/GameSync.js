@@ -431,10 +431,10 @@ export class GameSync {
     /**
      * ✨ NOUVEAU — Extension Tour : hôte → tous, capture exécutée
      */
-    syncTowerCaptureExecuted(meepleKey, playerId, selfCapture) {
+    syncTowerCaptureExecuted(meepleKey, playerId, selfCapture, meepleType, ownerId) {
         this.multiplayer.broadcast({
             type: 'tower-capture-executed',
-            meepleKey, playerId, selfCapture
+            meepleKey, playerId, selfCapture, meepleType, ownerId
         });
     }
 

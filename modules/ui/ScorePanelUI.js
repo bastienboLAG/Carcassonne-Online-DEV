@@ -396,6 +396,40 @@ export class ScorePanelUI {
 
             container.appendChild(goodsRow);
         }
+
+        // ✨ NOUVEAU — Ligne 3 : prisonniers (butin), un chip par meeple capturé avec la couleur d'origine
+        if (this.config?.extensions?.tower) {
+            const myPrisoners = this.gameState?.prisoners?.[player.id] ?? [];
+            if (myPrisoners.length > 0) {
+                const prisonRow = document.createElement('div');
+                prisonRow.className = 'prison-row';
+
+                myPrisoners.forEach(({ type, ownerId }) => {
+                    const ownerPlayer = this.gameState.players.find(p => p.id === ownerId);
+                    const ownerColorCap = (ownerPlayer?.color ?? 'black').charAt(0).toUpperCase() + (ownerPlayer?.color ?? 'black').slice(1);
+
+                    const wrap = document.createElement('span');
+                    wrap.style.cssText = 'position:relative;display:inline-flex;';
+
+                    const img = document.createElement('img');
+                    img.src = `./assets/Meeples/${ownerColorCap}/${type}.png`;
+                    const { width, height } = getMeepleSize(type, context);
+                    img.style.width  = width;
+                    img.style.height = height;
+                    img.style.objectFit = 'contain';
+                    wrap.appendChild(img);
+
+                    // Grille de capture — même traitement visuel prévu dans le document de design
+                    const bars = document.createElement('div');
+                    bars.style.cssText = 'position:absolute;inset:0;background:repeating-linear-gradient(90deg, rgba(0,0,0,0.85) 0 1.5px, transparent 1.5px 6px);pointer-events:none;';
+                    wrap.appendChild(bars);
+
+                    prisonRow.appendChild(wrap);
+                });
+
+                container.appendChild(prisonRow);
+            }
+        }
     }
 
     destroy() {
