@@ -55,6 +55,13 @@
     },
     {
       "id": 8,
+      "type": "field",
+      "edges": ["east-bottom", "south-right"],
+      "features": [],
+      "meeplePosition": "21"
+    },
+    {
+      "id": 9,
       "type": "tower",
       "edges": [],
       "features": [],
