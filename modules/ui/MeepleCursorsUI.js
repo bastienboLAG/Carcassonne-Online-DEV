@@ -61,7 +61,7 @@ export class MeepleCursorsUI {
             return [];
         }
         
-        const EXCLUDED_ZONE_TYPES = new Set(['dragon', 'volcano', 'portal']);
+        const EXCLUDED_ZONE_TYPES = new Set(['dragon', 'volcano', 'portal', 'tower']); // ✅ FIX : 'tower' ajouté — sinon un curseur meeple classique apparaît en plus du curseur dédié
         const validPositions = [];
         
         // Pour chaque zone, récupérer ses positions et les faire tourner
@@ -180,7 +180,7 @@ export class MeepleCursorsUI {
                 const mergedZone = this.zoneMerger.findMergedZoneForPosition(x, y, position);
                 if (mergedZone) {
                     const meeplesInZone = this.zoneMerger.getZoneMeeples(mergedZone, placedMeeples);
-                    // Les bâtisseurs ne bloquent pas la zone
+                    // Les bâtisseurs ne bloquent pas la zone pour les autres meeples
                     // Bâtisseurs et cochons ne bloquent pas
                     const blockingMeeples = meeplesInZone.filter(m => m.type !== 'Builder' && m.type !== 'Pig');
 
