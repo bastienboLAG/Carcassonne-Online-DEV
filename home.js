@@ -1200,6 +1200,7 @@ function _makeStarter() {
             getIsHost:           () => isHost,
             getIsMyTurn:         () => isMyTurn,
             onUpdateTurnDisplay: () => updateTurnDisplay(),
+            hideAllCursors:      () => hideAllCursors(),
         }),
         // deps pour initMeepleActionsUI
         getMeepleActionsUIDeps: () => ({

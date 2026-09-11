@@ -216,6 +216,10 @@ export function applyFloorPlaced(x, y, height, playerId, towerPieces) {
         const undoManager = _deps.getUndoManager();
         if (undoManager) undoManager.markMeeplePlaced(x, y, -1, null); // consomme la phase meeple
 
+        // ✅ FIX : nettoyer TOUS les curseurs (meeple classique, fée, tour...) — pas seulement
+        // ceux de la tour — sinon ils restent affichés jusqu'à la fin du tour.
+        _deps.hideAllCursors?.();
+
         const towerRules = tr();
         const targets = towerRules.getCaptureTargets(x, y, _deps.getPlacedMeeples());
         if (targets.length > 0) {
