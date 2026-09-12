@@ -86,6 +86,22 @@ export const MEEPLE_CONFIG = {
         panelMobile: 0.00,
         selector:    0.35,
     },
+
+    // ✨ NOUVEAU — Pion Extension Tour (assets ./assets/Meeples/TowerXX.png)
+    // w/h de référence pour Tower01 — la hauteur réelle varie selon le niveau
+    // (Tower01..Tower10), donc l'affichage sur le plateau (renderTowerHeight)
+    // n'utilise QUE la largeur retournée ici et laisse la hauteur en 'auto'
+    // pour préserver le ratio propre à chaque image de niveau.
+    // plate 1.00 → 90px (taille précédemment codée en dur sur le plateau)
+    // panel 0.18 → ~16px (taille précédemment codée en dur dans ScorePanelUI)
+    // selector 0.44 → ~40px (taille précédemment codée en dur dans le sélecteur)
+    'Tower': {
+        w: 90, h: 90,
+        plate:       1.00,
+        panel:       0.18,
+        panelMobile: 0.14,
+        selector:    0.44,
+    },
 };
 
 /**

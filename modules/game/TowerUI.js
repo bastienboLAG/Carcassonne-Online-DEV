@@ -16,6 +16,10 @@
  *   onUpdateTurnDisplay() → callback
  */
 
+// ✅ FIX : tailles pion tour / meeple de verrouillage désormais pilotées par MeepleConfig.js
+// (au lieu de valeurs en dur), pour être ajustables et cohérentes avec les autres meeples.
+import { getMeepleSize } from '../MeepleConfig.js';
+
 let _deps = null;
 
 function gs()   { return _deps.getGameState(); }
@@ -183,6 +187,11 @@ export function showTowerCursors() {
  * des pièces de tour disponibles — sinon elle échouerait silencieusement côté
  * hôte (TowerRules.canAddFloor renvoie false). Le verrouillage reste proposé
  * indépendamment tant que la tour a au moins 1 étage et qu'un meeple est dispo.
+ *
+ * ✅ FIX : les icônes (tour, meeple normal, grand meeple) utilisent désormais
+ * getMeepleSize() par type au lieu d'un "width:40px" unique pour tout le monde —
+ * corrige le bug où le meeple normal et le grand meeple (avec cadenas) étaient
+ * affichés à la même taille dans ce sélecteur.
  */
 function _openTowerFloorSelector(x, y, height, clientX, clientY) {
     document.getElementById('meeple-selector')?.remove();
@@ -194,13 +203,15 @@ function _openTowerFloorSelector(x, y, height, clientX, clientY) {
     const player = gs().players.find(p => p.id === mp().playerId);
     const hasFloorPieces = (player?.towerPieces ?? 0) > 0;
 
-    // ✅ FIX : icône "poser un étage" uniquement si des pièces sont encore disponibles
+    // ✅ FIX : icône "poser un étage" uniquement si des pièces sont encore disponibles,
+    // taille issue de MeepleConfig ('Tower', 'selector') au lieu de 40px fixe
     if (hasFloorPieces) {
         const option = document.createElement('div');
         option.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;';
         const img = document.createElement('img');
         img.src = './assets/Meeples/Tower01.png';
-        img.style.cssText = 'width:40px;height:auto;display:block;';
+        const { width: towerSelWidth } = getMeepleSize('Tower', 'selector');
+        img.style.cssText = `width:${towerSelWidth};height:auto;display:block;`;
         option.appendChild(img);
         option.onmouseenter = () => { option.style.background = 'rgba(142,68,173,0.2)'; };
         option.onmouseleave = () => { option.style.background = 'transparent'; };
@@ -224,7 +235,9 @@ function _openTowerFloorSelector(x, y, height, clientX, clientY) {
             lockOpt.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;position:relative;';
             const lockImg = document.createElement('img');
             lockImg.src = src;
-            lockImg.style.cssText = 'width:40px;height:auto;display:block;';
+            // ✅ FIX : taille propre à chaque type (Normal vs Large) au lieu de 40px pour les deux
+            const { width: lockWidth, height: lockHeight } = getMeepleSize(type, 'selector');
+            lockImg.style.cssText = `width:${lockWidth};height:${lockHeight};display:block;`;
             lockOpt.appendChild(lockImg);
             const badge = document.createElement('span');
             badge.textContent = '🔒';
@@ -326,6 +339,10 @@ export function applyFloorPlaced(x, y, height, playerId, towerPieces) {
  * au lieu du centre fixe — sinon le pion "saute" par rapport au curseur de pose
  * dès que la zone tower n'est pas en position 13 ou que la tuile est tournée.
  * L'ancrage reste en "bottom" pour que la tour grandisse toujours vers le haut.
+ * ✅ FIX : largeur issue de MeepleConfig ('Tower', 'plate') au lieu de 90px fixe —
+ * rend la taille du pion tour ajustable via le fichier de config, comme les autres
+ * meeples. La hauteur reste en 'auto' pour préserver le ratio propre à chaque
+ * image de niveau (Tower01..Tower10 n'ont pas toutes le même ratio).
  */
 export function renderTowerHeight(x, y, height) {
     const boardEl = document.getElementById('board');
@@ -359,8 +376,9 @@ export function renderTowerHeight(x, y, height) {
     img.style.left      = `${anchorX}px`;
     img.style.bottom    = `${anchorBottom}px`; // ✅ FIX : ancré au point réel de la zone, grandit vers le haut
     img.style.transform = 'translateX(-50%)'; // centrage horizontal uniquement — le vertical est géré par "bottom"
-    img.style.width     = '90px';
-    img.style.height    = 'auto';
+    const { width: towerPlateWidth } = getMeepleSize('Tower', 'plate'); // ✅ FIX : taille ajustable via MeepleConfig
+    img.style.width     = towerPlateWidth;
+    img.style.height    = 'auto'; // préserve le ratio propre à chaque image de niveau
     img.style.zIndex    = '55';
     img.style.opacity   = '0.85'; // légère transparence pour limiter le masquage du plateau
     img.style.pointerEvents = 'none';
@@ -391,6 +409,9 @@ function _positionLockMeepleOverTower(container, towerImg) {
 
 /**
  * Rend le meeple de verrouillage au sommet de la tour.
+ * ✅ FIX : taille issue de MeepleConfig(type, 'plate') au lieu de 40px fixe pour tous les
+ * types — rend la taille ajustable et cohérente avec celle du meeple partout ailleurs
+ * (un grand meeple de verrouillage est maintenant visiblement plus grand qu'un normal).
  */
 export function renderTowerLockMeeple(x, y, type, color) {
     const boardEl = document.getElementById('board');
@@ -406,8 +427,9 @@ export function renderTowerLockMeeple(x, y, type, color) {
     img.style.left      = '104px';
     img.style.bottom    = '104px'; // repositionné précisément par _positionLockMeepleOverTower
     img.style.transform = 'translateX(-50%)';
-    img.style.width     = '40px';
-    img.style.height    = 'auto';
+    const { width: lockWidth, height: lockHeight } = getMeepleSize(type, 'plate'); // ✅ FIX : taille ajustable par type
+    img.style.width     = lockWidth;
+    img.style.height    = lockHeight;
     img.style.zIndex    = '56';
     img.style.pointerEvents = 'none';
     container.appendChild(img);
@@ -530,6 +552,7 @@ export function showTowerCaptureCursors(targets) {
 /**
  * Sélecteur de confirmation de capture — montre le meeple derrière des barreaux
  * pour prévisualiser qu'il deviendra prisonnier.
+ * ✅ FIX : taille issue de MeepleConfig(meeple.type, 'selector') au lieu de 40px fixe.
  */
 function _openTowerCaptureSelector(key, meeple, clientX, clientY) {
     document.getElementById('meeple-selector')?.remove();
@@ -540,11 +563,12 @@ function _openTowerCaptureSelector(key, meeple, clientX, clientY) {
 
     const option = document.createElement('div');
     option.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;';
+    const { width: captureWidth, height: captureHeight } = getMeepleSize(meeple.type, 'selector'); // ✅ FIX : taille par type
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position:relative;width:40px;height:40px;';
+    wrapper.style.cssText = `position:relative;width:${captureWidth};height:${captureHeight};`;
     const img = document.createElement('img');
     img.src = `./assets/Meeples/${meeple.color}/${meeple.type}.png`;
-    img.style.cssText = 'width:40px;height:40px;object-fit:contain;display:block;';
+    img.style.cssText = `width:${captureWidth};height:${captureHeight};object-fit:contain;display:block;`;
     wrapper.appendChild(img);
     const bars = document.createElement('div');
     bars.style.cssText = 'position:absolute;inset:0;background:repeating-linear-gradient(90deg, rgba(0,0,0,0.9) 0 2px, transparent 2px 8px);pointer-events:none;';

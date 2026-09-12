@@ -335,13 +335,16 @@ export class ScorePanelUI {
             specialChips.push(buildMeepleChip('Pig', 'Pig.png', player.hasPig ? 1 : 0));
         }
         // ✨ NOUVEAU : stock de pièces de tour restant
+        // ✅ FIX : taille issue de MeepleConfig('Tower', context) au lieu de '16px' fixe,
+        // pour être ajustable et cohérente avec le reste des tailles de meeples.
         if (this.config?.extensions?.tower) {
             const wrap = document.createElement('span');
             wrap.className = 'meeple-chip';
             const img = document.createElement('img');
             img.src = './assets/Meeples/Tower01.png';
             img.alt = 'Tour';
-            img.style.width  = '16px';
+            const { width: towerChipWidth } = getMeepleSize('Tower', context);
+            img.style.width  = towerChipWidth;
             img.style.height = 'auto';
             img.style.objectFit = 'contain';
             if ((player.towerPieces ?? 0) <= 0) img.classList.add('unavailable');
