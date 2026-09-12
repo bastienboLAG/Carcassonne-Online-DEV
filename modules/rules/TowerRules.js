@@ -111,6 +111,7 @@ export class TowerRules {
         const targets = [];
 
         this._collectMeeplesOnTile(x, y, placedMeeples, targets);
+        this._collectLockedMeepleOnTile(x, y, targets); // ✨ NOUVEAU : garde verrouillé sur cette tuile
 
         const directions = [
             { dx: 0, dy: -1 }, // nord
@@ -125,6 +126,7 @@ export class TowerRules {
                 const ny = y + dy * step;
                 if (!this.plateau.placedTiles[`${nx},${ny}`]) break; // trou = ligne interrompue
                 this._collectMeeplesOnTile(nx, ny, placedMeeples, targets);
+                this._collectLockedMeepleOnTile(nx, ny, targets); // ✨ NOUVEAU : garde verrouillé sur une tuile de la ligne
             }
         });
 
@@ -145,6 +147,24 @@ export class TowerRules {
     }
 
     /**
+     * ✨ NOUVEAU : ajoute à `targets` le meeple verrouillant la tour (x,y), s'il existe et est capturable.
+     * Un meeple qui verrouille une tour n'est PAS stocké dans placedMeeples (voir TowerRules.lockTower /
+     * TowerUI.applyLockExecuted) — il vit uniquement dans gameState.towers[x,y]. On lui attribue donc
+     * une clé spéciale "tower-lock:x,y" (jamais en collision avec une clé meeple classique "x,y,position")
+     * pour que TowerUI puisse le distinguer lors de l'exécution de la capture.
+     * @private
+     */
+    _collectLockedMeepleOnTile(x, y, targets) {
+        const tower = this.gameState.towers[`${x},${y}`];
+        if (!tower?.lockedBy) return;
+        if (!isTowerCapturable(tower.lockMeepleType)) return;
+        targets.push({
+            key: `tower-lock:${x},${y}`,
+            meeple: { type: tower.lockMeepleType, color: tower.lockMeepleColor, playerId: tower.lockedBy }
+        });
+    }
+
+    /**
      * Valide une demande de capture et retourne les infos nécessaires, sans muter l'état.
      * La mutation réelle (retrait du plateau, ajout aux prisonniers ou retour réserve)
      * est appliquée de façon identique côté hôte et invités par TowerUI.applyCaptureExecuted,
@@ -152,6 +172,16 @@ export class TowerRules {
      * @returns {{ key, meeple, selfCapture }|null}
      */
     executeCapture(meepleKey, capturingPlayerId, placedMeeples) {
+        // ✨ NOUVEAU : capture d'un garde verrouillant une tour — résolu depuis gameState.towers
+        if (meepleKey.startsWith('tower-lock:')) {
+            const coords = meepleKey.slice('tower-lock:'.length);
+            const tower  = this.gameState.towers[coords];
+            if (!tower?.lockedBy) return null;
+            const meeple = { type: tower.lockMeepleType, color: tower.lockMeepleColor, playerId: tower.lockedBy };
+            const selfCapture = meeple.playerId === capturingPlayerId;
+            return { key: meepleKey, meeple, selfCapture };
+        }
+
         const meeple = placedMeeples[meepleKey];
         if (!meeple) return null;
         const selfCapture = meeple.playerId === capturingPlayerId;
