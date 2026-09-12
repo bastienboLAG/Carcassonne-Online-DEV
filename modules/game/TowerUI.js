@@ -70,6 +70,30 @@ function _getTowerAnchor(x, y) {
     return { left: 104, bottom: 104 - FLOOR_CURSOR_RADIUS };
 }
 
+/**
+ * ✨ NOUVEAU : ancrage visuel (left/top en px, repère 'top') du meeple qui verrouille
+ * une tour, pour y placer précisément le curseur de capture. Lit directement la position
+ * déjà calculée et appliquée par _positionLockMeepleOverTower() sur l'image rendue
+ * (.tower-lock-meeple), pour rester correct quelle que soit la hauteur/rotation de la tour.
+ * @returns {{ left: number, top: number }}
+ * @private
+ */
+function _getTowerLockMeepleAnchor(x, y) {
+    const boardEl = document.getElementById('board');
+    const lockImg = boardEl?.querySelector(`.meeple-container[data-pos="${x},${y}"] .tower-lock-meeple`);
+    if (lockImg) {
+        const left     = parseFloat(lockImg.style.left)   || 104;
+        const bottomPx = parseFloat(lockImg.style.bottom) || 104;
+        const h        = lockImg.offsetHeight || 60;
+        // Centre vertical du pion (repère 'bottom' → 'top')
+        const top = 208 - bottomPx - (h / 2);
+        return { left, top };
+    }
+    // Fallback : approximation au sommet de la tour si l'image n'est pas encore rendue
+    const anchor = _getTowerAnchor(x, y);
+    return { left: anchor.left, top: 208 - anchor.bottom - 30 };
+}
+
 // ── Curseurs de pose d'étage ─────────────────────────────────────────────
 
 export function clearTowerCursors() {
@@ -284,6 +308,8 @@ export function applyFloorPlaced(x, y, height, playerId, towerPieces) {
         _deps.hideAllCursors?.();
 
         const towerRules = tr();
+        // ✨ NOUVEAU : getCaptureTargets inclut désormais les gardes verrouillant une tour
+        // (clé spéciale "tower-lock:x,y"), en plus des meeples classiques de placedMeeples.
         const targets = towerRules.getCaptureTargets(x, y, _deps.getPlacedMeeples());
         if (targets.length > 0) {
             gameState._pendingTowerCapture = { x, y, targets: targets.map(t => t.key) };
@@ -454,18 +480,35 @@ export function applyLockExecuted(x, y, playerId, meepleType, color, meeples, ha
 
 /**
  * Affiche un curseur (même style que les abbés récupérables) sur chaque meeple capturable.
+ * ✨ NOUVEAU : sait positionner le curseur sur un garde verrouillant une tour (clé "tower-lock:x,y"),
+ * en s'ancrant sur la position réelle déjà rendue par renderTowerLockMeeple(), quelle que soit
+ * la hauteur ou la rotation de la tour concernée.
  */
 export function showTowerCaptureCursors(targets) {
     const boardEl = document.getElementById('board');
     if (!boardEl) return;
 
     targets.forEach(({ key, meeple }) => {
-        const parts = key.split(',');
-        const mx = Number(parts[0]), my = Number(parts[1]), mp2 = Number(parts[2]);
-        const row = Math.floor((mp2 - 1) / 5);
-        const col = (mp2 - 1) % 5;
-        const offsetX = 20.8 + col * 41.6;
-        const offsetY = 20.8 + row * 41.6;
+        const isTowerLock = key.startsWith('tower-lock:');
+        let mx, my, offsetX, offsetY;
+
+        if (isTowerLock) {
+            // ✨ NOUVEAU : clé "tower-lock:x,y" — coordonnées après le préfixe
+            const coords = key.slice('tower-lock:'.length);
+            [mx, my] = coords.split(',').map(Number);
+            const anchor = _getTowerLockMeepleAnchor(mx, my);
+            offsetX = anchor.left;
+            offsetY = anchor.top;
+        } else {
+            const parts = key.split(',');
+            mx = Number(parts[0]);
+            my = Number(parts[1]);
+            const mp2 = Number(parts[2]);
+            const row = Math.floor((mp2 - 1) / 5);
+            const col = (mp2 - 1) % 5;
+            offsetX = 20.8 + col * 41.6;
+            offsetY = 20.8 + row * 41.6;
+        }
 
         const overlay = document.createElement('div');
         overlay.className = 'tower-capture-cursor-overlay';
@@ -522,6 +565,8 @@ function _openTowerCaptureSelector(key, meeple, clientX, clientY) {
 /**
  * Ré-affiche les curseurs de capture en attente (ex: après un rafraîchissement d'UI),
  * en reconstruisant les cibles depuis gameState._pendingTowerCapture.
+ * ✨ NOUVEAU : sait résoudre une cible "tower-lock:x,y" (absente de placedMeeples)
+ * en relisant l'état du verrouillage dans gameState.towers.
  */
 export function showPendingTowerCaptureIfAny() {
     const gameState = gs();
@@ -530,11 +575,26 @@ export function showPendingTowerCaptureIfAny() {
 
     const placedMeeples = _deps.getPlacedMeeples();
     const targets = pending.targets
-        .map(key => ({ key, meeple: placedMeeples[key] }))
+        .map(key => ({ key, meeple: _resolveCaptureTargetMeeple(key, placedMeeples) }))
         .filter(t => t.meeple);
 
     if (targets.length === 0) { gameState._pendingTowerCapture = null; return; }
     showTowerCaptureCursors(targets);
+}
+
+/**
+ * ✨ NOUVEAU : résout le meeple correspondant à une clé de cible de capture, qu'il s'agisse
+ * d'un meeple classique (placedMeeples) ou d'un garde verrouillant une tour (gameState.towers).
+ * @private
+ */
+function _resolveCaptureTargetMeeple(key, placedMeeples) {
+    if (key.startsWith('tower-lock:')) {
+        const coords = key.slice('tower-lock:'.length);
+        const tower  = gs().towers[coords];
+        if (!tower?.lockedBy) return null;
+        return { type: tower.lockMeepleType, color: tower.lockMeepleColor, playerId: tower.lockedBy };
+    }
+    return placedMeeples[key] ?? null;
 }
 
 export function handleTowerCapture(meepleKey) {
@@ -573,6 +633,10 @@ export function executeTowerCaptureHost(meepleKey, playerId) {
  * mutation de gameState.prisoners (ou retour réserve si auto-capture), retrait visuel.
  * ⚠️ C'est ici et uniquement ici que la mutation a lieu — appelé par le hôte directement
  * et par les invités via le listener réseau, pour que gameState.prisoners soit cohérent partout.
+ *
+ * ✨ NOUVEAU : si la clé capturée est un garde verrouillant une tour ("tower-lock:x,y"),
+ * la tour est déverrouillée (lockedBy/lockMeepleType/lockMeepleColor réinitialisés) et le
+ * pion visuel de verrouillage est retiré, au lieu de toucher placedMeeples.
  */
 export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, meepleType, ownerId) {
     const gameState     = gs();
@@ -584,6 +648,22 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
     } else if (capturingPlayerId) {
         if (!gameState.prisoners[capturingPlayerId]) gameState.prisoners[capturingPlayerId] = [];
         gameState.prisoners[capturingPlayerId].push({ type: meepleType, ownerId });
+    }
+
+    // ✨ NOUVEAU : capture d'un garde verrouillant une tour — déverrouille la tour
+    // et retire le pion visuel au lieu de manipuler placedMeeples.
+    if (meepleKey.startsWith('tower-lock:')) {
+        const coords = meepleKey.slice('tower-lock:'.length);
+        const tower  = gameState.towers[coords];
+        if (tower) {
+            tower.lockedBy        = null;
+            tower.lockMeepleType  = null;
+            tower.lockMeepleColor = null;
+        }
+        const [tx, ty] = coords.split(',');
+        document.querySelector(`.meeple-container[data-pos="${tx},${ty}"] .tower-lock-meeple`)?.remove();
+        clearTowerCursors();
+        return;
     }
 
     if (gameState.fairyState?.meepleKey === meepleKey) {
