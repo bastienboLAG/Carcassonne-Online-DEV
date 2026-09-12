@@ -44,11 +44,6 @@ export function tileHasTowerZone(tileData) {
  * @private
  */
 function _getTowerAnchor(x, y) {
-    // ✅ FIX : le curseur "poser un étage" (.tower-floor-cursor) fait 38px de diamètre
-    // et est centré sur la position via translate(-50%,-50%) — sans ce décalage, la tour
-    // s'ancrait au CENTRE du curseur au lieu de son BAS. On descend donc du rayon (19px).
-    const FLOOR_CURSOR_RADIUS = 19;
-
     const plateau    = _deps.getPlateau();
     const zoneMerger = _deps.getZoneMerger();
     const tile = plateau?.placedTiles?.[`${x},${y}`];
@@ -63,11 +58,11 @@ function _getTowerAnchor(x, y) {
             const col = (pos - 1) % 5;
             const offsetX = 20.8 + col * 41.6;
             const offsetY = 20.8 + row * 41.6;
-            return { left: offsetX, bottom: 208 - offsetY - FLOOR_CURSOR_RADIUS };
+            return { left: offsetX, bottom: 208 - offsetY };
         }
     }
     // Fallback : centre de la tuile (ancien comportement, si zone introuvable)
-    return { left: 104, bottom: 104 - FLOOR_CURSOR_RADIUS };
+    return { left: 104, bottom: 104 };
 }
 
 // ── Curseurs de pose d'étage ─────────────────────────────────────────────
@@ -77,9 +72,14 @@ export function clearTowerCursors() {
 }
 
 /**
- * Affiche un curseur "poser un étage" sur chaque tuile tower éligible du plateau,
- * uniquement pour le joueur actif, s'il lui reste des pièces et n'a pas encore
- * utilisé sa phase meeple ce tour-ci.
+ * Affiche un curseur "poser un étage" / "verrouiller" sur chaque tuile tower
+ * éligible du plateau, uniquement pour le joueur actif.
+ *
+ * ✅ FIX : le curseur ne doit plus disparaître totalement dès que le joueur
+ * n'a plus de pièce de tour — il doit rester possible de verrouiller une tour
+ * déjà commencée (hauteur ≥ 1, non verrouillée) tant qu'il reste un meeple
+ * normal ou un grand meeple posable. Le curseur ne disparaît complètement que
+ * si le joueur n'a NI pièce de tour NI meeple posable pour un verrouillage.
  */
 export function showTowerCursors() {
     const gameConfig = cfg();
@@ -91,7 +91,12 @@ export function showTowerCursors() {
 
     const gameState  = gs();
     const player     = gameState.players.find(p => p.id === mp().playerId);
-    if (!player || (player.towerPieces ?? 0) <= 0) return;
+    if (!player) return;
+
+    // ✅ FIX : calculer séparément les deux actions possibles (poser un étage / verrouiller)
+    const hasFloorPieces    = (player.towerPieces ?? 0) > 0;
+    const hasLockableMeeple = (player.meeples ?? 0) > 0 || player.hasLargeMeeple === true;
+    if (!hasFloorPieces && !hasLockableMeeple) return;
 
     const towerRules = tr();
     if (!towerRules) return;
@@ -105,6 +110,12 @@ export function showTowerCursors() {
     if (!boardEl) return;
 
     eligible.forEach(({ x, y, height, zoneIndex }) => {
+        // ✅ FIX : n'afficher le curseur sur cette tuile que si une action y est réellement
+        // possible — poser un étage (pièces dispo) ou verrouiller (tour déjà commencée + meeple dispo).
+        const canAddFloorHere = hasFloorPieces;
+        const canLockHere     = height >= 1 && hasLockableMeeple;
+        if (!canAddFloorHere && !canLockHere) return;
+
         const tile = plateau.placedTiles[`${x},${y}`];
         const zone = tile?.zones?.[zoneIndex];
         if (!zone || zone.meeplePosition == null) return;
@@ -138,6 +149,11 @@ export function showTowerCursors() {
 /**
  * Ouvre un mini-sélecteur avec l'icône de tour, pour confirmer explicitement
  * l'intention de poser un étage (même pattern que le sélecteur abbé/fée).
+ *
+ * ✅ FIX : l'option "poser un étage" n'est proposée que si le joueur a encore
+ * des pièces de tour disponibles — sinon elle échouerait silencieusement côté
+ * hôte (TowerRules.canAddFloor renvoie false). Le verrouillage reste proposé
+ * indépendamment tant que la tour a au moins 1 étage et qu'un meeple est dispo.
  */
 function _openTowerFloorSelector(x, y, height, clientX, clientY) {
     document.getElementById('meeple-selector')?.remove();
@@ -146,53 +162,59 @@ function _openTowerFloorSelector(x, y, height, clientX, clientY) {
     selector.id = 'meeple-selector';
     selector.style.cssText = `position:fixed;left:${clientX}px;top:${clientY - 80}px;transform:translateX(-50%);z-index:1000;display:flex;align-items:flex-end;gap:0;padding:2px;background:rgba(44,62,80,0.5);border-radius:8px;border:2px solid #8e44ad;box-shadow:0 4px 20px rgba(0,0,0,0.5);`;
 
-    const option = document.createElement('div');
-    option.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;';
-    const img = document.createElement('img');
-    img.src = './assets/Meeples/Tower01.png';
-    img.style.cssText = 'width:40px;height:auto;display:block;';
-    option.appendChild(img);
-    option.onmouseenter = () => { option.style.background = 'rgba(142,68,173,0.2)'; };
-    option.onmouseleave = () => { option.style.background = 'transparent'; };
-    option.onclick = (e) => {
-        e.stopPropagation();
-        selector.remove();
-        onTowerFloorConfirm(x, y);
-    };
-    selector.appendChild(option);
+    const player = gs().players.find(p => p.id === mp().playerId);
+    const hasFloorPieces = (player?.towerPieces ?? 0) > 0;
 
-    // ✨ NOUVEAU — Verrouillage : proposé uniquement si une tour existe déjà (au moins 1 étage)
-    if (height >= 1) {
-        const player = gs().players.find(p => p.id === mp().playerId);
-        if (player) {
-            const colorCap = player.color.charAt(0).toUpperCase() + player.color.slice(1);
-            const lockOptions = [];
-            if ((player.meeples ?? 0) > 0) lockOptions.push({ type: 'Normal', src: `./assets/Meeples/${colorCap}/Normal.png` });
-            if (player.hasLargeMeeple)     lockOptions.push({ type: 'Large',  src: `./assets/Meeples/${colorCap}/Large.png`  });
-
-            lockOptions.forEach(({ type, src }) => {
-                const lockOpt = document.createElement('div');
-                lockOpt.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;position:relative;';
-                const lockImg = document.createElement('img');
-                lockImg.src = src;
-                lockImg.style.cssText = 'width:40px;height:auto;display:block;';
-                lockOpt.appendChild(lockImg);
-                const badge = document.createElement('span');
-                badge.textContent = '🔒';
-                badge.style.cssText = 'position:absolute;top:-4px;right:-4px;font-size:12px;text-shadow:0 0 3px rgba(0,0,0,0.8);';
-                lockOpt.appendChild(badge);
-                lockOpt.title = 'Verrouiller la tour avec ce meeple';
-                lockOpt.onmouseenter = () => { lockOpt.style.background = 'rgba(142,68,173,0.2)'; };
-                lockOpt.onmouseleave = () => { lockOpt.style.background = 'transparent'; };
-                lockOpt.onclick = (e) => {
-                    e.stopPropagation();
-                    selector.remove();
-                    onTowerLockConfirm(x, y, type);
-                };
-                selector.appendChild(lockOpt);
-            });
-        }
+    // ✅ FIX : icône "poser un étage" uniquement si des pièces sont encore disponibles
+    if (hasFloorPieces) {
+        const option = document.createElement('div');
+        option.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;';
+        const img = document.createElement('img');
+        img.src = './assets/Meeples/Tower01.png';
+        img.style.cssText = 'width:40px;height:auto;display:block;';
+        option.appendChild(img);
+        option.onmouseenter = () => { option.style.background = 'rgba(142,68,173,0.2)'; };
+        option.onmouseleave = () => { option.style.background = 'transparent'; };
+        option.onclick = (e) => {
+            e.stopPropagation();
+            selector.remove();
+            onTowerFloorConfirm(x, y);
+        };
+        selector.appendChild(option);
     }
+
+    // Verrouillage : proposé uniquement si une tour existe déjà (au moins 1 étage)
+    if (height >= 1 && player) {
+        const colorCap = player.color.charAt(0).toUpperCase() + player.color.slice(1);
+        const lockOptions = [];
+        if ((player.meeples ?? 0) > 0) lockOptions.push({ type: 'Normal', src: `./assets/Meeples/${colorCap}/Normal.png` });
+        if (player.hasLargeMeeple)     lockOptions.push({ type: 'Large',  src: `./assets/Meeples/${colorCap}/Large.png`  });
+
+        lockOptions.forEach(({ type, src }) => {
+            const lockOpt = document.createElement('div');
+            lockOpt.style.cssText = 'cursor:pointer;padding:4px;border-radius:5px;position:relative;';
+            const lockImg = document.createElement('img');
+            lockImg.src = src;
+            lockImg.style.cssText = 'width:40px;height:auto;display:block;';
+            lockOpt.appendChild(lockImg);
+            const badge = document.createElement('span');
+            badge.textContent = '🔒';
+            badge.style.cssText = 'position:absolute;top:-4px;right:-4px;font-size:12px;text-shadow:0 0 3px rgba(0,0,0,0.8);';
+            lockOpt.appendChild(badge);
+            lockOpt.title = 'Verrouiller la tour avec ce meeple';
+            lockOpt.onmouseenter = () => { lockOpt.style.background = 'rgba(142,68,173,0.2)'; };
+            lockOpt.onmouseleave = () => { lockOpt.style.background = 'transparent'; };
+            lockOpt.onclick = (e) => {
+                e.stopPropagation();
+                selector.remove();
+                onTowerLockConfirm(x, y, type);
+            };
+            selector.appendChild(lockOpt);
+        });
+    }
+
+    // Si aucune option n'a pu être ajoutée (cas limite), ne rien afficher
+    if (!selector.hasChildNodes()) return;
 
     document.body.appendChild(selector);
     setTimeout(() => {
