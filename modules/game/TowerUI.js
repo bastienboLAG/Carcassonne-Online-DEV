@@ -34,6 +34,37 @@ export function tileHasTowerZone(tileData) {
     return tileData?.zones?.some(z => z.type === 'tower') ?? false;
 }
 
+/**
+ * Calcule l'ancrage visuel (left/bottom en px, relatif au conteneur 208×208)
+ * de la zone tower d'une tuile, en tenant compte de sa rotation actuelle.
+ * Reprend exactement le même calcul que showTowerCursors() (offsetX/offsetY
+ * depuis le haut), converti en repère "bottom" (depuis le bas) puisque le
+ * pion de tour grandit vers le haut à partir de ce point.
+ * @returns {{ left: number, bottom: number }} — fallback centre (104,104) si zone introuvable
+ * @private
+ */
+function _getTowerAnchor(x, y) {
+    const plateau    = _deps.getPlateau();
+    const zoneMerger = _deps.getZoneMerger();
+    const tile = plateau?.placedTiles?.[`${x},${y}`];
+    const towerZoneIndex = tile?.zones?.findIndex(z => z.type === 'tower') ?? -1;
+
+    if (tile && towerZoneIndex !== -1) {
+        const zone = tile.zones[towerZoneIndex];
+        const rawPos = Array.isArray(zone.meeplePosition) ? zone.meeplePosition[0] : zone.meeplePosition;
+        if (rawPos != null) {
+            const pos = zoneMerger ? zoneMerger._rotatePosition(rawPos, tile.rotation) : Number(rawPos);
+            const row = Math.floor((pos - 1) / 5);
+            const col = (pos - 1) % 5;
+            const offsetX = 20.8 + col * 41.6;
+            const offsetY = 20.8 + row * 41.6;
+            return { left: offsetX, bottom: 208 - offsetY };
+        }
+    }
+    // Fallback : centre de la tuile (ancien comportement, si zone introuvable)
+    return { left: 104, bottom: 104 };
+}
+
 // ── Curseurs de pose d'étage ─────────────────────────────────────────────
 
 export function clearTowerCursors() {
@@ -233,6 +264,10 @@ export function applyFloorPlaced(x, y, height, playerId, towerPieces) {
 /**
  * Rendu visuel de la tour à la hauteur donnée.
  * Utilise les assets ./assets/Meeples/TowerXX.png (01 à 10).
+ * ✅ FIX : ancré sur la position réelle (rotée) de la zone tower de la tuile,
+ * au lieu du centre fixe — sinon le pion "saute" par rapport au curseur de pose
+ * dès que la zone tower n'est pas en position 13 ou que la tuile est tournée.
+ * L'ancrage reste en "bottom" pour que la tour grandisse toujours vers le haut.
  */
 export function renderTowerHeight(x, y, height) {
     const boardEl = document.getElementById('board');
@@ -255,13 +290,16 @@ export function renderTowerHeight(x, y, height) {
 
     container.querySelector('.tower-piece')?.remove();
 
+    // ✅ FIX : position réelle de la zone tower (rotée) au lieu du centre fixe 104/104
+    const { left: anchorX, bottom: anchorBottom } = _getTowerAnchor(x, y);
+
     const clampedHeight = Math.min(height, 10);
     const img = document.createElement('img');
     img.className = 'tower-piece';
     img.src = `./assets/Meeples/Tower${String(clampedHeight).padStart(2, '0')}.png`;
     img.style.position  = 'absolute';
-    img.style.left      = '104px';
-    img.style.bottom    = '104px'; // ✅ FIX : ancré au centre de la tuile (comme un meeple), grandit vers le haut
+    img.style.left      = `${anchorX}px`;
+    img.style.bottom    = `${anchorBottom}px`; // ✅ FIX : ancré au point réel de la zone, grandit vers le haut
     img.style.transform = 'translateX(-50%)'; // centrage horizontal uniquement — le vertical est géré par "bottom"
     img.style.width     = '90px';
     img.style.height    = 'auto';
@@ -279,13 +317,18 @@ export function renderTowerHeight(x, y, height) {
 
 /**
  * Positionne le meeple de verrouillage juste au-dessus du sommet réel de l'image de tour.
+ * ✅ FIX : se cale sur l'ancrage réel du pion de tour (left/bottom lus directement sur
+ * l'image, désormais variables selon la zone/rotation) au lieu de la constante 104 en dur.
  * @private
  */
 function _positionLockMeepleOverTower(container, towerImg) {
     const lockImg = container.querySelector('.tower-lock-meeple');
     if (!lockImg || !towerImg) return;
     const h = towerImg.offsetHeight || 90;
-    lockImg.style.bottom = `${104 + h - 6}px`; // léger chevauchement pour un rendu "posé au sommet"
+    const towerLeft   = parseFloat(towerImg.style.left)   || 104;
+    const towerBottom = parseFloat(towerImg.style.bottom) || 104;
+    lockImg.style.left   = `${towerLeft}px`;
+    lockImg.style.bottom = `${towerBottom + h - 6}px`; // léger chevauchement pour un rendu "posé au sommet"
 }
 
 /**
