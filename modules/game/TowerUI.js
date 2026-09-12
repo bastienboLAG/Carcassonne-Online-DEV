@@ -44,6 +44,11 @@ export function tileHasTowerZone(tileData) {
  * @private
  */
 function _getTowerAnchor(x, y) {
+    // ✅ FIX : le curseur "poser un étage" (.tower-floor-cursor) fait 38px de diamètre
+    // et est centré sur la position via translate(-50%,-50%) — sans ce décalage, la tour
+    // s'ancrait au CENTRE du curseur au lieu de son BAS. On descend donc du rayon (19px).
+    const FLOOR_CURSOR_RADIUS = 19;
+
     const plateau    = _deps.getPlateau();
     const zoneMerger = _deps.getZoneMerger();
     const tile = plateau?.placedTiles?.[`${x},${y}`];
@@ -58,11 +63,11 @@ function _getTowerAnchor(x, y) {
             const col = (pos - 1) % 5;
             const offsetX = 20.8 + col * 41.6;
             const offsetY = 20.8 + row * 41.6;
-            return { left: offsetX, bottom: 208 - offsetY };
+            return { left: offsetX, bottom: 208 - offsetY - FLOOR_CURSOR_RADIUS };
         }
     }
     // Fallback : centre de la tuile (ancien comportement, si zone introuvable)
-    return { left: 104, bottom: 104 };
+    return { left: 104, bottom: 104 - FLOOR_CURSOR_RADIUS };
 }
 
 // ── Curseurs de pose d'étage ─────────────────────────────────────────────
