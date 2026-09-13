@@ -99,7 +99,7 @@ export const MEEPLE_CONFIG = {
         w: 90, h: 90,
         plate:       1.00,
         panel:       0.4,
-        panelMobile: 0.4,
+        panelMobile: 0.35,
         selector:    0.44,
     },
 };
