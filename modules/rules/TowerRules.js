@@ -6,6 +6,7 @@
  *   - Poser un étage (gratuit en points, consomme une pièce du stock du joueur)
  *   - Calculer la portée de capture (ligne continue dans les 4 directions, distance = hauteur)
  *   - Exécuter une capture (retour réserve si soi-même, sinon prisonnier de l'adversaire)
+ *   - Détecter les échanges automatiques de prisonniers (réciprocité entre deux joueurs)
  *
  * État stocké dans GameState.towers : Map "x,y" -> { height, lockedBy }
  * (lockedBy réservé pour une passe future — toujours null ici)
@@ -186,6 +187,28 @@ export class TowerRules {
         if (!meeple) return null;
         const selfCapture = meeple.playerId === capturingPlayerId;
         return { key: meepleKey, meeple, selfCapture };
+    }
+
+    /**
+     * ✨ NOUVEAU — Échange automatique de prisonniers
+     * Vérifie si le joueur qui vient de capturer (capturingPlayerId) devient éligible à un
+     * échange réciproque : le joueur dont le meeple a été capturé (capturedOwnerId) détient-il
+     * déjà, parmi SES prisonniers, un ou plusieurs meeples appartenant à capturingPlayerId ?
+     *
+     * Ne mute rien — pure lecture, la résolution effective (retrait du prisonnier concerné,
+     * retour en réserve, modale, réseau) est faite dans TowerUI (même principe de séparation
+     * que executeCapture() / applyCaptureExecuted()).
+     *
+     * @param {string} capturingPlayerId — joueur qui vient de capturer (toujours le joueur actif)
+     * @param {string} capturedOwnerId   — propriétaire d'origine du meeple qui vient d'être capturé
+     * @returns {Array<string>} types distincts de meeples de capturingPlayerId détenus par capturedOwnerId
+     *          (tableau vide si aucune réciprocité)
+     */
+    checkReciprocalCapture(capturingPlayerId, capturedOwnerId) {
+        const held = this.gameState.prisoners[capturedOwnerId] ?? [];
+        return [...new Set(
+            held.filter(p => p.ownerId === capturingPlayerId).map(p => p.type)
+        )];
     }
 
     /**

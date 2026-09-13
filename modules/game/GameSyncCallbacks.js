@@ -1,5 +1,8 @@
 import { Tile } from '../Tile.js';
-import { executeAddFloorHost, executeTowerCaptureHost, executeLockHost } from './TowerUI.js'; // ✨ NOUVEAU
+import {
+    executeAddFloorHost, executeTowerCaptureHost, executeLockHost,
+    applyPrisonerExchangeResolved, applyPrisonerExchangePending, executePrisonerChoiceHost, // ✨ NOUVEAU
+} from './TowerUI.js';
 
 /**
  * GameSyncCallbacks - Factorise tous les callbacks réseau (hôte et invités)
@@ -215,6 +218,18 @@ export class GameSyncCallbacks {
         gs.onTowerLockExecuted = (data) => {
             if (this.isHost) return;
             this.eventBus.emit('network-tower-lock-executed', data);
+        };
+
+        // ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour)
+        // Appliqué directement (pas via eventBus) : TowerUI expose déjà des fonctions
+        // d'application idempotentes utilisables aussi bien côté hôte que côté invités.
+        gs.onPrisonerExchangeResolved = (data) => {
+            if (this.isHost) return; // l'hôte a déjà appliqué directement dans _checkAndHandleReciprocalExchange
+            applyPrisonerExchangeResolved(data.opponentId, data.chooserId, data.chosenType);
+        };
+        gs.onPrisonerExchangePending = (data) => {
+            if (this.isHost) return;
+            applyPrisonerExchangePending(data.opponentId, data.chooserId, data.availableTypes);
         };
 
         if (isHost) this._attachHostCallbacks(gs);
@@ -465,6 +480,15 @@ export class GameSyncCallbacks {
             if (data.type === 'tower-lock-request') {
                 if (this.gameState.getCurrentPlayer()?.id !== from) { console.warn('⚠️ tower-lock-request rejeté de', from); return; }
                 executeLockHost(data.x, data.y, from, data.meepleType);
+                return;
+            }
+            // ✨ NOUVEAU — Échange automatique de prisonniers : requête de choix invité → hôte.
+            // Validé contre le joueur choisisseur en attente (pas forcément le joueur actif au
+            // sens strict de gameState.currentPlayerIndex, même si en pratique c'est toujours lui).
+            if (data.type === 'prisoner-exchange-choice-request') {
+                const pending = this.gameState._pendingPrisonerExchange;
+                if (!pending || pending.chooserId !== from) { console.warn('⚠️ prisoner-exchange-choice-request rejeté de', from); return; }
+                executePrisonerChoiceHost(data.chosenType, from);
                 return;
             }
             if (prev) prev(data, from);

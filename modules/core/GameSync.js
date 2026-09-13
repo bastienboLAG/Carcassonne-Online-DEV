@@ -33,6 +33,9 @@ export class GameSync {
         this.onTowerFloorPlaced     = null;
         this.onTowerCaptureExecuted = null;
         this.onTowerLockExecuted    = null;
+        // ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour)
+        this.onPrisonerExchangeResolved = null;
+        this.onPrisonerExchangePending  = null;
     }
 
     /**
@@ -68,9 +71,13 @@ export class GameSync {
             'dragon-state-update', 'dragon-move-request', 'fairy-placed-sync',
             'dragon-premature-tile', 'dragon-end-turn-request', 'princess-ejected', 'princess-eject-request',
             'portal-meeple-placed', 'portal-meeple-request',
-            'tower-floor-placed', 'tower-capture-executed', 'tower-lock-executed' // ✨ NOUVEAU
+            'tower-floor-placed', 'tower-capture-executed', 'tower-lock-executed', // ✨ NOUVEAU
+            'prisoner-exchange-resolved', 'prisoner-exchange-pending' // ✨ NOUVEAU — Échange auto de prisonniers
             // NOTE: 'return-to-lobby', 'player-order-update' et 'game-starting' 
             //       sont gérés par le lobby handler
+            // NOTE: 'tower-floor-request', 'tower-capture-request', 'tower-lock-request' et
+            //       'prisoner-exchange-choice-request' (invité → hôte) sont interceptés
+            //       directement dans GameSyncCallbacks._attachHostCallbacks, pas ici.
         ];
         return gameMessages.includes(type);
     }
@@ -449,6 +456,28 @@ export class GameSync {
     }
 
     /**
+     * ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour) : hôte → tous,
+     * échange résolu (résolution immédiate sans ambiguïté, ou après un choix du joueur concerné)
+     */
+    syncPrisonerExchangeResolved(opponentId, chooserId, chosenType) {
+        this.multiplayer.broadcast({
+            type: 'prisoner-exchange-resolved',
+            opponentId, chooserId, chosenType
+        });
+    }
+
+    /**
+     * ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour) : hôte → tous,
+     * choix en attente (plusieurs types de meeples possibles, le joueur concerné doit choisir)
+     */
+    syncPrisonerExchangePending(opponentId, chooserId, availableTypes) {
+        this.multiplayer.broadcast({
+            type: 'prisoner-exchange-pending',
+            opponentId, chooserId, availableTypes
+        });
+    }
+
+    /**
      * Gérer les messages reçus
      * @private
      */
@@ -665,6 +694,15 @@ export class GameSync {
 
             case 'tower-lock-executed':
                 if (this.onTowerLockExecuted) this.onTowerLockExecuted(data);
+                break;
+
+            // ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour)
+            case 'prisoner-exchange-resolved':
+                if (this.onPrisonerExchangeResolved) this.onPrisonerExchangeResolved(data);
+                break;
+
+            case 'prisoner-exchange-pending':
+                if (this.onPrisonerExchangePending) this.onPrisonerExchangePending(data);
                 break;
             
             case 'game-paused':

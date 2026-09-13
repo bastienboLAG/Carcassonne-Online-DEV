@@ -14,6 +14,7 @@
  *   getIsHost()         → boolean
  *   getIsMyTurn()       → boolean
  *   onUpdateTurnDisplay() → callback
+ *   getScorePanelUI()   → scorePanelUI — ✨ NOUVEAU (échange automatique de prisonniers)
  */
 
 // ✅ FIX : tailles pion tour / meeple de verrouillage désormais pilotées par MeepleConfig.js
@@ -671,7 +672,8 @@ export function handleTowerCapture(meepleKey) {
 }
 
 /**
- * [HÔTE] Exécute la capture, broadcast à tous.
+ * [HÔTE] Exécute la capture, broadcast à tous, puis vérifie si cette capture crée
+ * une situation d'échange automatique de prisonniers (✨ NOUVEAU, voir plus bas).
  */
 export function executeTowerCaptureHost(meepleKey, playerId) {
     const towerRules = tr();
@@ -683,6 +685,14 @@ export function executeTowerCaptureHost(meepleKey, playerId) {
     if (sync()) {
         sync().syncTowerCaptureExecuted(meepleKey, playerId, result.selfCapture, result.meeple.type, result.meeple.playerId);
     }
+
+    // ✨ NOUVEAU : Échange automatique de prisonniers — vérifier la réciprocité juste après
+    // la capture. Une auto-capture (selfCapture) ne peut jamais créer de réciprocité puisque
+    // le capturant et le propriétaire capturé sont la même personne.
+    if (!result.selfCapture) {
+        _checkAndHandleReciprocalExchange(playerId, result.meeple.playerId);
+    }
+
     _deps.onUpdateTurnDisplay();
 }
 
@@ -748,4 +758,209 @@ function _returnCapturedMeeple(player, type) {
         case 'Pig':          player.hasPig         = true; break;
         default:             if (player.meeples < 7) player.meeples++; break;
     }
+}
+
+// ── ✨ NOUVEAU — Échange automatique de prisonniers ─────────────────────────
+//
+// Règle : si le joueur qui vient de capturer (X) détient désormais un prisonnier
+// du propriétaire capturé (Y), ET que Y détenait déjà un ou plusieurs prisonniers
+// de X, alors il y a réciprocité :
+//   - le meeple fraîchement capturé par X retourne TOUJOURS automatiquement à Y
+//     (géré ci-dessous, en "annulant" partiellement ce que applyCaptureExecuted
+//     vient de faire pour X) ;
+//   - si Y ne détient qu'UN SEUL type de meeple de X, ce type revient
+//     automatiquement à X (aucune ambiguïté possible) ;
+//   - si Y détient PLUSIEURS types distincts de meeples de X, X doit choisir
+//     lequel récupérer (modale + sélection dans le panel de Y).
+// Comme il ne peut y avoir qu'une seule capture par tour de jeu, le joueur qui
+// capture (X) ne peut jamais avoir plus d'UN prisonnier de Y au moment de la
+// réciprocité — c'est donc toujours X (le joueur actif) qui, le cas échéant,
+// doit choisir, jamais Y.
+
+/**
+ * [HÔTE] Vérifie la réciprocité juste après une capture et déclenche la résolution
+ * automatique (un seul type possible) ou la demande de choix (plusieurs types).
+ * @private
+ */
+function _checkAndHandleReciprocalExchange(capturingPlayerId, capturedOwnerId) {
+    const towerRules = tr();
+    if (!towerRules) return;
+
+    const distinctTypes = towerRules.checkReciprocalCapture(capturingPlayerId, capturedOwnerId);
+    if (distinctTypes.length === 0) return; // pas de réciprocité, rien à faire
+
+    if (distinctTypes.length === 1) {
+        // Un seul type possible chez l'adversaire : résolution immédiate sans ambiguïté
+        applyPrisonerExchangeResolved(capturedOwnerId, capturingPlayerId, distinctTypes[0]);
+        if (sync()) sync().syncPrisonerExchangeResolved(capturedOwnerId, capturingPlayerId, distinctTypes[0]);
+    } else {
+        // Plusieurs types possibles : le joueur qui capture doit choisir lequel récupérer
+        applyPrisonerExchangePending(capturedOwnerId, capturingPlayerId, distinctTypes);
+        if (sync()) sync().syncPrisonerExchangePending(capturedOwnerId, capturingPlayerId, distinctTypes);
+    }
+}
+
+/**
+ * ✨ NOUVEAU — Échange automatique de prisonniers
+ * Applique la résolution de façon identique côté hôte ET invités (même principe que
+ * applyCaptureExecuted) : retire UNE entrée du type choisi appartenant à `chooserId` dans
+ * les prisonniers de `opponentId`, et la rend à la réserve de `chooserId`. Affiche ensuite
+ * la modale informative (bouton "Fermer" pour tous, y compris le joueur qui a choisi).
+ */
+export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType) {
+    const gameState = gs();
+    const held = gameState.prisoners[opponentId] ?? [];
+    const idx = held.findIndex(p => p.ownerId === chooserId && p.type === chosenType);
+    if (idx !== -1) held.splice(idx, 1);
+
+    const player = gameState.players.find(p => p.id === chooserId);
+    if (player) _returnCapturedMeeple(player, chosenType);
+
+    gameState._pendingPrisonerExchange = null;
+    _closePrisonerSelectionUI();
+
+    showPrisonerExchangeModal({ needsChoice: false, chooserId, opponentId, chosenType });
+    _deps.onUpdateTurnDisplay();
+}
+
+/**
+ * ✨ NOUVEAU — Échange automatique de prisonniers
+ * Affiche l'état "en attente de choix" de façon identique côté hôte ET invités : pose
+ * gameState._pendingPrisonerExchange (transitoire, non sérialisé) et ouvre la modale
+ * adaptée au rôle du joueur local (bouton "Choisir" pour le joueur concerné, "Fermer"
+ * pour tous les autres).
+ */
+export function applyPrisonerExchangePending(opponentId, chooserId, availableTypes) {
+    gs()._pendingPrisonerExchange = { chooserId, opponentId, availableTypes };
+
+    const isChooser = chooserId === mp().playerId;
+    showPrisonerExchangeModal({ needsChoice: isChooser, chooserId, opponentId, availableTypes });
+}
+
+/**
+ * ✨ NOUVEAU — Échange automatique de prisonniers
+ * [HÔTE] Valide et applique le choix du joueur concerné, puis broadcast la résolution.
+ */
+export function executePrisonerChoiceHost(chosenType, playerId) {
+    const gameState = gs();
+    const pending = gameState._pendingPrisonerExchange;
+    if (!pending || pending.chooserId !== playerId) return;
+    if (!pending.availableTypes.includes(chosenType)) return;
+
+    applyPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType);
+    if (sync()) sync().syncPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType);
+}
+
+/**
+ * ✨ NOUVEAU — Échange automatique de prisonniers
+ * Appelée quand le joueur concerné clique sur un de ses prisonniers sélectionnables
+ * dans le panel adverse (voir _openPrisonerSelectionUI / ScorePanelUI.enablePrisonerSelection).
+ * Envoie la requête à l'hôte, ou résout directement si hôte/solo.
+ * @private
+ */
+function handlePrisonerChoiceConfirm(chosenType) {
+    const gameState = gs();
+    const pending = gameState._pendingPrisonerExchange;
+    if (!pending) return;
+
+    if (_deps.getIsHost()) {
+        executePrisonerChoiceHost(chosenType, mp().playerId);
+    } else {
+        const hostConn = sync()?.multiplayer?.connections?.[0];
+        if (hostConn?.open) {
+            hostConn.send({ type: 'prisoner-exchange-choice-request', chosenType, playerId: mp().playerId });
+        }
+    }
+}
+
+/**
+ * ✨ NOUVEAU — Échange automatique de prisonniers
+ * Libellés français courts pour les types de meeples, utilisés dans le texte de la modale.
+ * @private
+ */
+const _MEEPLE_LABELS = {
+    Normal: 'meeple',
+    Farmer: 'fermier',
+    Large: 'grand meeple',
+    'Large-Farmer': 'grand fermier',
+    Abbot: 'abbé',
+};
+function _meepleLabel(type) {
+    return _MEEPLE_LABELS[type] ?? type;
+}
+
+/**
+ * ✨ NOUVEAU — Échange automatique de prisonniers
+ * Affiche la modale d'échange, adaptée selon le rôle du joueur local :
+ *   - chosenType fourni : échange déjà résolu, message informatif, bouton "Fermer" pour tous.
+ *   - needsChoice=true (uniquement chez le joueur qui doit choisir) : bouton "Choisir".
+ *   - needsChoice=false sans chosenType (les autres joueurs pendant que quelqu'un choisit) :
+ *     bouton "Fermer".
+ * @private
+ */
+function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenType = null, availableTypes = null }) {
+    const modal     = document.getElementById('prisoner-exchange-modal');
+    const text      = document.getElementById('prisoner-exchange-text');
+    const chooseBtn = document.getElementById('prisoner-exchange-choose-btn');
+    const closeBtn  = document.getElementById('prisoner-exchange-close-btn');
+    if (!modal || !text || !chooseBtn || !closeBtn) return;
+
+    const gameState    = gs();
+    const chooserName  = gameState.players.find(p => p.id === chooserId)?.name  ?? '?';
+    const opponentName = gameState.players.find(p => p.id === opponentId)?.name ?? '?';
+
+    if (chosenType) {
+        text.textContent = `Échange de prisonniers : ${chooserName} récupère son ${_meepleLabel(chosenType)} auprès de ${opponentName}.`;
+    } else {
+        text.textContent = `Échange de prisonniers : ${chooserName} doit choisir lequel de ses meeples récupérer auprès de ${opponentName}.`;
+    }
+
+    chooseBtn.style.display = needsChoice ? '' : 'none';
+    closeBtn.style.display  = needsChoice ? 'none' : '';
+
+    chooseBtn.onclick = () => {
+        modal.style.display = 'none';
+        _openPrisonerSelectionUI(opponentId, chooserId, availableTypes);
+    };
+    closeBtn.onclick = () => { modal.style.display = 'none'; };
+
+    modal.style.display = 'flex';
+}
+
+/**
+ * ✨ NOUVEAU — Échange automatique de prisonniers
+ * Ouvre le voile gris + force l'ouverture du panel du joueur adverse concerné, en rendant
+ * sélectionnables uniquement ses prisonniers appartenant au joueur qui doit choisir.
+ *
+ * Le mécanisme de sélection lui-même (ScorePanelUI.enablePrisonerSelection) est générique —
+ * prévu pour être réutilisé plus tard par le rachat de prisonnier (probablement sans modale
+ * ni voile gris dans ce futur cas d'usage, à la charge de l'appelant à ce moment-là).
+ * @private
+ */
+function _openPrisonerSelectionUI(opponentId, chooserId, availableTypes) {
+    const overlay = document.getElementById('prisoner-selection-overlay');
+    if (overlay) overlay.style.display = 'block';
+
+    const scorePanelUI = _deps.getScorePanelUI?.();
+    if (!scorePanelUI) return;
+
+    scorePanelUI.forceOpenPlayerPanel(opponentId);
+    scorePanelUI.enablePrisonerSelection({
+        playerId: opponentId,
+        isSelectable: (entry) => entry.ownerId === chooserId && availableTypes.includes(entry.type),
+        onSelect: (entry) => handlePrisonerChoiceConfirm(entry.type),
+    });
+}
+
+/**
+ * ✨ NOUVEAU — Échange automatique de prisonniers
+ * Referme le voile gris et désactive la sélection de prisonniers.
+ * @private
+ */
+function _closePrisonerSelectionUI() {
+    const overlay = document.getElementById('prisoner-selection-overlay');
+    if (overlay) overlay.style.display = 'none';
+
+    const scorePanelUI = _deps.getScorePanelUI?.();
+    if (scorePanelUI) scorePanelUI.disablePrisonerSelection();
 }
