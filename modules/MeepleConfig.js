@@ -98,8 +98,8 @@ export const MEEPLE_CONFIG = {
     'Tower': {
         w: 90, h: 90,
         plate:       1.00,
-        panel:       0.18,
-        panelMobile: 0.14,
+        panel:       0.4,
+        panelMobile: 0.4,
         selector:    0.44,
     },
 };
