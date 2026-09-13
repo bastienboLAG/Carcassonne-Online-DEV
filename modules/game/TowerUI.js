@@ -423,19 +423,50 @@ export function renderTowerLockMeeple(x, y, type, color) {
 
     container.querySelector('.tower-lock-meeple')?.remove();
 
-    const img = document.createElement('img');
-    img.className = 'tower-lock-meeple';
-    img.src = `./assets/Meeples/${color}/${type}.png`;
-    img.style.position  = 'absolute';
-    img.style.left      = '104px';
-    img.style.bottom    = '104px'; // repositionné précisément par _positionLockMeepleOverTower
-    img.style.transform = 'translateX(-50%)';
+    // ✅ FIX : le meeple de verrouillage et son cadenas sont regroupés dans un wrapper
+    // positionné en absolu — permet de centrer le badge 🔒 sur le meeple quelle que soit
+    // sa taille (Normal/Large), et de repositionner les deux ensemble via
+    // _positionLockMeepleOverTower (qui continue de cibler la classe .tower-lock-meeple).
+    const wrapper = document.createElement('div');
+    wrapper.className = 'tower-lock-meeple';
+    wrapper.style.position  = 'absolute';
+    wrapper.style.left      = '104px';
+    wrapper.style.bottom    = '104px'; // repositionné précisément par _positionLockMeepleOverTower
+    wrapper.style.transform = 'translateX(-50%)';
+    wrapper.style.zIndex    = '56';
+    wrapper.style.pointerEvents = 'none';
+
     const { width: lockWidth, height: lockHeight } = getMeepleSize(type, 'plate'); // ✅ FIX : taille ajustable par type
-    img.style.width     = lockWidth;
-    img.style.height    = lockHeight;
-    img.style.zIndex    = '56';
-    img.style.pointerEvents = 'none';
-    container.appendChild(img);
+    wrapper.style.width  = lockWidth;
+    wrapper.style.height = lockHeight;
+
+    const img = document.createElement('img');
+    img.className = 'tower-lock-meeple-img';
+    img.src = `./assets/Meeples/${color}/${type}.png`;
+    img.style.display = 'block';
+    img.style.width   = '100%';
+    img.style.height  = '100%';
+    // ✨ NOUVEAU : même transparence que le pion de tour (0.85), pour cohérence visuelle
+    img.style.opacity = '0.85';
+    wrapper.appendChild(img);
+
+    // ✨ NOUVEAU : cadenas centré sur le meeple (même transparence), pour bien le
+    // différencier visuellement d'un meeple posé normalement sur une zone.
+    const badge = document.createElement('span');
+    badge.className   = 'tower-lock-badge';
+    badge.textContent = '🔒';
+    badge.style.position   = 'absolute';
+    badge.style.top        = '50%';
+    badge.style.left       = '50%';
+    badge.style.transform  = 'translate(-50%, -50%)';
+    badge.style.fontSize   = '14px';
+    badge.style.lineHeight = '1';
+    badge.style.opacity    = '0.85';
+    badge.style.pointerEvents = 'none';
+    badge.style.textShadow = '0 0 3px rgba(0,0,0,0.8)';
+    wrapper.appendChild(badge);
+
+    container.appendChild(wrapper);
 
     const towerImg = container.querySelector('.tower-piece');
     if (towerImg) _positionLockMeepleOverTower(container, towerImg);
