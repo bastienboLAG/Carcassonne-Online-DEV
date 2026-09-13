@@ -403,8 +403,11 @@ function _positionLockMeepleOverTower(container, towerImg) {
     const h = towerImg.offsetHeight || 90;
     const towerLeft   = parseFloat(towerImg.style.left)   || 104;
     const towerBottom = parseFloat(towerImg.style.bottom) || 104;
+    // ✅ FIX : descendu de 10px supplémentaires (chevauchement 6px → 16px) pour que
+    // le meeple de verrouillage colle mieux au sommet visuel de la tour.
+    const LOCK_MEEPLE_DROP = 10;
     lockImg.style.left   = `${towerLeft}px`;
-    lockImg.style.bottom = `${towerBottom + h - 6}px`; // léger chevauchement pour un rendu "posé au sommet"
+    lockImg.style.bottom = `${towerBottom + h - 6 - LOCK_MEEPLE_DROP}px`;
 }
 
 /**
