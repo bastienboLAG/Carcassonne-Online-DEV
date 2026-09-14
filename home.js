@@ -1196,6 +1196,7 @@ function _makeStarter() {
             getZoneMerger:       () => zoneMerger,
             getPlacedMeeples:    () => placedMeeples,
             getPlateau:          () => plateau,
+            getScorePanelUI:     () => scorePanelUI, // ✨ NOUVEAU — échange automatique de prisonniers
             getUndoManager:      () => undoManager,
             getIsHost:           () => isHost,
             getIsMyTurn:         () => isMyTurn,

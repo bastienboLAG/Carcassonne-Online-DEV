@@ -11,6 +11,11 @@ import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
  * marchandises) dans un conteneur séparé (#mobile-player-detail), centré,
  * un seul joueur ouvert à la fois (accordéon — cohérent avec l'espace limité).
  * Le panel PC (#players-scores) n'est pas concerné, il reste toujours déplié.
+ *
+ * ✨ NOUVEAU — Sélection de prisonniers (mécanisme générique) : voir
+ * enablePrisonerSelection()/disablePrisonerSelection()/forceOpenPlayerPanel() plus bas.
+ * Utilisé aujourd'hui par l'échange automatique de prisonniers (extension Tour, cf.
+ * TowerUI.js), et prévu pour être réutilisé plus tard par le rachat de prisonnier.
  */
 export class ScorePanelUI {
     constructor(eventBus, gameState, config = {}) {
@@ -32,6 +37,15 @@ export class ScorePanelUI {
 
         // ✨ NOUVEAU : ids des joueurs dont le détail PC est actuellement ouvert (plusieurs simultanément)
         this._desktopOpenPlayerIds = new Set();
+
+        // ✨ NOUVEAU : sélection de prisonniers — mécanisme générique. Utilisé aujourd'hui par
+        // l'échange automatique de prisonniers (extension Tour, cf. TowerUI.js) et prévu pour
+        // être réutilisé plus tard par le rachat de prisonnier (sans modale ni voile gris dans
+        // ce futur cas d'usage — la gestion de ces éléments reste toujours à la charge de
+        // l'appelant, ce mécanisme ne fait que rendre des entrées cliquables).
+        // Forme : { playerId, isSelectable(entry), onSelect(entry) } où entry = { type, ownerId },
+        // ou null si aucune sélection en cours.
+        this._prisonerSelection = null;
     }
 
     onScoreUpdated() { this.update(this._isBonusTurn, this._isDragonTurn); }
@@ -91,14 +105,20 @@ export class ScorePanelUI {
             if (isActive) card.classList.add(isDragonTurn ? 'active-dragon' : isBonusTurn ? 'active-bonus' : 'active');
             if (isGhost)  card.style.opacity = '0.45';
 
+            // ✨ NOUVEAU : pendant une sélection de prisonnier forcée sur ce joueur, le panel
+            // reste ouvert et ne peut pas être refermé par un clic sur l'en-tête (sinon on
+            // perdrait la possibilité de cliquer les prisonniers sélectionnables affichés dedans).
+            const forcedOpen = this._prisonerSelection?.playerId === player.id;
             // ✨ NOUVEAU : état d'ouverture indépendant par joueur (plusieurs cartes peuvent rester ouvertes)
-            const isOpen = this._desktopOpenPlayerIds.has(player.id);
+            const isOpen = forcedOpen || this._desktopOpenPlayerIds.has(player.id);
             if (isOpen) card.classList.add('open');
-            card.onclick = () => {
-                if (isOpen) this._desktopOpenPlayerIds.delete(player.id);
-                else this._desktopOpenPlayerIds.add(player.id);
-                this._updateDesktop(this._isBonusTurn, this._isDragonTurn);
-            };
+            if (!forcedOpen) {
+                card.onclick = () => {
+                    if (isOpen) this._desktopOpenPlayerIds.delete(player.id);
+                    else this._desktopOpenPlayerIds.add(player.id);
+                    this._updateDesktop(this._isBonusTurn, this._isDragonTurn);
+                };
+            }
 
             // En-tête : indicateur tour + nom + score
             const header = document.createElement('div');
@@ -183,7 +203,13 @@ export class ScorePanelUI {
                 ? player.id === dragonMoverM.id
                 : currentPlayer && player.id === currentPlayer.id;
             const isGhost  = player.disconnected || player.kicked;
-            const isOpen   = this._mobileOpenPlayerId === player.id; // ✨ NOUVEAU
+
+            // ✨ NOUVEAU : forcedOpen — même logique que desktop, empêche la fermeture pendant
+            // une sélection de prisonnier forcée sur ce joueur. On synchronise aussi
+            // _mobileOpenPlayerId pour que _renderMobileDetail() affiche bien ce joueur.
+            const forcedOpen = this._prisonerSelection?.playerId === player.id;
+            if (forcedOpen && this._mobileOpenPlayerId !== player.id) this._mobileOpenPlayerId = player.id;
+            const isOpen = forcedOpen || this._mobileOpenPlayerId === player.id;
 
             const activeClass = isDragonTurn ? ' active active-dragon' : isBonusTurn ? ' active active-bonus' : ' active';
             const card = document.createElement('div');
@@ -222,11 +248,14 @@ export class ScorePanelUI {
             chevron.textContent = '▼';
             card.appendChild(chevron);
 
-            // ✨ NOUVEAU : clic = ouvrir/fermer le détail de ce joueur (un seul à la fois)
-            card.onclick = () => {
-                this._mobileOpenPlayerId = isOpen ? null : player.id;
-                this._updateMobile(this._isBonusTurn, this._isDragonTurn);
-            };
+            // ✨ NOUVEAU : clic = ouvrir/fermer le détail de ce joueur (un seul à la fois),
+            // sauf pendant une sélection de prisonnier forcée sur ce joueur (voir forcedOpen ci-dessus).
+            if (!forcedOpen) {
+                card.onclick = () => {
+                    this._mobileOpenPlayerId = isOpen ? null : player.id;
+                    this._updateMobile(this._isBonusTurn, this._isDragonTurn);
+                };
+            }
 
             container.appendChild(card);
         });
@@ -407,7 +436,15 @@ export class ScorePanelUI {
                 const prisonRow = document.createElement('div');
                 prisonRow.className = 'prison-row';
 
-                myPrisoners.forEach(({ type, ownerId }) => {
+                // ✨ NOUVEAU : sélection de prisonniers — mécanisme générique (voir constructeur
+                // et enablePrisonerSelection() plus bas). Aujourd'hui utilisé par l'échange
+                // automatique de prisonniers ; prévu pour être réutilisé plus tard par le
+                // rachat de prisonnier.
+                const selection = this._prisonerSelection;
+                const isSelectionPanel = selection && selection.playerId === player.id;
+
+                myPrisoners.forEach((entry) => {
+                    const { type, ownerId } = entry;
                     const ownerPlayer = this.gameState.players.find(p => p.id === ownerId);
                     const ownerColorCap = (ownerPlayer?.color ?? 'black').charAt(0).toUpperCase() + (ownerPlayer?.color ?? 'black').slice(1);
 
@@ -427,12 +464,62 @@ export class ScorePanelUI {
                     bars.style.cssText = 'position:absolute;inset:0;background:repeating-linear-gradient(90deg, rgba(0,0,0,0.85) 0 1.5px, transparent 1.5px 6px);pointer-events:none;';
                     wrap.appendChild(bars);
 
+                    // ✨ NOUVEAU : rendre l'entrée cliquable si elle correspond au prédicat
+                    // fourni par l'appelant (TowerUI pour l'échange auto ; futur rachat de prisonnier).
+                    if (isSelectionPanel && selection.isSelectable(entry)) {
+                        wrap.classList.add('prisoner-selectable');
+                        wrap.onclick = (e) => {
+                            e.stopPropagation(); // ne pas déclencher le toggle d'ouverture de la carte
+                            selection.onSelect(entry);
+                        };
+                    }
+
                     prisonRow.appendChild(wrap);
                 });
 
                 container.appendChild(prisonRow);
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ✨ NOUVEAU — Sélection de prisonniers (mécanisme générique)
+    //
+    // Utilisé aujourd'hui par l'échange automatique de prisonniers (extension Tour,
+    // cf. TowerUI.js). Prévu pour être réutilisé plus tard par le rachat de prisonnier
+    // (probablement sans forceOpenPlayerPanel()/voile gris dans ce futur cas d'usage —
+    // ces éléments-là restent entièrement à la charge de l'appelant, ce mécanisme ne
+    // fait que rendre des entrées cliquables dans le panel indiqué).
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Active la sélection sur le panel du joueur `playerId` : les entrées de sa ligne
+     * "prisonniers" qui satisfont `isSelectable(entry)` (entry = { type, ownerId }) deviennent
+     * cliquables et appellent `onSelect(entry)` au clic.
+     */
+    enablePrisonerSelection({ playerId, isSelectable, onSelect }) {
+        this._prisonerSelection = { playerId, isSelectable, onSelect };
+        document.body.classList.add('prisoner-selection-mode');
+        this.update(this._isBonusTurn, this._isDragonTurn);
+    }
+
+    /**
+     * Désactive la sélection de prisonniers (voir enablePrisonerSelection).
+     */
+    disablePrisonerSelection() {
+        this._prisonerSelection = null;
+        document.body.classList.remove('prisoner-selection-mode');
+        this.update(this._isBonusTurn, this._isDragonTurn);
+    }
+
+    /**
+     * Force l'ouverture du panel d'un joueur (desktop ET mobile), utilisé pour afficher
+     * automatiquement le panel adverse concerné lors d'une sélection de prisonnier.
+     */
+    forceOpenPlayerPanel(playerId) {
+        this._desktopOpenPlayerIds.add(playerId);
+        this._mobileOpenPlayerId = playerId;
+        this.update(this._isBonusTurn, this._isDragonTurn);
     }
 
     destroy() {
@@ -445,6 +532,8 @@ export class ScorePanelUI {
         if (detailDiv) detailDiv.innerHTML = '';
         this._mobileOpenPlayerId = null; // ✨ NOUVEAU
         this._desktopOpenPlayerIds.clear(); // ✨ NOUVEAU
+        this._prisonerSelection = null; // ✨ NOUVEAU
+        document.body.classList.remove('prisoner-selection-mode'); // ✨ NOUVEAU
 
         this.eventBus.off('score-updated',        this._onScoreUpdated);
         this.eventBus.off('meeple-count-updated', this._onMeepleCountUpdated);

@@ -37,6 +37,12 @@ export class GameState {
 
         // ✨ NOUVEAU : cible de capture en attente après pose d'un étage (comme _pendingPrincessTile)
         this._pendingTowerCapture = null;
+
+        // ✨ NOUVEAU : échange automatique de prisonniers en attente d'un choix du joueur
+        // concerné (posé quand la réciprocité laisse plusieurs types de meeples possibles).
+        // { chooserId, opponentId, availableTypes } — transitoire, non sérialisé (comme
+        // _pendingTowerCapture/_pendingPrincessTile/_pendingPortalTile).
+        this._pendingPrisonerExchange = null;
     }
 
     // ── Dragon ───────────────────────────────────────────────────────────

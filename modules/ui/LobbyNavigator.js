@@ -51,6 +51,13 @@ export class LobbyNavigator {
         d.getUnplaceableManager()?.hideUnplaceableBadge();
         document.getElementById('tile-destroyed-modal').style.display = 'none';
 
+        // ✨ NOUVEAU : nettoyage de la modale/overlay d'échange de prisonniers (extension Tour)
+        const _prisonerModal = document.getElementById('prisoner-exchange-modal');
+        if (_prisonerModal) _prisonerModal.style.display = 'none';
+        const _prisonerOverlay = document.getElementById('prisoner-selection-overlay');
+        if (_prisonerOverlay) _prisonerOverlay.style.display = 'none';
+        document.body.classList.remove('prisoner-selection-mode');
+
         // Détruire les modules UI
         d.destroyGameModules();
 
