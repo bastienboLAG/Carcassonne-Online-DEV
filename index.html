@@ -420,6 +420,21 @@
         </div>
     </div>
 
+    <!-- ✨ NOUVEAU : Modale d'échange automatique de prisonniers (Extension Tour) -->
+    <div id="prisoner-exchange-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h2>🔄 Échange de prisonniers</h2>
+            <p id="prisoner-exchange-text"></p>
+            <div class="modal-buttons">
+                <button id="prisoner-exchange-choose-btn" class="modal-btn confirm">Choisir</button>
+                <button id="prisoner-exchange-close-btn" class="modal-btn confirm">Fermer</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ✨ NOUVEAU : Voile gris de sélection de prisonnier (Extension Tour) -->
+    <div id="prisoner-selection-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 900;"></div>
+
     <script type="module" src="home.js"></script>
 
     <!-- Logger maison — intercepte tous les logs/erreurs et permet l'export -->

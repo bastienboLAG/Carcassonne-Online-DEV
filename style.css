@@ -1681,3 +1681,35 @@ h3 .ext-master {
 .menu-item-danger:hover {
     background: #e74c3c;
 }
+
+/* ═══════════════════════════════════════════════════════
+   ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour)
+   ═══════════════════════════════════════════════════════ */
+
+/* Voile gris plein écran affiché pendant qu'un joueur choisit lequel de ses
+   meeples récupérer dans le panel adverse. Défini entièrement en inline dans
+   index.html pour la position/couleur/z-index de base ; ici on ne gère que
+   la variation dynamique liée au mode sélection. */
+
+/* Pendant une sélection de prisonnier, on fait passer les conteneurs de score
+   au-dessus du voile gris (900) pour que le panel concerné reste visible et
+   cliquable, tout en laissant le reste de l'interface masqué en dessous. */
+body.prisoner-selection-mode #score-overlay,
+body.prisoner-selection-mode #mobile-players-bar,
+body.prisoner-selection-mode #mobile-player-detail {
+    z-index: 950;
+}
+
+/* Entrée de prisonnier rendue sélectionnable par ScorePanelUI.enablePrisonerSelection().
+   Utilisé aujourd'hui par l'échange automatique de prisonniers ; prévu pour être
+   réutilisé plus tard par le rachat de prisonnier. */
+.prisoner-selectable {
+    cursor: pointer;
+    border-radius: 6px;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.prisoner-selectable:hover {
+    transform: scale(1.15);
+    box-shadow: 0 0 10px 3px rgba(255, 215, 0, 0.85);
+}
