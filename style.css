@@ -1206,7 +1206,8 @@ h3 .ext-master {
    ═══════════════════════════════════════════════════════ */
 
 #mobile-players-bar,
-#mobile-bottom-bar {
+#mobile-bottom-bar,
+#mobile-player-detail {
     display: none;
 }
 
