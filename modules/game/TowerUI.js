@@ -20,6 +20,7 @@
 // ✅ FIX : tailles pion tour / meeple de verrouillage désormais pilotées par MeepleConfig.js
 // (au lieu de valeurs en dur), pour être ajustables et cohérentes avec les autres meeples.
 import { getMeepleSize } from '../MeepleConfig.js';
+import { PRISONER_BUYBACK_COST } from '../rules/TowerConfig.js'; // ✨ NOUVEAU — Rachat de prisonnier
 
 let _deps = null;
 
@@ -31,6 +32,7 @@ function tr()   { return _deps.getTowerRules(); }
 
 export function initTowerUI(deps) {
     _deps = deps;
+    setupPrisonerBuyback(); // ✨ NOUVEAU — enregistre le gestionnaire de rachat auprès de ScorePanelUI
 }
 
 // ── Helpers tuile ──────────────────────────────────────────────────────────
@@ -963,4 +965,142 @@ function _closePrisonerSelectionUI() {
 
     const scorePanelUI = _deps.getScorePanelUI?.();
     if (scorePanelUI) scorePanelUI.disablePrisonerSelection();
+}
+
+// ── ✨ NOUVEAU — Rachat de prisonnier ───────────────────────────────────────
+//
+// Contrairement à l'échange automatique (déclenché par une capture, résolu
+// uniquement au moment où elle survient), le rachat est disponible à tout
+// moment de la partie, pour n'importe quel joueur, dès qu'il ouvre le panel
+// d'un adversaire qui détient un de ses prisonniers. Coût fixe
+// (PRISONER_BUYBACK_COST) : les points vont directement au joueur qui détient
+// le prisonnier (le capturant, propriétaire du panel) — c'est une vraie
+// transaction entre les deux joueurs, pas une dépense dans une réserve neutre.
+//
+// Réutilise le mécanisme générique de sélection de ScorePanelUI, exactement
+// comme prévu lors de sa conception pour l'échange automatique — mais via
+// setBuybackHandler(), un gestionnaire PERMANENT appliqué à TOUS les panels
+// (contrairement à enablePrisonerSelection(), qui cible un seul panel pour la
+// durée d'un échange précis). Le rachat est automatiquement désactivé tant
+// qu'un échange automatique attend sa résolution (gameState._pendingPrisonerExchange),
+// pour éviter tout conflit de mutation entre les deux mécanismes sur les mêmes
+// prisonniers (fenêtre entre l'annonce de l'échange et le choix du joueur concerné).
+
+/**
+ * Enregistre le gestionnaire de rachat auprès de ScorePanelUI. Appelé une fois
+ * à l'initialisation de TowerUI (scorePanelUI existe déjà à ce moment).
+ * @private
+ */
+function setupPrisonerBuyback() {
+    const scorePanelUI = _deps.getScorePanelUI?.();
+    if (!scorePanelUI) return;
+
+    scorePanelUI.setBuybackHandler({
+        isSelectable: (entry) => {
+            const gameState = gs();
+            // Aucun rachat tant qu'un échange automatique attend sa résolution —
+            // évite tout conflit de mutation sur les mêmes prisonniers.
+            if (gameState._pendingPrisonerExchange) return false;
+            const localId = mp().playerId;
+            if (entry.ownerId !== localId) return false; // uniquement ses propres meeples
+            const player = gameState.players.find(p => p.id === localId);
+            return (player?.score ?? 0) >= PRISONER_BUYBACK_COST;
+        },
+        onSelect: (entry, panelPlayerId) => {
+            _openBuybackConfirmModal(panelPlayerId, entry.type);
+        },
+    });
+}
+
+/**
+ * Affiche la modale de confirmation d'achat (modale bloquante avec boutons
+ * Confirmer/Annuler, vu l'enjeu de perdre des points par erreur).
+ * @private
+ */
+function _openBuybackConfirmModal(opponentId, meepleType) {
+    const modal      = document.getElementById('prisoner-buyback-modal');
+    const text       = document.getElementById('prisoner-buyback-text');
+    const confirmBtn = document.getElementById('prisoner-buyback-confirm-btn');
+    const cancelBtn  = document.getElementById('prisoner-buyback-cancel-btn');
+    if (!modal || !text || !confirmBtn || !cancelBtn) return;
+
+    const opponentName = gs().players.find(p => p.id === opponentId)?.name ?? '?';
+    text.textContent = `Racheter votre ${_meepleLabel(meepleType)} auprès de ${opponentName} coûte ${PRISONER_BUYBACK_COST} points (versés à ${opponentName}).`;
+
+    confirmBtn.onclick = () => { modal.style.display = 'none'; _confirmBuyback(opponentId, meepleType); };
+    cancelBtn.onclick  = () => { modal.style.display = 'none'; };
+
+    modal.style.display = 'flex';
+}
+
+/**
+ * Envoie la demande de rachat à l'hôte, ou l'exécute directement si hôte/solo.
+ * @private
+ */
+function _confirmBuyback(opponentId, meepleType) {
+    if (_deps.getIsHost()) {
+        executePrisonerBuybackHost(opponentId, meepleType, mp().playerId);
+    } else {
+        const hostConn = sync()?.multiplayer?.connections?.[0];
+        if (hostConn?.open) {
+            hostConn.send({ type: 'prisoner-buyback-request', opponentId, meepleType, playerId: mp().playerId });
+        }
+    }
+}
+
+/**
+ * [HÔTE] Valide (score suffisant, prisonnier toujours détenu, pas d'échange
+ * automatique en attente) puis applique le rachat, et broadcast le résultat.
+ */
+export function executePrisonerBuybackHost(opponentId, meepleType, buyerId) {
+    const gameState = gs();
+    if (gameState._pendingPrisonerExchange) return; // sécurité : pas de rachat pendant un échange en cours
+
+    const buyer = gameState.players.find(p => p.id === buyerId);
+    if (!buyer || (buyer.score ?? 0) < PRISONER_BUYBACK_COST) return;
+
+    const held = gameState.prisoners[opponentId] ?? [];
+    const stillHeld = held.some(p => p.ownerId === buyerId && p.type === meepleType);
+    if (!stillHeld) return; // déjà racheté entre-temps (double-clic / course réseau)
+
+    applyPrisonerBuybackExecuted(buyerId, opponentId, meepleType);
+    if (sync()) sync().syncPrisonerBuybackExecuted(buyerId, opponentId, meepleType);
+}
+
+/**
+ * Applique le rachat de façon identique côté hôte ET invités : retire une
+ * entrée du type demandé appartenant à `buyerId` dans les prisonniers de
+ * `opponentId`, rend le meeple à la réserve de l'acheteur, transfère
+ * PRISONER_BUYBACK_COST points de l'acheteur vers le capturant (`opponentId`),
+ * et informe tous les joueurs via un toast générique.
+ */
+export function applyPrisonerBuybackExecuted(buyerId, opponentId, meepleType) {
+    const gameState = gs();
+    const held = gameState.prisoners[opponentId] ?? [];
+    const idx = held.findIndex(p => p.ownerId === buyerId && p.type === meepleType);
+    if (idx !== -1) held.splice(idx, 1);
+
+    const buyer    = gameState.players.find(p => p.id === buyerId);
+    const capturer = gameState.players.find(p => p.id === opponentId);
+
+    if (buyer) {
+        _returnCapturedMeeple(buyer, meepleType);
+        buyer.score -= PRISONER_BUYBACK_COST;
+        buyer.scoreDetail = buyer.scoreDetail || {};
+        buyer.scoreDetail.buybacks = (buyer.scoreDetail.buybacks || 0) - PRISONER_BUYBACK_COST;
+    }
+    if (capturer) {
+        capturer.score += PRISONER_BUYBACK_COST;
+        capturer.scoreDetail = capturer.scoreDetail || {};
+        capturer.scoreDetail.buybacks = (capturer.scoreDetail.buybacks || 0) + PRISONER_BUYBACK_COST;
+    }
+    // Marque la partie comme ayant eu au moins un rachat — utilisé par
+    // FinalScoresManager pour n'afficher la colonne "Rachats" que si pertinent.
+    gameState.hasPrisonerBuybacks = true;
+
+    const buyerName    = buyer?.name    ?? '?';
+    const capturerName = capturer?.name ?? '?';
+    _deps.afficherToast?.(`🔓 ${buyerName} a racheté un ${_meepleLabel(meepleType)} auprès de ${capturerName} (-${PRISONER_BUYBACK_COST} points).`, 'info');
+
+    _deps.onUpdateTurnDisplay(); // déclenche aussi l'émission de 'score-updated' (cf. TurnUI.updateTurnDisplay)
 }

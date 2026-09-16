@@ -22,7 +22,7 @@ gère le lobby, les event listeners globaux, et les callbacks passés aux manage
 
 | Fichier | Lignes | Rôle |
 |---|---|---|
-| `index.html` | 494 | Structure DOM complète (lobby, plateau, modales, badge dragon, sélecteurs, section extension Tour, modale + voile gris d'échange automatique de prisonniers) |
+| `index.html` | 494 | Structure DOM complète (lobby, plateau, modales, badge dragon, sélecteurs, section extension Tour, modale + voile gris d'échange automatique de prisonniers, modale de confirmation de rachat de prisonnier) |
 | `style.css` | 1569 | Tous les styles |
 | `home.js` | 1463 | Chef d'orchestre : état global, listeners `eventBus`, init lobby, `startGame`/`startGameForInvite` |
 | `version.js` | — | Constante `APP_VERSION` |
@@ -35,7 +35,7 @@ gère le lobby, les event listeners globaux, et les callbacks passés aux manage
 |---|---|---|
 | `Board.js` | 121 | Modèle du plateau : `placedTiles`, `isFree`, `canPlaceTile` (check géométrique, ne connaît pas les règles spéciales type "dragon sans volcan") |
 | `Deck.js` | 217 | Chargement des tuiles (`loadAllTiles`, fetch parallèle par groupe depuis `data/{Groupe}/{id}.json`, y compris `data/Tower/` si `tileGroups.tower`), mélange, pioche, `reshuffleDragonTile()` |
-| `GameState.js` | 221 | État global : joueurs (dont `towerPieces` par joueur), `dragonPos`, `dragonPhase`, `fairyState`, `currentTilePlaced`, `destroyedTilesCount`, `towers` (Map "x,y" → { height, lockedBy, contributions }), `prisoners` (Map playerId → [{ type, ownerId }]), `_pendingTowerCapture`, `_pendingPrisonerExchange` (échange automatique en attente d'un choix — cf. plus bas) |
+| `GameState.js` | 221 | État global : joueurs (dont `towerPieces` par joueur), `dragonPos`, `dragonPhase`, `fairyState`, `currentTilePlaced`, `destroyedTilesCount`, `towers` (Map "x,y" → { height, lockedBy, contributions }), `prisoners` (Map playerId → [{ type, ownerId }]), `_pendingTowerCapture`, `_pendingPrisonerExchange` (échange automatique en attente d'un choix), `hasPrisonerBuybacks` (✨ NOUVEAU — flag sérialisé, vrai dès qu'un rachat de prisonnier a eu lieu, utilisé pour l'affichage conditionnel de la colonne "Rachats" en fin de partie) |
 | `LobbyOptions.js` | 548 | Cases à cocher du lobby (extensions, presets, coches maîtres — dont "Tour" / `all-tower`, `tiles-tower`, `ext-tower`), `localStorage`, sync réseau |
 | `MeepleConfig.js` | 134 | Tailles/configuration des meeples (`getMeepleSize`) |
 | `MeepleUtils.js` | 21 | Utilitaires génériques meeples — poids pour calcul de majorité (Grand Meeple = 2, Bâtisseur/Cochon = 0, Normal/Abbé = 1) |
@@ -46,7 +46,7 @@ gère le lobby, les event listeners globaux, et les callbacks passés aux manage
 | Fichier | Lignes | Rôle |
 |---|---|---|
 | `EventBus.js` | 117 | Bus d'événements interne (`on`/`off`/`emit`) |
-| `GameSync.js` | 688 | Sérialisation/synchronisation réseau hôte↔invités, y compris les messages `tower-floor-placed`, `tower-capture-executed`, `tower-lock-executed`, et `prisoner-exchange-resolved`/`prisoner-exchange-pending` (échange automatique de prisonniers, hôte → tous) |
+| `GameSync.js` | 688 | Sérialisation/synchronisation réseau hôte↔invités, y compris les messages `tower-floor-placed`, `tower-capture-executed`, `tower-lock-executed`, `prisoner-exchange-resolved`/`prisoner-exchange-pending` (échange automatique de prisonniers) et `prisoner-buyback-executed` (✨ NOUVEAU — rachat de prisonnier, hôte → tous) |
 | `HeartbeatManager.js` | 63 | Détection de déconnexion (ping/pong) |
 | `Multiplayer.js` | 247 | Connexion P2P, broadcast, sendTo |
 | `RuleRegistry.js` | 165 | Active/désactive les règles d'extension |
@@ -61,7 +61,7 @@ gère le lobby, les event listeners globaux, et les callbacks passés aux manage
 | `DragonConfig.js` | 42 | Constantes extension Dragon : `DRAGON_EDIBLE_MEEPLES`, `FAIRY_ATTACHABLE_MEEPLES` |
 | `DragonRules.js` | 390 | Règles extension Dragon (déplacement, cible Princesse, etc.) |
 | `InnsRules.js` | 127 | Règles Auberges & Cathédrales |
-| `TowerConfig.js` | 42 | Constantes extension Tour : `TOWER_PIECES_BY_PLAYER_COUNT` (stock de pièces selon le nombre de joueurs), `TOWER_CAPTURABLE_MEEPLES`, `TOWER_LOCK_MEEPLES` (réservé), helpers `getTowerPiecesForPlayerCount()` / `isTowerCapturable()` |
+| `TowerConfig.js` | 42 | Constantes extension Tour : `TOWER_PIECES_BY_PLAYER_COUNT` (stock de pièces selon le nombre de joueurs), `TOWER_CAPTURABLE_MEEPLES`, `TOWER_LOCK_MEEPLES` (réservé), `PRISONER_BUYBACK_COST` (✨ NOUVEAU — coût fixe du rachat de prisonnier, 3 points), helpers `getTowerPiecesForPlayerCount()` / `isTowerCapturable()` |
 | `TowerRules.js` | ~200 | Règles extension Tour : détection des tuiles à zone `tower`, pose d'étage (`addFloor`, décrémente le stock du joueur), calcul de la portée de capture en ligne continue dans les 4 directions (`getCaptureTargets`), exécution de capture (`executeCapture` — retour réserve si auto-capture, sinon prisonnier), verrouillage d'une tour (`lockTower`, consomme un meeple normal/grand meeple du joueur), et **✨ NOUVEAU** `checkReciprocalCapture(capturingPlayerId, capturedOwnerId)` — lecture seule, détecte si une capture crée une situation d'échange automatique de prisonniers (voir plus bas) |
 
 ## `modules/game/` — Logique de partie côté client
@@ -73,16 +73,16 @@ gère le lobby, les event listeners globaux, et les callbacks passés aux manage
 | `GameEventSetup.js` | 499 | Installe tous les listeners DOM du jeu (boutons, modales implaçable, menu) ; relaie `clearTowerCursors` au nettoyage de fin de tour |
 | `GameModuleInitializer.js` | 175 | Instancie les modules UI de jeu, dont `TowerRules` si `tileGroups.tower && extensions.tower` |
 | `GameStarter.js` | 200 | Démarrage de partie hôte/invité ; attribue `towerPieces` à chaque joueur actif (hors spectateurs) selon `getTowerPiecesForPlayerCount()` si l'extension Tour est active ; appelle `initTowerUI()` en `postStartSetup()` |
-| `GameSyncCallbacks.js` | ~470 | Callbacks réseau réactifs : tirage tuile hôte (`hostDrawAndSend`, check dragon-sans-volcan), tuile détruite/implaçable, rappel abbé, tour bonus ; relais des requêtes invité→hôte `tower-floor-request`, `tower-capture-request`, `tower-lock-request` vers `executeAddFloorHost`/`executeTowerCaptureHost`/`executeLockHost` de `TowerUI.js` ; **✨ NOUVEAU** relais de `prisoner-exchange-choice-request` (invité → hôte) vers `executePrisonerChoiceHost`, et branchement des callbacks `gs.onPrisonerExchangeResolved`/`gs.onPrisonerExchangePending` (hôte → invités) vers `applyPrisonerExchangeResolved`/`applyPrisonerExchangePending` |
+| `GameSyncCallbacks.js` | ~470 | Callbacks réseau réactifs : tirage tuile hôte (`hostDrawAndSend`, check dragon-sans-volcan), tuile détruite/implaçable, rappel abbé, tour bonus ; relais des requêtes invité→hôte `tower-floor-request`, `tower-capture-request`, `tower-lock-request` vers `executeAddFloorHost`/`executeTowerCaptureHost`/`executeLockHost` de `TowerUI.js` ; relais de `prisoner-exchange-choice-request` (invité → hôte) vers `executePrisonerChoiceHost`, et branchement des callbacks `gs.onPrisonerExchangeResolved`/`gs.onPrisonerExchangePending` (hôte → invités) vers `applyPrisonerExchangeResolved`/`applyPrisonerExchangePending` ; **✨ NOUVEAU** relais de `prisoner-buyback-request` (invité → hôte, disponible à tout moment, pas lié au tour) vers `executePrisonerBuybackHost`, et branchement de `gs.onPrisonerBuybackExecuted` vers `applyPrisonerBuybackExecuted` |
 | `GameTimer.js` | 59 | Chronomètre de partie |
 | `MeeplePlacement.js` | 253 | Logique de pose de meeple |
 | `NavigationManager.js` | 161 | Zoom et déplacement (pan) sur le plateau |
 | `ReconnectionManager.js` | 674 | Pause/reprise de partie, resynchronisation complète |
-| `Scoring.js` | 380 | Calcul des points (fermeture de zones, fin de partie) — n'inclut pas encore le scoring spécifique Tour (capture = gain immédiat de meeples adverses, pas de points de zone) |
+| `Scoring.js` | 380 | Calcul des points (fermeture de zones, fin de partie). `applyAndGetFinalScores` inclut désormais `buybacks` (✨ NOUVEAU — net des rachats de prisonnier, positif ou négatif) dans les scores détaillés retournés — n'inclut toujours pas de scoring dédié pour la capture Tour elle-même (gain immédiat de meeples adverses, pas de points de zone) |
 | `TilePlacement.js` | 283 | Logique de pose de tuile |
-| `TowerUI.js` | ~650 | UI et orchestration de l'extension Tour : curseurs de pose d'étage (`showTowerCursors`) et de capture (`showTowerCaptureCursors`), sélecteurs de confirmation, pose d'étage hôte (`executeAddFloorHost`/`applyFloorPlaced`), verrouillage hôte (`executeLockHost`/`applyLockExecuted`), capture hôte (`executeTowerCaptureHost`/`applyCaptureExecuted` — mutation identique hôte/invités pour garder `gameState.prisoners` cohérent partout), rendu visuel de la hauteur de tour et du meeple de verrouillage (`renderTowerHeight`, `renderTowerLockMeeple`). **✨ NOUVEAU** — Échange automatique de prisonniers : `executeTowerCaptureHost` appelle `_checkAndHandleReciprocalExchange` après chaque capture non-auto ; résolution immédiate (`applyPrisonerExchangeResolved`, un seul type de meeple réciproque possible) ou mise en attente d'un choix (`applyPrisonerExchangePending`, plusieurs types possibles — c'est toujours le joueur qui vient de capturer qui choisit, jamais l'adversaire, car il ne peut y avoir qu'une capture par tour) ; `executePrisonerChoiceHost` valide et applique le choix reçu du joueur concerné ; affichage de la modale (`showPrisonerExchangeModal`, bouton "Choisir" ou "Fermer" selon le rôle du joueur local) et ouverture du panel adverse en mode sélection (`_openPrisonerSelectionUI`, délègue à `ScorePanelUI.enablePrisonerSelection`/`forceOpenPlayerPanel`) |
+| `TowerUI.js` | ~800 | UI et orchestration de l'extension Tour : curseurs de pose d'étage (`showTowerCursors`) et de capture (`showTowerCaptureCursors`), sélecteurs de confirmation, pose d'étage hôte (`executeAddFloorHost`/`applyFloorPlaced`), verrouillage hôte (`executeLockHost`/`applyLockExecuted`), capture hôte (`executeTowerCaptureHost`/`applyCaptureExecuted` — mutation identique hôte/invités pour garder `gameState.prisoners` cohérent partout), rendu visuel de la hauteur de tour et du meeple de verrouillage (`renderTowerHeight`, `renderTowerLockMeeple`). **✨ Échange automatique de prisonniers** : `executeTowerCaptureHost` appelle `_checkAndHandleReciprocalExchange` après chaque capture non-auto ; résolution immédiate (`applyPrisonerExchangeResolved`, un seul type de meeple réciproque possible) ou mise en attente d'un choix (`applyPrisonerExchangePending`, plusieurs types possibles — c'est toujours le joueur qui vient de capturer qui choisit, jamais l'adversaire, car il ne peut y avoir qu'une capture par tour) ; `executePrisonerChoiceHost` valide et applique le choix reçu du joueur concerné ; affichage de la modale (`showPrisonerExchangeModal`, bouton "Choisir" ou "Fermer" selon le rôle du joueur local) et ouverture du panel adverse en mode sélection (`_openPrisonerSelectionUI`, délègue à `ScorePanelUI.enablePrisonerSelection`/`forceOpenPlayerPanel`). **✨ NOUVEAU — Rachat de prisonnier** : `setupPrisonerBuyback()` (appelé une fois à l'initialisation) enregistre un gestionnaire PERMANENT auprès de `ScorePanelUI.setBuybackHandler`, actif sur tous les panels en continu (contrairement à la sélection d'échange, ciblée et temporaire) ; disponible à tout moment de la partie, pour n'importe quel joueur qui clique sur son propre prisonnier détenu par un adversaire (≥ 3 points requis) ; se désactive automatiquement tant que `gameState._pendingPrisonerExchange` existe pour éviter tout conflit avec l'échange automatique ; `executePrisonerBuybackHost`/`applyPrisonerBuybackExecuted` transfèrent 3 points de l'acheteur vers le capturant (vraie transaction, pas une dépense neutre), posent `gameState.hasPrisonerBuybacks = true`, et informent tous les joueurs via un toast générique |
 | `TurnManager.js` | 415 | Gestion du tour courant, tour bonus |
-| `UndoManager.js` | 649 | Annulation d'actions du tour en cours — la pose d'étage/capture/verrouillage tour consomme la "phase meeple" (`markMeeplePlaced(x, y, -1, null)`) mais n'a pas de undo dédié ; l'échange automatique de prisonniers n'est pas non plus annulable pour l'instant (même limitation, à traiter dans une passe future dédiée à l'undo de l'extension Tour) |
+| `UndoManager.js` | 649 | Annulation d'actions du tour en cours — la pose d'étage/capture/verrouillage tour consomme la "phase meeple" (`markMeeplePlaced(x, y, -1, null)`) mais n'a pas de undo dédié ; l'échange automatique de prisonniers et le rachat de prisonnier ne sont pas non plus annulables pour l'instant (même limitation, à traiter dans une passe future dédiée à l'undo de l'extension Tour — le rachat n'étant de toute façon pas lié au tour en cours, il devra probablement rester hors du système d'undo classique) |
 | `UnplaceableTileManager.js` | 401 | Gestion des tuiles implaçables (badge, modale, `handleConfirm`, `showUnplaceableBadgeDragon`) |
 | `ZoneMerger.js` | 720 | Fusionne les zones entre tuiles adjacentes, calcule les meeples présents dans une zone fusionnée — fichier le plus volumineux du projet, cœur des bugs de placement de meeple. Chaque zone (y compris `garden`/`abbey`) est enregistrée dans le registre dès la pose de tuile (`createZone`) — `findMergedZoneForPosition` retourne donc presque toujours une zone existante. Les zones de type `tower` (comme `dragon`/`volcano`/`portal`) sont exclues des positions de meeple classiques (cf. `MeepleCursorsUI.js`) |
 | `ZoneRegistry.js` | 201 | Registre central des zones fusionnées (persistant, mis à jour incrémentalement, historique des villes fermées pour le scoring des champs) |
@@ -94,14 +94,14 @@ gère le lobby, les event listeners globaux, et les callbacks passés aux manage
 |---|---|---|
 | `GameMenuUI.js` | 49 | Menu en jeu |
 | `LobbyJoin.js` | 168 | Logique de connexion en tant qu'invité |
-| `LobbyNavigator.js` | ~185 | Retour au lobby / lobby initial ; réinitialise `towerRules` au retour lobby ; **✨ NOUVEAU** masque également la modale `#prisoner-exchange-modal`, le voile `#prisoner-selection-overlay` et retire la classe `body.prisoner-selection-mode` au retour lobby |
+| `LobbyNavigator.js` | ~185 | Retour au lobby / lobby initial ; réinitialise `towerRules` au retour lobby ; masque également la modale `#prisoner-exchange-modal`, le voile `#prisoner-selection-overlay` et retire la classe `body.prisoner-selection-mode` au retour lobby (échange automatique de prisonniers). La modale `#prisoner-buyback-modal` (rachat) n'a pas besoin du même traitement — elle n'a pas d'overlay/classe body persistante associée |
 | `LobbyUI.js` | 356 | Interface du lobby (liste joueurs, kick, menu) |
 | `MeepleActionsUI.js` | 655 | Actions meeples : rappel abbé, portail, éjection princesse, placement fée ; orchestre aussi l'extension Tour via les imports de `TowerUI.js` (`showTowerCursors`, `showPendingTowerCaptureIfAny`, application des events réseau `network-tower-floor-placed`/`network-tower-capture-executed`/`network-tower-lock-executed`) |
 | `MeepleCursorsUI.js` | 455 | Curseurs de placement de meeple sur une tuile posée (filtre par type de zone + ressources dispo + occupation de zone fusionnée) ; exclut la zone `tower` des positions de meeple classiques pour laisser place au curseur dédié de `TowerUI.js` |
 | `MeepleDisplayUI.js` | 91 | Affichage visuel des meeples posés |
 | `MeepleSelectorUI.js` | 333 | Sélecteur de type de meeple (rappel abbé + fée, etc.) |
 | `ModalUI.js` | 528 | Utilitaires génériques de modales ; règles affichées incluent la section Tour si activée |
-| `ScorePanelUI.js` | ~470 | Panneau des scores (desktop + mobile) : affiche le stock de pièces de tour restant (`towerPieces`) et la ligne "prisonniers" (meeples capturés, affichés avec la couleur de leur propriétaire d'origine et un motif de grille) si `extensions.tower`. **✨ NOUVEAU** — Sélection de prisonniers (mécanisme générique) : `enablePrisonerSelection({ playerId, isSelectable, onSelect })`/`disablePrisonerSelection()` rendent cliquables les entrées de `.prison-row` d'un panel donné selon un prédicat fourni par l'appelant, et `forceOpenPlayerPanel(playerId)` force l'ouverture (desktop + mobile) d'un panel donné. Utilisé aujourd'hui par l'échange automatique de prisonniers (`TowerUI.js`) ; prévu pour être réutilisé plus tard par le rachat de prisonnier (probablement sans modale ni voile gris dans ce futur cas d'usage — ces éléments restent à la charge de l'appelant) |
+| `ScorePanelUI.js` | ~500 | Panneau des scores (desktop + mobile) : affiche le stock de pièces de tour restant (`towerPieces`) et la ligne "prisonniers" (meeples capturés, affichés avec la couleur de leur propriétaire d'origine et un motif de grille) si `extensions.tower`. **Sélection de prisonniers (mécanisme générique)** : `enablePrisonerSelection({ playerId, isSelectable, onSelect })`/`disablePrisonerSelection()` rendent cliquables les entrées de `.prison-row` d'un panel donné (ciblé, temporaire) selon un prédicat fourni par l'appelant — utilisé par l'échange automatique de prisonniers (`TowerUI.js`). **✨ NOUVEAU** — `setBuybackHandler({ isSelectable, onSelect })` enregistre un second gestionnaire PERMANENT, actif sur TOUS les panels en continu (contrairement au précédent) — utilisé par le rachat de prisonnier. Au rendu, la session d'échange ciblée est toujours prioritaire sur le gestionnaire de rachat permanent pour un même prisonnier (les deux ne se chevauchent jamais en pratique car le rachat se désactive lui-même tant qu'un échange est en attente). `forceOpenPlayerPanel(playerId)` force l'ouverture (desktop + mobile) d'un panel donné |
 | `SlotsUI.js` | 234 | Slots de placement de tuile (pointillés dorés). Écoute `tile-drawn`/`tile-placed`/`turn-changed`/`tile-rotated`. Flag `isBlocked` pour forcer le lecture-seule |
 | `TilePreviewUI.js` | 65 | Aperçu de la tuile en main (recto/verso) |
 | `TurnUI.js` | 293 | Affichage tour courant, boutons mobile, messages/toasts |
@@ -185,6 +185,36 @@ Cas particuliers notables dans `Deck.js` :
     requêtes `tower-*-request`).
   - Non annulable pour l'instant (même limitation que le reste de l'extension
     Tour, cf. `UndoManager.js`).
+- **✨ NOUVEAU — Rachat de prisonnier** : disponible à tout moment de la partie
+  (indépendamment du tour en cours), pour n'importe quel joueur qui ouvre le
+  panel de score d'un adversaire détenant un de ses prisonniers. Coût fixe
+  `PRISONER_BUYBACK_COST` (3 points, `TowerConfig.js`) : c'est une vraie
+  transaction — les points sont retirés à l'acheteur et **versés au joueur qui
+  détient le prisonnier** (le capturant), pas à une réserve neutre.
+  - Un prisonnier n'est cliquable (`.prisoner-selectable`) que s'il appartient
+    au joueur local (`entry.ownerId === multiplayer.playerId`) et que celui-ci
+    a au moins 3 points ; sinon rien ne se passe au clic (pas de tooltip).
+  - Une modale de confirmation (`#prisoner-buyback-modal`, boutons
+    Confirmer/Annuler) précède toute transaction, vu l'enjeu de perdre des
+    points par erreur.
+  - Désactivé automatiquement tant qu'un échange automatique de prisonniers
+    est en attente de résolution (`gameState._pendingPrisonerExchange`), pour
+    éviter tout conflit de mutation sur les mêmes prisonniers entre les deux
+    mécanismes (fenêtre entre l'annonce de l'échange et le choix du joueur
+    concerné).
+  - Un toast générique informe tous les joueurs de la transaction
+    (`🔓 [Acheteur] a racheté un [type] auprès de [Détenteur] (-3 points).`).
+  - Réseau : `prisoner-buyback-request` (invité → hôte, intercepté dans
+    `GameSyncCallbacks._attachHostCallbacks`, disponible à tout moment donc
+    pas conditionné à `getCurrentPlayer()`) / `prisoner-buyback-executed`
+    (hôte → tous, broadcast y compris echo à l'acheteur).
+  - Score détaillé : `player.scoreDetail.buybacks` (peut être négatif pour
+    l'acheteur, positif pour le vendeur), remonté dans `Scoring.js` et affiché
+    en fin de partie dans une colonne "Rachats" **uniquement si**
+    `gameState.hasPrisonerBuybacks` est vrai (au moins un rachat a eu lieu
+    durant la partie) — cf. `FinalScoresManager.js`.
+  - Non annulable (n'est de toute façon pas lié au tour en cours, donc hors du
+    système d'undo classique par nature).
 - **Verrouillage** : à partir du moment où une tour a au moins 1 étage,
   n'importe quel joueur peut la verrouiller avec un meeple normal ou un grand
   meeple (ressource personnelle consommée), ce qui la rend non modifiable
@@ -212,6 +242,7 @@ Cas particuliers notables dans `Deck.js` :
 | Bug spécifique Dragon/Fée/Princesse/Portail | `modules/game/DragonUI.js`, `modules/rules/DragonRules.js`, `modules/rules/DragonConfig.js`, `modules/game/GameSyncCallbacks.js` |
 | Bug spécifique Tour (pose d'étage, capture, verrouillage, stock de pièces) | `modules/game/TowerUI.js`, `modules/rules/TowerRules.js`, `modules/rules/TowerConfig.js`, `modules/GameState.js` (towers/prisoners), `modules/game/GameSyncCallbacks.js` (requêtes réseau), `modules/ui/MeepleActionsUI.js` (orchestration curseurs) |
 | Bug spécifique à l'échange automatique de prisonniers | `modules/game/TowerUI.js` (`_checkAndHandleReciprocalExchange`, `applyPrisonerExchangeResolved`, `applyPrisonerExchangePending`, `executePrisonerChoiceHost`), `modules/rules/TowerRules.js` (`checkReciprocalCapture`), `modules/ui/ScorePanelUI.js` (`enablePrisonerSelection`/`forceOpenPlayerPanel`), `modules/core/GameSync.js` et `modules/game/GameSyncCallbacks.js` (messages réseau), `index.html`/`style.css` (modale `#prisoner-exchange-modal`, voile `#prisoner-selection-overlay`) |
+| Bug spécifique au rachat de prisonnier | `modules/game/TowerUI.js` (`setupPrisonerBuyback`, `executePrisonerBuybackHost`, `applyPrisonerBuybackExecuted`), `modules/rules/TowerConfig.js` (`PRISONER_BUYBACK_COST`), `modules/ui/ScorePanelUI.js` (`setBuybackHandler`), `modules/core/GameSync.js`/`modules/game/GameSyncCallbacks.js` (messages `prisoner-buyback-request`/`prisoner-buyback-executed`), `modules/game/Scoring.js`/`modules/game/FinalScoresManager.js` (colonne "Rachats"), `index.html` (modale `#prisoner-buyback-modal`) |
 | Désynchronisation réseau hôte/invité | `modules/core/GameSync.js`, `modules/game/GameSyncCallbacks.js`, `home.js` |
 | Déconnexion/reconnexion/pause | `modules/game/ReconnectionManager.js`, `modules/core/HeartbeatManager.js` |
 | Score incorrect | `modules/game/Scoring.js`, `modules/game/ZoneMerger.js`, `modules/game/ZoneRegistry.js`, `modules/MeepleUtils.js` |

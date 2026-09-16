@@ -43,6 +43,11 @@ export class GameState {
         // { chooserId, opponentId, availableTypes } — transitoire, non sérialisé (comme
         // _pendingTowerCapture/_pendingPrincessTile/_pendingPortalTile).
         this._pendingPrisonerExchange = null;
+
+        // ✨ NOUVEAU : indique si au moins un rachat de prisonnier a eu lieu durant la partie —
+        // utilisé par FinalScoresManager pour n'afficher la colonne "Rachats" que si pertinent.
+        // Sérialisé (contrairement aux _pending*) car doit survivre à une reconnexion/full-sync.
+        this.hasPrisonerBuybacks = false;
     }
 
     // ── Dragon ───────────────────────────────────────────────────────────
@@ -200,6 +205,7 @@ export class GameState {
             fairyState:         this.fairyState,
             towers:             this.towers,     // ✨ NOUVEAU
             prisoners:          this.prisoners,  // ✨ NOUVEAU
+            hasPrisonerBuybacks: this.hasPrisonerBuybacks, // ✨ NOUVEAU
         };
     }
 
@@ -242,5 +248,6 @@ export class GameState {
         // ✨ NOUVEAU
         this.towers    = data.towers    ?? {};
         this.prisoners = data.prisoners ?? {};
+        this.hasPrisonerBuybacks = data.hasPrisonerBuybacks ?? false;
     }
 }

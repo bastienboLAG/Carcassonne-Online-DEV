@@ -1202,6 +1202,7 @@ function _makeStarter() {
             getIsMyTurn:         () => isMyTurn,
             onUpdateTurnDisplay: () => updateTurnDisplay(),
             hideAllCursors:      () => hideAllCursors(),
+            afficherToast, // ✨ NOUVEAU — toast du rachat de prisonnier
         }),
         // deps pour initMeepleActionsUI
         getMeepleActionsUIDeps: () => ({

@@ -4,6 +4,7 @@
  * TOWER_PIECES_BY_PLAYER_COUNT : nombre de pièces de tour par joueur selon le nombre de joueurs
  * TOWER_CAPTURABLE_MEEPLES     : types de meeples capturables (hors pions spéciaux et structures)
  * TOWER_LOCK_MEEPLES           : types de meeples autorisés à verrouiller une tour (utilisé plus tard)
+ * PRISONER_BUYBACK_COST        : ✨ NOUVEAU — coût en points du rachat d'un prisonnier
  */
 
 export const TOWER_PIECES_BY_PLAYER_COUNT = {
@@ -32,6 +33,10 @@ export const TOWER_LOCK_MEEPLES = new Set([
     'Large',
     'Large-Farmer',
 ]);
+
+// ✨ NOUVEAU — Rachat de prisonnier : coût fixe en points, versé au joueur qui détient
+// (a capturé) le prisonnier concerné. Cf. TowerUI.js (setupPrisonerBuyback).
+export const PRISONER_BUYBACK_COST = 3;
 
 /**
  * Retourne le nombre de pièces de tour attribuées à chaque joueur selon le nombre de joueurs.

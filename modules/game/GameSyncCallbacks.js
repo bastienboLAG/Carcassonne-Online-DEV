@@ -2,6 +2,7 @@ import { Tile } from '../Tile.js';
 import {
     executeAddFloorHost, executeTowerCaptureHost, executeLockHost,
     applyPrisonerExchangeResolved, applyPrisonerExchangePending, executePrisonerChoiceHost, // ✨ NOUVEAU
+    applyPrisonerBuybackExecuted, executePrisonerBuybackHost, // ✨ NOUVEAU — Rachat de prisonnier
 } from './TowerUI.js';
 
 /**
@@ -230,6 +231,12 @@ export class GameSyncCallbacks {
         gs.onPrisonerExchangePending = (data) => {
             if (this.isHost) return;
             applyPrisonerExchangePending(data.opponentId, data.chooserId, data.availableTypes);
+        };
+
+        // ✨ NOUVEAU — Rachat de prisonnier (Extension Tour)
+        gs.onPrisonerBuybackExecuted = (data) => {
+            if (this.isHost) return; // l'hôte a déjà appliqué directement dans executePrisonerBuybackHost
+            applyPrisonerBuybackExecuted(data.buyerId, data.opponentId, data.meepleType);
         };
 
         if (isHost) this._attachHostCallbacks(gs);
@@ -489,6 +496,14 @@ export class GameSyncCallbacks {
                 const pending = this.gameState._pendingPrisonerExchange;
                 if (!pending || pending.chooserId !== from) { console.warn('⚠️ prisoner-exchange-choice-request rejeté de', from); return; }
                 executePrisonerChoiceHost(data.chosenType, from);
+                return;
+            }
+            // ✨ NOUVEAU — Rachat de prisonnier : requête invité → hôte. Disponible à tout moment
+            // de la partie (pas lié au tour en cours) — toute la validation (score suffisant,
+            // prisonnier toujours détenu, pas d'échange en attente) est faite dans
+            // executePrisonerBuybackHost, avec `from` comme identité fiable de l'acheteur.
+            if (data.type === 'prisoner-buyback-request') {
+                executePrisonerBuybackHost(data.opponentId, data.meepleType, from);
                 return;
             }
             if (prev) prev(data, from);

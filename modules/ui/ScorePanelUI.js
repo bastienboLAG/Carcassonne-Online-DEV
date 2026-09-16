@@ -46,6 +46,13 @@ export class ScorePanelUI {
         // Forme : { playerId, isSelectable(entry), onSelect(entry) } où entry = { type, ownerId },
         // ou null si aucune sélection en cours.
         this._prisonerSelection = null;
+
+        // ✨ NOUVEAU : gestionnaire de rachat de prisonnier — PERMANENT (contrairement à
+        // _prisonerSelection ci-dessus, qui ne cible qu'un panel précis pour la durée d'une
+        // session). Appliqué à TOUS les panels en continu. Forme :
+        // { isSelectable(entry, panelPlayerId), onSelect(entry, panelPlayerId) }, ou null.
+        // Enregistré une fois par TowerUI.setupPrisonerBuyback() au démarrage de la partie.
+        this._buybackHandler = null;
     }
 
     onScoreUpdated() { this.update(this._isBonusTurn, this._isDragonTurn); }
@@ -464,13 +471,23 @@ export class ScorePanelUI {
                     bars.style.cssText = 'position:absolute;inset:0;background:repeating-linear-gradient(90deg, rgba(0,0,0,0.85) 0 1.5px, transparent 1.5px 6px);pointer-events:none;';
                     wrap.appendChild(bars);
 
-                    // ✨ NOUVEAU : rendre l'entrée cliquable si elle correspond au prédicat
-                    // fourni par l'appelant (TowerUI pour l'échange auto ; futur rachat de prisonnier).
+                    // ✨ NOUVEAU : priorité à une session d'échange automatique en cours sur CE
+                    // panel (mécanisme temporaire et ciblé) ; sinon, retombe sur le gestionnaire
+                    // de rachat (mécanisme permanent, actif sur tous les panels — voir
+                    // TowerUI.setupPrisonerBuyback). Les deux ne peuvent jamais s'appliquer
+                    // simultanément au même prisonnier : le rachat se désactive de lui-même
+                    // tant qu'un échange automatique attend sa résolution.
+                    let clickHandler = null;
                     if (isSelectionPanel && selection.isSelectable(entry)) {
+                        clickHandler = () => selection.onSelect(entry);
+                    } else if (this._buybackHandler && this._buybackHandler.isSelectable(entry, player.id)) {
+                        clickHandler = () => this._buybackHandler.onSelect(entry, player.id);
+                    }
+                    if (clickHandler) {
                         wrap.classList.add('prisoner-selectable');
                         wrap.onclick = (e) => {
                             e.stopPropagation(); // ne pas déclencher le toggle d'ouverture de la carte
-                            selection.onSelect(entry);
+                            clickHandler();
                         };
                     }
 
@@ -522,6 +539,16 @@ export class ScorePanelUI {
         this.update(this._isBonusTurn, this._isDragonTurn);
     }
 
+    /**
+     * ✨ NOUVEAU : enregistre le gestionnaire PERMANENT de rachat de prisonnier, appliqué à
+     * tous les panels en continu (contrairement à enablePrisonerSelection, ciblé et temporaire).
+     * Voir TowerUI.setupPrisonerBuyback() pour l'utilisation actuelle.
+     */
+    setBuybackHandler({ isSelectable, onSelect }) {
+        this._buybackHandler = { isSelectable, onSelect };
+        this.update(this._isBonusTurn, this._isDragonTurn);
+    }
+
     destroy() {
         console.log('🧹 ScorePanelUI: cleanup');
         const desktopDiv = document.getElementById('players-scores');
@@ -533,6 +560,7 @@ export class ScorePanelUI {
         this._mobileOpenPlayerId = null; // ✨ NOUVEAU
         this._desktopOpenPlayerIds.clear(); // ✨ NOUVEAU
         this._prisonerSelection = null; // ✨ NOUVEAU
+        this._buybackHandler = null; // ✨ NOUVEAU
         document.body.classList.remove('prisoner-selection-mode'); // ✨ NOUVEAU
 
         this.eventBus.off('score-updated',        this._onScoreUpdated);

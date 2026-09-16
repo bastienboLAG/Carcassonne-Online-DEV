@@ -435,6 +435,18 @@
     <!-- ✨ NOUVEAU : Voile gris de sélection de prisonnier (Extension Tour) -->
     <div id="prisoner-selection-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 900;"></div>
 
+    <!-- ✨ NOUVEAU : Modale de confirmation de rachat de prisonnier (Extension Tour) -->
+    <div id="prisoner-buyback-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <h2>🔓 Racheter ce prisonnier ?</h2>
+            <p id="prisoner-buyback-text"></p>
+            <div class="modal-buttons">
+                <button id="prisoner-buyback-confirm-btn" class="modal-btn confirm">Confirmer</button>
+                <button id="prisoner-buyback-cancel-btn" class="modal-btn cancel">Annuler</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="home.js"></script>
 
     <!-- Logger maison — intercepte tous les logs/erreurs et permet l'export -->

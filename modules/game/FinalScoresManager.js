@@ -56,7 +56,8 @@ export class FinalScoresManager {
                     monasteries:  playerScore.monasteries,
                     fields:       playerScore.fields,
                     goods:        playerScore.goods ?? 0,
-                    fairy:        playerScore.fairy ?? 0
+                    fairy:        playerScore.fairy ?? 0,
+                    buybacks:     playerScore.buybacks ?? 0 // ✨ NOUVEAU — Rachat de prisonnier
                 };
                 player.goods = playerScore.goodsTokens ?? { cloth: 0, wheat: 0, wine: 0 };
             }
@@ -114,6 +115,9 @@ export class FinalScoresManager {
         const hasMerchants = this.gameConfig?.extensions?.merchants;
         const hasFairy     = this.gameConfig?.extensions?.fairyScoreTurn
                           || this.gameConfig?.extensions?.fairyScoreZone;
+        // ✨ NOUVEAU — Rachat de prisonnier : colonne affichée uniquement si au moins un
+        // rachat a eu lieu durant la partie (gameState.hasPrisonerBuybacks).
+        const hasBuybacks  = !!this.gameState?.hasPrisonerBuybacks;
 
         // Mettre à jour les en-têtes
         const thead = table.querySelector('thead tr');
@@ -125,6 +129,7 @@ export class FinalScoresManager {
             <th>Champs</th>
             ${hasMerchants ? '<th>March.</th>' : ''}
             ${hasFairy     ? '<th>Fée</th>' : ''}
+            ${hasBuybacks  ? '<th>Rachats</th>' : ''}
             <th>Total</th>
         `;
 
@@ -145,6 +150,7 @@ export class FinalScoresManager {
             const vals = [player.cities, player.roads, player.monasteries, player.fields];
             if (hasMerchants) vals.push(player.goods ?? 0);
             if (hasFairy)     vals.push(player.fairy ?? 0);
+            if (hasBuybacks)  vals.push(player.buybacks ?? 0); // ✨ NOUVEAU
             vals.push(player.total); // Total toujours en dernier
 
             const totalIdx = vals.length - 1;
@@ -198,11 +204,14 @@ export class FinalScoresManager {
         const hasMerchantsMobile = this.gameConfig?.extensions?.merchants;
         const hasFairyMobile     = this.gameConfig?.extensions?.fairyScoreTurn
                                 || this.gameConfig?.extensions?.fairyScoreZone;
+        // ✨ NOUVEAU — Rachat de prisonnier : même condition d'affichage que sur desktop.
+        const hasBuybacksMobile  = !!this.gameState?.hasPrisonerBuybacks;
 
         const labels = ['Villes', 'Routes', 'Abbayes', 'Champs'];
         const keys   = ['cities', 'roads', 'monasteries', 'fields'];
         if (hasMerchantsMobile) { labels.push('Marchandises'); keys.push('goods'); }
         if (hasFairyMobile)     { labels.push('Fée');        keys.push('fairy'); }
+        if (hasBuybacksMobile)  { labels.push('Rachats');    keys.push('buybacks'); } // ✨ NOUVEAU
 
         detailedScores.forEach((player, index) => {
             if (player.color === 'spectator') return;
@@ -282,6 +291,7 @@ export class FinalScoresManager {
                     fields:      p.scoreDetail?.fields      || 0,
                     goods:       p.scoreDetail?.goods       || 0,
                     fairy:       p.scoreDetail?.fairy       || 0,
+                    buybacks:    p.scoreDetail?.buybacks    || 0, // ✨ NOUVEAU — Rachat de prisonnier
                     goodsTokens: p.goods || { cloth: 0, wheat: 0, wine: 0 },
                     total:       p.score
                 }))

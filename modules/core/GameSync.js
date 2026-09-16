@@ -36,6 +36,8 @@ export class GameSync {
         // ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour)
         this.onPrisonerExchangeResolved = null;
         this.onPrisonerExchangePending  = null;
+        // ✨ NOUVEAU — Rachat de prisonnier (Extension Tour)
+        this.onPrisonerBuybackExecuted  = null;
     }
 
     /**
@@ -72,12 +74,14 @@ export class GameSync {
             'dragon-premature-tile', 'dragon-end-turn-request', 'princess-ejected', 'princess-eject-request',
             'portal-meeple-placed', 'portal-meeple-request',
             'tower-floor-placed', 'tower-capture-executed', 'tower-lock-executed', // ✨ NOUVEAU
-            'prisoner-exchange-resolved', 'prisoner-exchange-pending' // ✨ NOUVEAU — Échange auto de prisonniers
+            'prisoner-exchange-resolved', 'prisoner-exchange-pending', // ✨ NOUVEAU — Échange auto de prisonniers
+            'prisoner-buyback-executed' // ✨ NOUVEAU — Rachat de prisonnier
             // NOTE: 'return-to-lobby', 'player-order-update' et 'game-starting' 
             //       sont gérés par le lobby handler
-            // NOTE: 'tower-floor-request', 'tower-capture-request', 'tower-lock-request' et
-            //       'prisoner-exchange-choice-request' (invité → hôte) sont interceptés
-            //       directement dans GameSyncCallbacks._attachHostCallbacks, pas ici.
+            // NOTE: 'tower-floor-request', 'tower-capture-request', 'tower-lock-request',
+            //       'prisoner-exchange-choice-request' et 'prisoner-buyback-request'
+            //       (invité → hôte) sont interceptés directement dans
+            //       GameSyncCallbacks._attachHostCallbacks, pas ici.
         ];
         return gameMessages.includes(type);
     }
@@ -478,6 +482,16 @@ export class GameSync {
     }
 
     /**
+     * ✨ NOUVEAU — Rachat de prisonnier (Extension Tour) : hôte → tous, rachat exécuté
+     */
+    syncPrisonerBuybackExecuted(buyerId, opponentId, meepleType) {
+        this.multiplayer.broadcast({
+            type: 'prisoner-buyback-executed',
+            buyerId, opponentId, meepleType
+        });
+    }
+
+    /**
      * Gérer les messages reçus
      * @private
      */
@@ -703,6 +717,11 @@ export class GameSync {
 
             case 'prisoner-exchange-pending':
                 if (this.onPrisonerExchangePending) this.onPrisonerExchangePending(data);
+                break;
+
+            // ✨ NOUVEAU — Rachat de prisonnier (Extension Tour)
+            case 'prisoner-buyback-executed':
+                if (this.onPrisonerBuybackExecuted) this.onPrisonerBuybackExecuted(data);
                 break;
             
             case 'game-paused':

@@ -316,6 +316,7 @@ export class Scoring {
                 fields:      p.scoreDetail.fields,
                 goods:       p.scoreDetail.goods || 0,
                 fairy:       p.scoreDetail.fairy || 0,
+                buybacks:    p.scoreDetail.buybacks || 0, // ✨ NOUVEAU — Rachat de prisonnier
                 goodsTokens: { ...(p.goods || { cloth: 0, wheat: 0, wine: 0 }) },
                 total:       p.score
             }))
