@@ -324,6 +324,10 @@ eventBus.on('turn-changed', (data) => {
     if (turnManager && data.isBonusTurn !== undefined) {
         turnManager.isBonusTurn = data.isBonusTurn;
     }
+    // ✨ NOUVEAU : un changement de tour signifie que l'action précédente ne peut plus être
+    // annulée — les captures de tour en attente de validation deviennent définitivement
+    // rachetables (cf. GameState._freshCaptures / TowerUI.setupPrisonerBuyback).
+    if (gameState) gameState._freshCaptures = [];
     updateTurnDisplay();
 });
 

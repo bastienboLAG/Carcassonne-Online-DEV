@@ -485,11 +485,16 @@ export class ScorePanelUI {
                     }
                     if (clickHandler) {
                         wrap.classList.add('prisoner-selectable');
-                        wrap.onclick = (e) => {
-                            e.stopPropagation(); // ne pas déclencher le toggle d'ouverture de la carte
-                            clickHandler();
-                        };
                     }
+                    // ✅ FIX : stopPropagation systématique, même sans clickHandler — sinon un clic
+                    // sur un prisonnier non rachetable (pas assez de points, pas le sien, etc.)
+                    // remonte jusqu'à la carte et en bascule l'ouverture/fermeture (PC), ou ne fait
+                    // rien de visible mais laisse un comportement incohérent (mobile). "Rien ne doit
+                    // se passer" doit vraiment signifier rien, y compris l'absence de cet effet de bord.
+                    wrap.onclick = (e) => {
+                        e.stopPropagation();
+                        if (clickHandler) clickHandler();
+                    };
 
                     prisonRow.appendChild(wrap);
                 });

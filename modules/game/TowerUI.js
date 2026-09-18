@@ -718,6 +718,11 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
     } else if (capturingPlayerId) {
         if (!gameState.prisoners[capturingPlayerId]) gameState.prisoners[capturingPlayerId] = [];
         gameState.prisoners[capturingPlayerId].push({ type: meepleType, ownerId });
+
+        // ✨ NOUVEAU : marque cette capture comme "fraîche" (pas encore validée par la fin du
+        // tour du détenteur) — bloque temporairement son rachat, cf. GameState._freshCaptures.
+        if (!gameState._freshCaptures) gameState._freshCaptures = [];
+        gameState._freshCaptures.push({ holderId: capturingPlayerId, ownerId, type: meepleType });
     }
 
     // ✨ NOUVEAU : capture d'un garde verrouillant une tour — déverrouille la tour
@@ -996,11 +1001,20 @@ function setupPrisonerBuyback() {
     if (!scorePanelUI) return;
 
     scorePanelUI.setBuybackHandler({
-        isSelectable: (entry) => {
+        isSelectable: (entry, panelPlayerId) => {
             const gameState = gs();
             // Aucun rachat tant qu'un échange automatique attend sa résolution —
             // évite tout conflit de mutation sur les mêmes prisonniers.
             if (gameState._pendingPrisonerExchange) return false;
+            // ✨ NOUVEAU : aucun rachat pour une capture effectuée pendant le tour EN COURS
+            // du détenteur (panelPlayerId) — tant que ce tour n'est pas terminé, il pourrait
+            // encore être annulé (une fois l'annulation adaptée à l'extension Tour). Ne
+            // concerne jamais les prisonniers de tours précédents (liste vidée à chaque
+            // 'turn-changed', cf. home.js).
+            const isFreshThisTurn = (gameState._freshCaptures ?? []).some(
+                c => c.holderId === panelPlayerId && c.ownerId === entry.ownerId && c.type === entry.type
+            );
+            if (isFreshThisTurn) return false;
             const localId = mp().playerId;
             if (entry.ownerId !== localId) return false; // uniquement ses propres meeples
             const player = gameState.players.find(p => p.id === localId);
@@ -1055,6 +1069,13 @@ function _confirmBuyback(opponentId, meepleType) {
 export function executePrisonerBuybackHost(opponentId, meepleType, buyerId) {
     const gameState = gs();
     if (gameState._pendingPrisonerExchange) return; // sécurité : pas de rachat pendant un échange en cours
+
+    // ✨ NOUVEAU : revalidation côté hôte — aucun rachat tant que la capture concernée n'a pas
+    // été validée par la fin du tour du détenteur (défense en profondeur, cf. setupPrisonerBuyback).
+    const isFreshThisTurn = (gameState._freshCaptures ?? []).some(
+        c => c.holderId === opponentId && c.ownerId === buyerId && c.type === meepleType
+    );
+    if (isFreshThisTurn) return;
 
     const buyer = gameState.players.find(p => p.id === buyerId);
     if (!buyer || (buyer.score ?? 0) < PRISONER_BUYBACK_COST) return;

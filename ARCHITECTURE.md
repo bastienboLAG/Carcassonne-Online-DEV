@@ -35,7 +35,7 @@ gère le lobby, les event listeners globaux, et les callbacks passés aux manage
 |---|---|---|
 | `Board.js` | 121 | Modèle du plateau : `placedTiles`, `isFree`, `canPlaceTile` (check géométrique, ne connaît pas les règles spéciales type "dragon sans volcan") |
 | `Deck.js` | 217 | Chargement des tuiles (`loadAllTiles`, fetch parallèle par groupe depuis `data/{Groupe}/{id}.json`, y compris `data/Tower/` si `tileGroups.tower`), mélange, pioche, `reshuffleDragonTile()` |
-| `GameState.js` | 221 | État global : joueurs (dont `towerPieces` par joueur), `dragonPos`, `dragonPhase`, `fairyState`, `currentTilePlaced`, `destroyedTilesCount`, `towers` (Map "x,y" → { height, lockedBy, contributions }), `prisoners` (Map playerId → [{ type, ownerId }]), `_pendingTowerCapture`, `_pendingPrisonerExchange` (échange automatique en attente d'un choix), `hasPrisonerBuybacks` (✨ NOUVEAU — flag sérialisé, vrai dès qu'un rachat de prisonnier a eu lieu, utilisé pour l'affichage conditionnel de la colonne "Rachats" en fin de partie) |
+| `GameState.js` | 221 | État global : joueurs (dont `towerPieces` par joueur), `dragonPos`, `dragonPhase`, `fairyState`, `currentTilePlaced`, `destroyedTilesCount`, `towers` (Map "x,y" → { height, lockedBy, contributions }), `prisoners` (Map playerId → [{ type, ownerId }]), `_pendingTowerCapture`, `_pendingPrisonerExchange` (échange automatique en attente d'un choix), `_freshCaptures` (✨ NOUVEAU — captures du tour en cours pas encore validées, bloque temporairement leur rachat), `hasPrisonerBuybacks` (flag sérialisé, vrai dès qu'un rachat de prisonnier a eu lieu, utilisé pour l'affichage conditionnel de la colonne "Rachats" en fin de partie) |
 | `LobbyOptions.js` | 548 | Cases à cocher du lobby (extensions, presets, coches maîtres — dont "Tour" / `all-tower`, `tiles-tower`, `ext-tower`), `localStorage`, sync réseau |
 | `MeepleConfig.js` | 134 | Tailles/configuration des meeples (`getMeepleSize`) |
 | `MeepleUtils.js` | 21 | Utilitaires génériques meeples — poids pour calcul de majorité (Grand Meeple = 2, Bâtisseur/Cochon = 0, Normal/Abbé = 1) |
@@ -202,6 +202,17 @@ Cas particuliers notables dans `Deck.js` :
     éviter tout conflit de mutation sur les mêmes prisonniers entre les deux
     mécanismes (fenêtre entre l'annonce de l'échange et le choix du joueur
     concerné).
+  - **✨ NOUVEAU — Garde-fou temporaire (tour en cours)** : comme l'annulation
+    n'est pas encore adaptée à l'extension Tour (`UndoManager.restoreSnapshot`
+    ne touche ni `gameState.towers` ni `gameState.prisoners`), une capture
+    effectuée pendant le tour EN COURS du détenteur reste temporairement non
+    rachetable tant que ce tour n'est pas terminé — sinon un rachat suivi
+    d'une future annulation de la capture dupliquerait le meeple. Suivi via
+    `gameState._freshCaptures` (liste transitoire `[{ holderId, ownerId,
+    type }]`, alimentée dans `TowerUI.applyCaptureExecuted`), vidée
+    intégralement à chaque `'turn-changed'` (home.js) — n'affecte donc jamais
+    les prisonniers de tours précédents, seulement la capture la plus
+    récente tant qu'elle n'est pas validée par le passage du tour.
   - Un toast générique informe tous les joueurs de la transaction
     (`🔓 [Acheteur] a racheté un [type] auprès de [Détenteur] (-3 points).`).
   - Réseau : `prisoner-buyback-request` (invité → hôte, intercepté dans

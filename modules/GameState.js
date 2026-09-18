@@ -48,6 +48,15 @@ export class GameState {
         // utilisé par FinalScoresManager pour n'afficher la colonne "Rachats" que si pertinent.
         // Sérialisé (contrairement aux _pending*) car doit survivre à une reconnexion/full-sync.
         this.hasPrisonerBuybacks = false;
+
+        // ✨ NOUVEAU : liste transitoire des captures effectuées durant le tour EN COURS
+        // (non sérialisée, comme les autres _pending*). Vidée intégralement à chaque
+        // 'turn-changed' (cf. home.js). Sert de garde-fou temporaire : tant que le tour du
+        // joueur qui a capturé n'est pas terminé, il pourrait encore annuler son action (une
+        // fois l'annulation adaptée à l'extension Tour) — le rachat de CETTE capture précise
+        // est donc bloqué jusque-là, sans affecter les prisonniers de tours précédents.
+        // Forme : [{ holderId, ownerId, type }]
+        this._freshCaptures = [];
     }
 
     // ── Dragon ───────────────────────────────────────────────────────────
