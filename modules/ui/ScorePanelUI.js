@@ -455,12 +455,21 @@ export class ScorePanelUI {
                     const ownerPlayer = this.gameState.players.find(p => p.id === ownerId);
                     const ownerColorCap = (ownerPlayer?.color ?? 'black').charAt(0).toUpperCase() + (ownerPlayer?.color ?? 'black').slice(1);
 
+                    // ✅ FIX : un paysan (Farmer/Large-Farmer) capturé rejoint le même pool
+                    // générique player.meeples / hasLargeMeeple qu'un meeple normal — une fois
+                    // en prison, il n'y a plus de distinction "paysan" dans l'état de jeu.
+                    // Le sprite Farmer étant dessiné couché (posture "dans le champ"), l'afficher
+                    // tel quel dans la case prisonnier était trompeur. On affiche donc toujours
+                    // le sprite Normal/Large — `entry.type` (donnée réelle utilisée par le rachat
+                    // et l'échange automatique) reste inchangé, seul le sprite affiché change.
+                    const displayType = type === 'Farmer' ? 'Normal' : type === 'Large-Farmer' ? 'Large' : type;
+
                     const wrap = document.createElement('span');
                     wrap.style.cssText = 'position:relative;display:inline-flex;';
 
                     const img = document.createElement('img');
-                    img.src = `./assets/Meeples/${ownerColorCap}/${type}.png`;
-                    const { width, height } = getMeepleSize(type, context);
+                    img.src = `./assets/Meeples/${ownerColorCap}/${displayType}.png`;
+                    const { width, height } = getMeepleSize(displayType, context);
                     img.style.width  = width;
                     img.style.height = height;
                     img.style.objectFit = 'contain';

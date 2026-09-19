@@ -747,24 +747,47 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
 
     delete placedMeeples[meepleKey];
     document.querySelectorAll(`.meeple[data-key="${meepleKey}"]`).forEach(el => el.remove());
-    clearTowerCursors();
-}
 
-/**
- * Rend un meeple capturé (auto-capture) à son propriétaire — même logique que TowerRules,
- * dupliquée ici volontairement pour que host et invités appliquent la même mutation locale
- * sans dépendre d'une instance TowerRules (les invités n'en ont pas forcément une active).
- * @private
- */
-function _returnCapturedMeeple(player, type) {
-    switch (type) {
-        case 'Abbot':        player.hasAbbot       = true; break;
-        case 'Large':
-        case 'Large-Farmer': player.hasLargeMeeple = true; break;
-        case 'Builder':      player.hasBuilder     = true; break;
-        case 'Pig':          player.hasPig         = true; break;
-        default:             if (player.meeples < 7) player.meeples++; break;
+    // ✅ FIX : la capture Tour n'avait pas le nettoyage des Bâtisseurs/Cochons orphelins
+    // que le Dragon possède déjà (cf. DragonUI.executeDragonMoveHost, "Fix 5"). Si le
+    // meeple capturé était le dernier meeple normal/grand meeple de SON propriétaire dans
+    // une zone où ce même propriétaire avait aussi un Bâtisseur ou un Cochon, ce dernier
+    // restait bloqué sur le plateau indéfiniment (hasBuilder/hasPig jamais remis à true).
+    // Reprend exactement le même algorithme que DragonUI : on rebalaye tous les
+    // Bâtisseurs/Cochons du plateau et on vérifie, pour chacun, si son propriétaire a
+    // encore un meeple "porteur" dans la même zone fusionnée.
+    const zoneMerger = _deps.getZoneMerger?.();
+    if (zoneMerger) {
+        const orphanKeys = [];
+        for (const [key, meeple] of Object.entries(placedMeeples)) {
+            if (meeple.type !== 'Builder' && meeple.type !== 'Pig') continue;
+            const parts = key.split(',');
+            const bx = Number(parts[0]), by = Number(parts[1]), bp = Number(parts[2]);
+            const zoneId = zoneMerger.findMergedZoneForPosition(bx, by, bp)?.id;
+            if (zoneId == null) continue;
+            const hasNormalMeeple = Object.entries(placedMeeples).some(([k2, m2]) => {
+                if (k2 === key) return false;
+                if (m2.playerId !== meeple.playerId) return false;
+                if (m2.type === 'Builder' || m2.type === 'Pig') return false;
+                const [x2, y2, p2] = k2.split(',').map(Number);
+                return zoneMerger.findMergedZoneForPosition(x2, y2, p2)?.id === zoneId;
+            });
+            if (!hasNormalMeeple) orphanKeys.push(key);
+        }
+        orphanKeys.forEach(key => {
+            const orphan = placedMeeples[key];
+            const orphanPlayer = gameState.players.find(p => p.id === orphan.playerId);
+            if (orphanPlayer) {
+                if (orphan.type === 'Builder') orphanPlayer.hasBuilder = true;
+                else if (orphan.type === 'Pig') orphanPlayer.hasPig = true;
+            }
+            delete placedMeeples[key];
+            document.querySelectorAll(`.meeple[data-key="${key}"]`).forEach(el => el.remove());
+            console.log(`🗼 [FIX] Builder/Cochon orphelin rendu après capture Tour: ${key}`);
+        });
     }
+
+    clearTowerCursors();
 }
 
 // ── ✨ NOUVEAU — Échange automatique de prisonniers ─────────────────────────
@@ -1124,4 +1147,21 @@ export function applyPrisonerBuybackExecuted(buyerId, opponentId, meepleType) {
     _deps.afficherToast?.(`🔓 ${buyerName} a racheté un ${_meepleLabel(meepleType)} auprès de ${capturerName} (-${PRISONER_BUYBACK_COST} points).`, 'info');
 
     _deps.onUpdateTurnDisplay(); // déclenche aussi l'émission de 'score-updated' (cf. TurnUI.updateTurnDisplay)
+}
+
+/**
+ * Rend un meeple capturé (auto-capture) à son propriétaire — même logique que TowerRules,
+ * dupliquée ici volontairement pour que host et invités appliquent la même mutation locale
+ * sans dépendre d'une instance TowerRules (les invités n'en ont pas forcément une active).
+ * @private
+ */
+function _returnCapturedMeeple(player, type) {
+    switch (type) {
+        case 'Abbot':        player.hasAbbot       = true; break;
+        case 'Large':
+        case 'Large-Farmer': player.hasLargeMeeple = true; break;
+        case 'Builder':      player.hasBuilder     = true; break;
+        case 'Pig':          player.hasPig         = true; break;
+        default:             if (player.meeples < 7) player.meeples++; break;
+    }
 }
