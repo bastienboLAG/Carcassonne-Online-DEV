@@ -462,22 +462,28 @@ export class GameSync {
     /**
      * ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour) : hôte → tous,
      * échange résolu (résolution immédiate sans ambiguïté, ou après un choix du joueur concerné)
+     * ✅ FIX : `freshlyCapturedType` transmis en plus — type du meeple que le capturant vient
+     * de prendre et qui doit lui aussi retourner automatiquement à l'adversaire. Sans ce champ,
+     * seul le retour vers le capturant était synchronisé, jamais l'autre sens (cf. TowerUI.js,
+     * applyPrisonerExchangeResolved).
      */
-    syncPrisonerExchangeResolved(opponentId, chooserId, chosenType) {
+    syncPrisonerExchangeResolved(opponentId, chooserId, chosenType, freshlyCapturedType) {
         this.multiplayer.broadcast({
             type: 'prisoner-exchange-resolved',
-            opponentId, chooserId, chosenType
+            opponentId, chooserId, chosenType, freshlyCapturedType
         });
     }
 
     /**
      * ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour) : hôte → tous,
      * choix en attente (plusieurs types de meeples possibles, le joueur concerné doit choisir)
+     * ✅ FIX : `freshlyCapturedType` transmis en plus, conservé côté invités dans
+     * gameState._pendingPrisonerExchange pour être retransmis à la résolution du choix.
      */
-    syncPrisonerExchangePending(opponentId, chooserId, availableTypes) {
+    syncPrisonerExchangePending(opponentId, chooserId, availableTypes, freshlyCapturedType) {
         this.multiplayer.broadcast({
             type: 'prisoner-exchange-pending',
-            opponentId, chooserId, availableTypes
+            opponentId, chooserId, availableTypes, freshlyCapturedType
         });
     }
 

@@ -224,13 +224,16 @@ export class GameSyncCallbacks {
         // ✨ NOUVEAU — Échange automatique de prisonniers (Extension Tour)
         // Appliqué directement (pas via eventBus) : TowerUI expose déjà des fonctions
         // d'application idempotentes utilisables aussi bien côté hôte que côté invités.
+        // ✅ FIX : `data.freshlyCapturedType` désormais transmis à applyPrisonerExchangeResolved/
+        // Pending — sans lui, le meeple fraîchement capturé par le déclencheur de l'échange ne
+        // retournait jamais à l'adversaire côté invités (cf. TowerUI.js pour le détail).
         gs.onPrisonerExchangeResolved = (data) => {
             if (this.isHost) return; // l'hôte a déjà appliqué directement dans _checkAndHandleReciprocalExchange
-            applyPrisonerExchangeResolved(data.opponentId, data.chooserId, data.chosenType);
+            applyPrisonerExchangeResolved(data.opponentId, data.chooserId, data.chosenType, data.freshlyCapturedType);
         };
         gs.onPrisonerExchangePending = (data) => {
             if (this.isHost) return;
-            applyPrisonerExchangePending(data.opponentId, data.chooserId, data.availableTypes);
+            applyPrisonerExchangePending(data.opponentId, data.chooserId, data.availableTypes, data.freshlyCapturedType);
         };
 
         // ✨ NOUVEAU — Rachat de prisonnier (Extension Tour)

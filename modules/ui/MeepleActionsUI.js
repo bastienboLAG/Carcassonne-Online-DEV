@@ -591,7 +591,28 @@ export function placerMeeple(x, y, position, meepleType) {
 
 // ── Listeners réseau (portail, princesse, tour) ─────────────────────────────
 
+// ✅ FIX : garde contre la ré-installation. `initNetworkMeepleListeners` est appelée à
+// chaque démarrage de partie (GameStarter.postStartSetup), mais `eventBus` est un
+// singleton créé une seule fois dans home.js et jamais recréé au retour lobby. Sans
+// cette garde, chaque redémarrage de partie ajoutait un NOUVEAU listener sans jamais
+// retirer les précédents : après N parties, un événement réseau (ex: capture Tour)
+// déclenchait applyCaptureExecuted() N fois côté client qui le reçoit, dupliquant
+// l'entrée dans gameState.prisoners à chaque itération — uniquement visible côté
+// invité, car gs.onTowerCaptureExecuted (et les équivalents Princesse/Portail) ne
+// réémettent ces événements que si `!isHost` (l'hôte applique directement, sans
+// passer par l'event bus, donc jamais concerné par ce doublon).
+// Les callbacks ci-dessous lisent `_deps` dynamiquement à l'appel (pas de closure figée
+// sur l'ancienne partie), donc une seule installation suffit pour toute la durée de vie
+// de l'app : initMeepleActionsUI()/initTowerUI() rafraîchissent `_deps` à chaque partie.
+let _networkListenersInstalled = false;
+
 export function initNetworkMeepleListeners(eventBus) {
+    if (_networkListenersInstalled) {
+        console.log('⚠️ [MeepleActionsUI] Listeners réseau déjà installés, skip');
+        return;
+    }
+    _networkListenersInstalled = true;
+
     // Portail Magique : réception d'un placement via portail
     eventBus.on('network-portal-meeple-placed', (data) => {
         // L'hôte a déjà appliqué le placement via portal-meeple-request — ignorer

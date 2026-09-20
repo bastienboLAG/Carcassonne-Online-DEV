@@ -691,8 +691,10 @@ export function executeTowerCaptureHost(meepleKey, playerId) {
     // ✨ NOUVEAU : Échange automatique de prisonniers — vérifier la réciprocité juste après
     // la capture. Une auto-capture (selfCapture) ne peut jamais créer de réciprocité puisque
     // le capturant et le propriétaire capturé sont la même personne.
+    // ✅ FIX : on transmet le type du meeple qui vient d'être capturé (result.meeple.type) —
+    // voir _checkAndHandleReciprocalExchange pour la raison (retour automatique à Y).
     if (!result.selfCapture) {
-        _checkAndHandleReciprocalExchange(playerId, result.meeple.playerId);
+        _checkAndHandleReciprocalExchange(playerId, result.meeple.playerId, result.meeple.type);
     }
 
     _deps.onUpdateTurnDisplay();
@@ -796,8 +798,8 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
 // du propriétaire capturé (Y), ET que Y détenait déjà un ou plusieurs prisonniers
 // de X, alors il y a réciprocité :
 //   - le meeple fraîchement capturé par X retourne TOUJOURS automatiquement à Y
-//     (géré ci-dessous, en "annulant" partiellement ce que applyCaptureExecuted
-//     vient de faire pour X) ;
+//     (✅ FIX : c'était documenté ici mais jamais appliqué — voir freshlyCapturedType
+//     ci-dessous, qui porte désormais ce retour dans applyPrisonerExchangeResolved) ;
 //   - si Y ne détient qu'UN SEUL type de meeple de X, ce type revient
 //     automatiquement à X (aucune ambiguïté possible) ;
 //   - si Y détient PLUSIEURS types distincts de meeples de X, X doit choisir
@@ -810,9 +812,13 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
 /**
  * [HÔTE] Vérifie la réciprocité juste après une capture et déclenche la résolution
  * automatique (un seul type possible) ou la demande de choix (plusieurs types).
+ * @param {string} capturingPlayerId — X, le joueur qui vient de capturer
+ * @param {string} capturedOwnerId   — Y, le propriétaire d'origine du meeple qui vient d'être capturé
+ * @param {string} freshlyCapturedType — ✅ FIX : type du meeple que X vient de capturer chez Y,
+ *        pour pouvoir le lui rendre automatiquement une fois la réciprocité résolue.
  * @private
  */
-function _checkAndHandleReciprocalExchange(capturingPlayerId, capturedOwnerId) {
+function _checkAndHandleReciprocalExchange(capturingPlayerId, capturedOwnerId, freshlyCapturedType) {
     const towerRules = tr();
     if (!towerRules) return;
 
@@ -821,12 +827,12 @@ function _checkAndHandleReciprocalExchange(capturingPlayerId, capturedOwnerId) {
 
     if (distinctTypes.length === 1) {
         // Un seul type possible chez l'adversaire : résolution immédiate sans ambiguïté
-        applyPrisonerExchangeResolved(capturedOwnerId, capturingPlayerId, distinctTypes[0]);
-        if (sync()) sync().syncPrisonerExchangeResolved(capturedOwnerId, capturingPlayerId, distinctTypes[0]);
+        applyPrisonerExchangeResolved(capturedOwnerId, capturingPlayerId, distinctTypes[0], freshlyCapturedType);
+        if (sync()) sync().syncPrisonerExchangeResolved(capturedOwnerId, capturingPlayerId, distinctTypes[0], freshlyCapturedType);
     } else {
         // Plusieurs types possibles : le joueur qui capture doit choisir lequel récupérer
-        applyPrisonerExchangePending(capturedOwnerId, capturingPlayerId, distinctTypes);
-        if (sync()) sync().syncPrisonerExchangePending(capturedOwnerId, capturingPlayerId, distinctTypes);
+        applyPrisonerExchangePending(capturedOwnerId, capturingPlayerId, distinctTypes, freshlyCapturedType);
+        if (sync()) sync().syncPrisonerExchangePending(capturedOwnerId, capturingPlayerId, distinctTypes, freshlyCapturedType);
     }
 }
 
@@ -836,8 +842,15 @@ function _checkAndHandleReciprocalExchange(capturingPlayerId, capturedOwnerId) {
  * applyCaptureExecuted) : retire UNE entrée du type choisi appartenant à `chooserId` dans
  * les prisonniers de `opponentId`, et la rend à la réserve de `chooserId`. Affiche ensuite
  * la modale informative (bouton "Fermer" pour tous, y compris le joueur qui a choisi).
+ *
+ * @param {string} opponentId   — Y, détenait le prisonnier de X qui vient d'être résolu
+ * @param {string} chooserId    — X, vient de capturer et récupère chosenType
+ * @param {string} chosenType   — type que X récupère (choisi ou déduit sans ambiguïté)
+ * @param {string} [freshlyCapturedType] — ✅ FIX : type du meeple que X vient tout juste de
+ *        capturer chez Y (via la tour) — il doit lui aussi retourner à Y automatiquement,
+ *        ce que cette fonction ne faisait pas jusqu'ici (seul le retour vers X était appliqué).
  */
-export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType) {
+export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType, freshlyCapturedType) {
     const gameState = gs();
     const held = gameState.prisoners[opponentId] ?? [];
     const idx = held.findIndex(p => p.ownerId === chooserId && p.type === chosenType);
@@ -845,6 +858,28 @@ export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType)
 
     const player = gameState.players.find(p => p.id === chooserId);
     if (player) _returnCapturedMeeple(player, chosenType);
+
+    // ✅ FIX : retour automatique, vers Y, du meeple que X vient tout juste de capturer.
+    // C'est CETTE capture qui a déclenché la vérification de réciprocité — sans ce bloc,
+    // elle restait indéfiniment prisonnière dans le panel de X (bug rapporté : "l'un des
+    // prisonniers est échangé et l'autre reste dans le panel du joueur qui a capturé").
+    if (freshlyCapturedType) {
+        const chooserHeld = gameState.prisoners[chooserId] ?? [];
+        const freshIdx = chooserHeld.findIndex(p => p.ownerId === opponentId && p.type === freshlyCapturedType);
+        if (freshIdx !== -1) {
+            chooserHeld.splice(freshIdx, 1);
+            const opponentPlayer = gameState.players.find(p => p.id === opponentId);
+            if (opponentPlayer) _returnCapturedMeeple(opponentPlayer, freshlyCapturedType);
+        }
+        // La capture ayant motivé cet échange est désormais résolue et a quitté
+        // gameState.prisoners — elle ne doit plus être suivie comme "fraîche"
+        // (cf. GameState._freshCaptures, utilisé pour bloquer temporairement le rachat).
+        if (gameState._freshCaptures) {
+            gameState._freshCaptures = gameState._freshCaptures.filter(
+                c => !(c.holderId === chooserId && c.ownerId === opponentId && c.type === freshlyCapturedType)
+            );
+        }
+    }
 
     gameState._pendingPrisonerExchange = null;
     _closePrisonerSelectionUI();
@@ -859,9 +894,12 @@ export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType)
  * gameState._pendingPrisonerExchange (transitoire, non sérialisé) et ouvre la modale
  * adaptée au rôle du joueur local (bouton "Choisir" pour le joueur concerné, "Fermer"
  * pour tous les autres).
+ * @param {string} [freshlyCapturedType] — ✅ FIX : conservé dans _pendingPrisonerExchange
+ *        pour être retransmis à applyPrisonerExchangeResolved une fois le choix fait
+ *        (cf. executePrisonerChoiceHost).
  */
-export function applyPrisonerExchangePending(opponentId, chooserId, availableTypes) {
-    gs()._pendingPrisonerExchange = { chooserId, opponentId, availableTypes };
+export function applyPrisonerExchangePending(opponentId, chooserId, availableTypes, freshlyCapturedType) {
+    gs()._pendingPrisonerExchange = { chooserId, opponentId, availableTypes, freshlyCapturedType };
 
     const isChooser = chooserId === mp().playerId;
     showPrisonerExchangeModal({ needsChoice: isChooser, chooserId, opponentId, availableTypes });
@@ -877,8 +915,8 @@ export function executePrisonerChoiceHost(chosenType, playerId) {
     if (!pending || pending.chooserId !== playerId) return;
     if (!pending.availableTypes.includes(chosenType)) return;
 
-    applyPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType);
-    if (sync()) sync().syncPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType);
+    applyPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType, pending.freshlyCapturedType);
+    if (sync()) sync().syncPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType, pending.freshlyCapturedType);
 }
 
 /**
