@@ -3,6 +3,7 @@ import {
     executeAddFloorHost, executeTowerCaptureHost, executeLockHost,
     applyPrisonerExchangeResolved, applyPrisonerExchangePending, executePrisonerChoiceHost, // ✨ NOUVEAU
     applyPrisonerBuybackExecuted, executePrisonerBuybackHost, // ✨ NOUVEAU — Rachat de prisonnier
+    checkPendingReciprocalExchange, // ✨ NOUVEAU — Échange automatique différé à la fin du tour
 } from './TowerUI.js';
 
 /**
@@ -228,7 +229,7 @@ export class GameSyncCallbacks {
         // Pending — sans lui, le meeple fraîchement capturé par le déclencheur de l'échange ne
         // retournait jamais à l'adversaire côté invités (cf. TowerUI.js pour le détail).
         gs.onPrisonerExchangeResolved = (data) => {
-            if (this.isHost) return; // l'hôte a déjà appliqué directement dans _checkAndHandleReciprocalExchange
+            if (this.isHost) return; // l'hôte a déjà appliqué directement dans checkPendingReciprocalExchange
             applyPrisonerExchangeResolved(data.opponentId, data.chooserId, data.chosenType, data.freshlyCapturedType);
         };
         gs.onPrisonerExchangePending = (data) => {
@@ -400,20 +401,22 @@ export class GameSyncCallbacks {
                 this.dragonRules.onVolcanoPlaced(vx, vy); this.gameState._pendingVolcanoPos = null;
                 this.broadcastDragonState();
             }
+            this.gameState._pendingPrincessTile = null; this.gameState._pendingPortalTile = null;
+            this.gameState._pendingTowerCapture = null; // ✨ NOUVEAU
+            if (this.undoManager) this.undoManager.reset();
+            checkPendingReciprocalExchange(); // ✨ NOUVEAU : échange automatique de prisonniers différé
+                                               // à la fin du tour du capturant (voir TowerUI.js) — même
+                                               // point que undoManager.reset(), l'action n'étant plus
+                                               // annulable à partir d'ici
             if (this.gameConfig.tileGroups?.dragon && this.gameConfig.extensions?.dragon && this.dragonRules && this.gameState._pendingDragonTile) {
                 const { playerIndex } = this.gameState._pendingDragonTile;
-                this.gameState._pendingDragonTile = null; this.gameState._pendingPrincessTile = null; this.gameState._pendingPortalTile = null;
-                this.gameState._pendingTowerCapture = null; // ✨ NOUVEAU
-                if (this.undoManager) this.undoManager.reset();
+                this.gameState._pendingDragonTile = null;
                 const started = this.dragonRules.onDragonTilePlaced(playerIndex);
                 if (started) {
                     this.broadcastDragonState(); this.gameSync.syncDragonPhaseStarted(this.gameState.dragonPhase);
                     this.startDragonTurnUI(); return;
                 }
             }
-            this.gameState._pendingPrincessTile = null; this.gameState._pendingPortalTile = null;
-            this.gameState._pendingTowerCapture = null; // ✨ NOUVEAU
-            if (this.undoManager) this.undoManager.reset();
             if (this.turnManager) this.turnManager.endTurnRemote(isBonusTurn);
             if (isBonusTurn) this.ruleRegistry.rules?.get('builders')?.resetLastPlacedTile?.();
             if (this.deck.remaining() <= 0) { this.gameSync.syncTurnEnd(false, null); this.finalScoresManager.computeAndApply(this.getPlacedMeeples()); return; }

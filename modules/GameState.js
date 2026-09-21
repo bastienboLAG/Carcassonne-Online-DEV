@@ -38,6 +38,16 @@ export class GameState {
         // ✨ NOUVEAU : cible de capture en attente après pose d'un étage (comme _pendingPrincessTile)
         this._pendingTowerCapture = null;
 
+        // ✨ NOUVEAU : échange automatique de prisonniers — vérification différée à la fin du
+        // tour du capturant (voir TowerUI.checkPendingReciprocalExchange). Posé immédiatement
+        // après une capture non-auto (executeTowerCaptureHost), consommé et remis à null au
+        // moment où undoManager.reset() verrouille le tour (la capture n'est alors plus
+        // annulable — résoudre l'échange avant ce verrouillage mettrait gameState.prisoners
+        // dans un état incohérent avec une éventuelle annulation ultérieure de la capture).
+        // Transitoire, non sérialisé (comme les autres _pending*).
+        // Forme : { capturingPlayerId, capturedOwnerId, freshlyCapturedType }
+        this._pendingReciprocalCheck = null;
+
         // ✨ NOUVEAU : échange automatique de prisonniers en attente d'un choix du joueur
         // concerné (posé quand la réciprocité laisse plusieurs types de meeples possibles).
         // { chooserId, opponentId, availableTypes } — transitoire, non sérialisé (comme

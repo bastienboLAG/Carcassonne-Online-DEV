@@ -206,6 +206,10 @@ export class GameEventSetup {
             gameState._pendingTowerCapture = null; // ✨ NOUVEAU
             d.clearTowerCursors?.();               // ✨ NOUVEAU
             if (d.getUndoManager()) d.getUndoManager().reset();
+            d.checkPendingReciprocalExchange?.();  // ✨ NOUVEAU : échange automatique de prisonniers différé
+                                                    // à la fin du tour du capturant — voir TowerUI.checkPendingReciprocalExchange
+                                                    // et la note dans executeTowerCaptureHost pour le raisonnement (l'action
+                                                    // n'étant plus annulable à partir d'ici, l'échange peut être résolu sans risque)
 
             if (gameConfig.tileGroups?.dragon && gameConfig.extensions?.dragon && d.getDragonRules() && gameState._pendingDragonTile) {
                 const { playerIndex } = gameState._pendingDragonTile;

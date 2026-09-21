@@ -27,7 +27,7 @@ import {
     onDragonPhaseEnded, advanceDragonTurnHost,
     renderDragonPiece, renderFairyPiece, removeFairyPiece, releaseFairyIfDetached,
 } from './modules/game/DragonUI.js';
-import { initTowerUI, clearTowerCursors } from './modules/game/TowerUI.js'; // ✨ NOUVEAU
+import { initTowerUI, clearTowerCursors, checkPendingReciprocalExchange } from './modules/game/TowerUI.js'; // ✨ NOUVEAU : checkPendingReciprocalExchange — échange automatique différé à la fin du tour
 import { TowerRules } from './modules/rules/TowerRules.js'; // ✨ NOUVEAU (import direct non utilisé ici mais gardé pour clarté — l'instanciation réelle se fait dans GameModuleInitializer)
 import {
     initTurnUI,
@@ -1396,6 +1396,7 @@ function setupEventListeners() {
         hideAllCursors,
         clearDragonCursors,
         clearTowerCursors, // ✨ NOUVEAU
+        checkPendingReciprocalExchange, // ✨ NOUVEAU : échange automatique de prisonniers différé à la fin du tour
         broadcastDragonState,
         startDragonTurnUI,
         advanceDragonTurnHost,

@@ -674,8 +674,17 @@ export function handleTowerCapture(meepleKey) {
 }
 
 /**
- * [HÔTE] Exécute la capture, broadcast à tous, puis vérifie si cette capture crée
- * une situation d'échange automatique de prisonniers (✨ NOUVEAU, voir plus bas).
+ * [HÔTE] Exécute la capture, broadcast à tous.
+ *
+ * ✨ MODIFIÉ : la vérification de réciprocité (échange automatique de prisonniers) n'est
+ * plus déclenchée immédiatement après la capture. Elle est désormais différée à la fin du
+ * tour du capturant — voir checkPendingReciprocalExchange(), appelée depuis
+ * GameEventSetup._installEndTurn et GameSyncCallbacks.onTurnEndRequest, au même point que
+ * undoManager.reset(). Tant que le tour n'est pas terminé, la capture reste annulable ;
+ * résoudre l'échange avant cette annulation (qui touche gameState.prisoners des DEUX
+ * joueurs, potentiellement en cascade avec une modale de choix) mettrait l'état réseau
+ * dans une situation incohérente si le capturant revenait ensuite sur sa décision — même
+ * logique de sécurité que gameState._freshCaptures pour le rachat de prisonnier.
  */
 export function executeTowerCaptureHost(meepleKey, playerId) {
     const towerRules = tr();
@@ -688,13 +697,16 @@ export function executeTowerCaptureHost(meepleKey, playerId) {
         sync().syncTowerCaptureExecuted(meepleKey, playerId, result.selfCapture, result.meeple.type, result.meeple.playerId);
     }
 
-    // ✨ NOUVEAU : Échange automatique de prisonniers — vérifier la réciprocité juste après
-    // la capture. Une auto-capture (selfCapture) ne peut jamais créer de réciprocité puisque
-    // le capturant et le propriétaire capturé sont la même personne.
-    // ✅ FIX : on transmet le type du meeple qui vient d'être capturé (result.meeple.type) —
-    // voir _checkAndHandleReciprocalExchange pour la raison (retour automatique à Y).
+    // ✨ MODIFIÉ : on note seulement l'info nécessaire — la vérification effective est
+    // déclenchée plus tard par checkPendingReciprocalExchange(). Une auto-capture
+    // (selfCapture) ne peut jamais créer de réciprocité puisque le capturant et le
+    // propriétaire capturé sont la même personne, donc rien à différer dans ce cas.
     if (!result.selfCapture) {
-        _checkAndHandleReciprocalExchange(playerId, result.meeple.playerId, result.meeple.type);
+        gs()._pendingReciprocalCheck = {
+            capturingPlayerId: playerId,
+            capturedOwnerId: result.meeple.playerId,
+            freshlyCapturedType: result.meeple.type,
+        };
     }
 
     _deps.onUpdateTurnDisplay();
@@ -808,13 +820,41 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
 // capture (X) ne peut jamais avoir plus d'UN prisonnier de Y au moment de la
 // réciprocité — c'est donc toujours X (le joueur actif) qui, le cas échéant,
 // doit choisir, jamais Y.
+//
+// ✨ MODIFIÉ : la vérification elle-même (_checkAndHandleReciprocalExchange) n'est plus
+// appelée directement après la capture. Elle est désormais invoquée par
+// checkPendingReciprocalExchange(), au moment où le tour du capturant se termine
+// (undoManager.reset()) — voir GameEventSetup._installEndTurn et
+// GameSyncCallbacks.onTurnEndRequest. Cela garantit que la capture qui déclenche
+// potentiellement l'échange n'est plus annulable au moment où gameState.prisoners
+// est muté pour les DEUX joueurs (voir executeTowerCaptureHost pour le détail du
+// raisonnement).
 
 /**
- * [HÔTE] Vérifie la réciprocité juste après une capture et déclenche la résolution
- * automatique (un seul type possible) ou la demande de choix (plusieurs types).
- * @param {string} capturingPlayerId — X, le joueur qui vient de capturer
- * @param {string} capturedOwnerId   — Y, le propriétaire d'origine du meeple qui vient d'être capturé
- * @param {string} freshlyCapturedType — ✅ FIX : type du meeple que X vient de capturer chez Y,
+ * ✨ NOUVEAU
+ * [HÔTE] Point d'entrée appelé à la fin du tour du capturant (au même point que
+ * undoManager.reset() — cf. GameEventSetup._installEndTurn et
+ * GameSyncCallbacks.onTurnEndRequest), une fois que la capture Tour de ce tour n'est
+ * plus annulable. Consomme gameState._pendingReciprocalCheck s'il existe (posé par
+ * executeTowerCaptureHost) et déclenche la vérification de réciprocité à ce moment-là
+ * seulement. Ne fait rien si aucune capture non-auto n'a eu lieu ce tour.
+ */
+export function checkPendingReciprocalExchange() {
+    const gameState = gs();
+    const pending = gameState._pendingReciprocalCheck;
+    gameState._pendingReciprocalCheck = null;
+    if (!pending) return;
+    _checkAndHandleReciprocalExchange(pending.capturingPlayerId, pending.capturedOwnerId, pending.freshlyCapturedType);
+}
+
+/**
+ * [HÔTE] Vérifie la réciprocité et déclenche la résolution automatique (un seul type
+ * possible) ou la demande de choix (plusieurs types).
+ * ✨ MODIFIÉ : appelée désormais par checkPendingReciprocalExchange() en fin de tour du
+ * capturant, plutôt qu'immédiatement après la capture (voir la note en tête de section).
+ * @param {string} capturingPlayerId — X, le joueur qui a capturé
+ * @param {string} capturedOwnerId   — Y, le propriétaire d'origine du meeple qui a été capturé
+ * @param {string} freshlyCapturedType — type du meeple que X a capturé chez Y,
  *        pour pouvoir le lui rendre automatiquement une fois la réciprocité résolue.
  * @private
  */
@@ -846,7 +886,7 @@ function _checkAndHandleReciprocalExchange(capturingPlayerId, capturedOwnerId, f
  * @param {string} opponentId   — Y, détenait le prisonnier de X qui vient d'être résolu
  * @param {string} chooserId    — X, vient de capturer et récupère chosenType
  * @param {string} chosenType   — type que X récupère (choisi ou déduit sans ambiguïté)
- * @param {string} [freshlyCapturedType] — ✅ FIX : type du meeple que X vient tout juste de
+ * @param {string} [freshlyCapturedType] — type du meeple que X vient tout juste de
  *        capturer chez Y (via la tour) — il doit lui aussi retourner à Y automatiquement,
  *        ce que cette fonction ne faisait pas jusqu'ici (seul le retour vers X était appliqué).
  */
@@ -894,7 +934,7 @@ export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType,
  * gameState._pendingPrisonerExchange (transitoire, non sérialisé) et ouvre la modale
  * adaptée au rôle du joueur local (bouton "Choisir" pour le joueur concerné, "Fermer"
  * pour tous les autres).
- * @param {string} [freshlyCapturedType] — ✅ FIX : conservé dans _pendingPrisonerExchange
+ * @param {string} [freshlyCapturedType] — conservé dans _pendingPrisonerExchange
  *        pour être retransmis à applyPrisonerExchangeResolved une fois le choix fait
  *        (cf. executePrisonerChoiceHost).
  */
