@@ -305,11 +305,16 @@ export class GameSyncCallbacks {
                 zones:          this.zoneMerger.registry.serialize(),
                 tileToZone:     Array.from(this.zoneMerger.tileToZone.entries()),
                 placedMeeples:  JSON.parse(JSON.stringify(pm)),
-                playerMeeples:  this.gameState.players.map(p => ({ id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot, hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder, hasPig: p.hasPig })),
+                playerMeeples:  this.gameState.players.map(p => ({
+                    id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot,
+                    hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder, hasPig: p.hasPig,
+                    towerPieces: p.towerPieces // ✨ NOUVEAU
+                })),
                 fairyState:     JSON.parse(JSON.stringify(this.gameState.fairyState ?? { ownerId: null, meepleKey: null })),
                 dragonPos:      JSON.parse(JSON.stringify(this.gameState.dragonPos ?? null)),
                 dragonPhase:    JSON.parse(JSON.stringify(this.gameState.dragonPhase ?? {})),
-                pendingPortalTile: this.gameState._pendingPortalTile ? JSON.parse(JSON.stringify(this.gameState._pendingPortalTile)) : null
+                pendingPortalTile: this.gameState._pendingPortalTile ? JSON.parse(JSON.stringify(this.gameState._pendingPortalTile)) : null,
+                extraState:     JSON.parse(JSON.stringify(this.gameState.extraState)) // ✨ NOUVEAU
             };
             um.applyLocally(undoneAction);
             if (this.gameSync) this.gameSync.syncUndo(undoneAction);

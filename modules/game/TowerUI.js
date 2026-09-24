@@ -15,6 +15,11 @@
  *   getIsMyTurn()       → boolean
  *   onUpdateTurnDisplay() → callback
  *   getScorePanelUI()   → scorePanelUI — ✨ NOUVEAU (échange automatique de prisonniers)
+ *
+ * ✨ NOUVEAU : gameState.towers/gameState.prisoners ont été regroupés sous
+ * gameState.extraState.towers/gameState.extraState.prisoners (conteneur générique partagé
+ * par toutes les extensions à état persistant non-meeple — voir GameState.js et
+ * ARCHITECTURE.md). Tout ce fichier a été mis à jour en conséquence.
  */
 
 // ✅ FIX : tailles pion tour / meeple de verrouillage désormais pilotées par MeepleConfig.js
@@ -147,9 +152,11 @@ export function showTowerCursors() {
 
     eligible.forEach(({ x, y, height, zoneIndex }) => {
         // ✅ FIX : n'afficher le curseur sur cette tuile que si une action y est réellement
-        // possible — poser un étage (pièces dispo) ou verrouiller (tour déjà commencée + meeple dispo).
+        // possible — poser un étage (pièces dispo) ou verrouiller (tour déjà commencée + meeple
+        // dispo + dragon absent de cette tuile, cf. TowerRules.lockTower).
+        const isDragonTile = !!(gameState.dragonPos && gameState.dragonPos.x === x && gameState.dragonPos.y === y);
         const canAddFloorHere = hasFloorPieces;
-        const canLockHere     = height >= 1 && hasLockableMeeple;
+        const canLockHere     = height >= 1 && hasLockableMeeple && !isDragonTile;
         if (!canAddFloorHere && !canLockHere) return;
 
         const tile = plateau.placedTiles[`${x},${y}`];
@@ -189,7 +196,8 @@ export function showTowerCursors() {
  * ✅ FIX : l'option "poser un étage" n'est proposée que si le joueur a encore
  * des pièces de tour disponibles — sinon elle échouerait silencieusement côté
  * hôte (TowerRules.canAddFloor renvoie false). Le verrouillage reste proposé
- * indépendamment tant que la tour a au moins 1 étage et qu'un meeple est dispo.
+ * indépendamment tant que la tour a au moins 1 étage, qu'un meeple est dispo,
+ * et que le dragon n'est pas sur cette tuile (cf. TowerRules.lockTower).
  *
  * ✅ FIX : les icônes (tour, meeple normal, grand meeple) utilisent désormais
  * getMeepleSize() par type au lieu d'un "width:40px" unique pour tout le monde —
@@ -226,8 +234,12 @@ function _openTowerFloorSelector(x, y, height, clientX, clientY) {
         selector.appendChild(option);
     }
 
-    // Verrouillage : proposé uniquement si une tour existe déjà (au moins 1 étage)
-    if (height >= 1 && player) {
+    // ✅ FIX : verrouillage proposé uniquement si une tour existe déjà (au moins 1 étage) ET
+    // que le dragon n'est pas sur cette tuile — sinon la requête hôte échouerait silencieusement
+    // (cf. TowerRules.lockTower).
+    const dragonPos = gs().dragonPos;
+    const isDragonTile = !!(dragonPos && dragonPos.x === x && dragonPos.y === y);
+    if (height >= 1 && player && !isDragonTile) {
         const colorCap = player.color.charAt(0).toUpperCase() + player.color.slice(1);
         const lockOptions = [];
         if ((player.meeples ?? 0) > 0) lockOptions.push({ type: 'Normal', src: `./assets/Meeples/${colorCap}/Normal.png` });
@@ -306,8 +318,8 @@ export function executeAddFloorHost(x, y, playerId) {
 export function applyFloorPlaced(x, y, height, playerId, towerPieces) {
     const gameState = gs();
     const key = `${x},${y}`;
-    if (!gameState.towers[key]) gameState.towers[key] = { height: 0, lockedBy: null, contributions: {} };
-    gameState.towers[key].height = height;
+    if (!gameState.extraState.towers[key]) gameState.extraState.towers[key] = { height: 0, lockedBy: null, contributions: {} };
+    gameState.extraState.towers[key].height = height;
 
     const player = gameState.players.find(p => p.id === playerId);
     if (player) player.towerPieces = towerPieces;
@@ -475,6 +487,29 @@ export function renderTowerLockMeeple(x, y, type, color) {
     if (towerImg) _positionLockMeepleOverTower(container, towerImg);
 }
 
+/**
+ * ✨ NOUVEAU — Undo/reconnexion : (re)dessine l'intégralité des tours et de leurs éventuels
+ * gardes de verrouillage depuis l'état courant (gameState.extraState.towers), après avoir
+ * effacé tous les pions actuellement affichés. Utilisé quand l'état a pu changer "en bloc"
+ * sans qu'on sache précisément quelles tours ont été affectées :
+ *   - UndoManager.applyLocally (annulation, locale ou reçue du réseau) — une pose d'étage,
+ *     une capture, un verrouillage ou un déplacement du dragon qui a mangé un garde peuvent
+ *     tous modifier gameState.extraState.towers ;
+ *   - ReconnectionManager.applyFullStateSync (reconnexion) — auparavant, les tours n'étaient
+ *     jamais redessinées à la reconnexion alors que gameState.extraState.towers l'était déjà
+ *     via gameState.deserialize() (bug corrigé au passage).
+ * Coût négligeable si l'extension Tour n'est pas utilisée (towers vide).
+ */
+export function renderAllTowersFromState() {
+    document.querySelectorAll('.tower-piece, .tower-lock-meeple').forEach(el => el.remove());
+    const towers = gs()?.extraState?.towers ?? {};
+    Object.entries(towers).forEach(([key, tower]) => {
+        const [x, y] = key.split(',').map(Number);
+        if (tower.height > 0) renderTowerHeight(x, y, tower.height);
+        if (tower.lockedBy) renderTowerLockMeeple(x, y, tower.lockMeepleType, tower.lockMeepleColor);
+    });
+}
+
 // ── Verrouillage ─────────────────────────────────────────────────────────
 
 export function onTowerLockConfirm(x, y, meepleType) {
@@ -515,10 +550,10 @@ export function executeLockHost(x, y, playerId, meepleType) {
 export function applyLockExecuted(x, y, playerId, meepleType, color, meeples, hasLargeMeeple) {
     const gameState = gs();
     const key = `${x},${y}`;
-    if (!gameState.towers[key]) gameState.towers[key] = { height: 0, lockedBy: null, contributions: {} };
-    gameState.towers[key].lockedBy        = playerId;
-    gameState.towers[key].lockMeepleType  = meepleType;
-    gameState.towers[key].lockMeepleColor = color;
+    if (!gameState.extraState.towers[key]) gameState.extraState.towers[key] = { height: 0, lockedBy: null, contributions: {} };
+    gameState.extraState.towers[key].lockedBy        = playerId;
+    gameState.extraState.towers[key].lockMeepleType  = meepleType;
+    gameState.extraState.towers[key].lockMeepleColor = color;
 
     const player = gameState.players.find(p => p.id === playerId);
     if (player) {
@@ -627,7 +662,7 @@ function _openTowerCaptureSelector(key, meeple, clientX, clientY) {
  * Ré-affiche les curseurs de capture en attente (ex: après un rafraîchissement d'UI),
  * en reconstruisant les cibles depuis gameState._pendingTowerCapture.
  * ✨ NOUVEAU : sait résoudre une cible "tower-lock:x,y" (absente de placedMeeples)
- * en relisant l'état du verrouillage dans gameState.towers.
+ * en relisant l'état du verrouillage dans gameState.extraState.towers.
  */
 export function showPendingTowerCaptureIfAny() {
     const gameState = gs();
@@ -645,13 +680,13 @@ export function showPendingTowerCaptureIfAny() {
 
 /**
  * ✨ NOUVEAU : résout le meeple correspondant à une clé de cible de capture, qu'il s'agisse
- * d'un meeple classique (placedMeeples) ou d'un garde verrouillant une tour (gameState.towers).
+ * d'un meeple classique (placedMeeples) ou d'un garde verrouillant une tour (gameState.extraState.towers).
  * @private
  */
 function _resolveCaptureTargetMeeple(key, placedMeeples) {
     if (key.startsWith('tower-lock:')) {
         const coords = key.slice('tower-lock:'.length);
-        const tower  = gs().towers[coords];
+        const tower  = gs().extraState.towers[coords];
         if (!tower?.lockedBy) return null;
         return { type: tower.lockMeepleType, color: tower.lockMeepleColor, playerId: tower.lockedBy };
     }
@@ -676,15 +711,14 @@ export function handleTowerCapture(meepleKey) {
 /**
  * [HÔTE] Exécute la capture, broadcast à tous.
  *
- * ✨ MODIFIÉ : la vérification de réciprocité (échange automatique de prisonniers) n'est
- * plus déclenchée immédiatement après la capture. Elle est désormais différée à la fin du
- * tour du capturant — voir checkPendingReciprocalExchange(), appelée depuis
+ * ✨ La vérification de réciprocité (échange automatique de prisonniers) n'est plus
+ * déclenchée immédiatement après la capture. Elle est différée à la fin du tour du
+ * capturant — voir checkPendingReciprocalExchange(), appelée depuis
  * GameEventSetup._installEndTurn et GameSyncCallbacks.onTurnEndRequest, au même point que
  * undoManager.reset(). Tant que le tour n'est pas terminé, la capture reste annulable ;
- * résoudre l'échange avant cette annulation (qui touche gameState.prisoners des DEUX
- * joueurs, potentiellement en cascade avec une modale de choix) mettrait l'état réseau
- * dans une situation incohérente si le capturant revenait ensuite sur sa décision — même
- * logique de sécurité que gameState._freshCaptures pour le rachat de prisonnier.
+ * résoudre l'échange avant cette annulation mettrait l'état réseau dans une situation
+ * incohérente si le capturant revenait sur sa décision — même logique de sécurité que
+ * gameState._freshCaptures pour le rachat de prisonnier.
  */
 export function executeTowerCaptureHost(meepleKey, playerId) {
     const towerRules = tr();
@@ -697,10 +731,10 @@ export function executeTowerCaptureHost(meepleKey, playerId) {
         sync().syncTowerCaptureExecuted(meepleKey, playerId, result.selfCapture, result.meeple.type, result.meeple.playerId);
     }
 
-    // ✨ MODIFIÉ : on note seulement l'info nécessaire — la vérification effective est
-    // déclenchée plus tard par checkPendingReciprocalExchange(). Une auto-capture
-    // (selfCapture) ne peut jamais créer de réciprocité puisque le capturant et le
-    // propriétaire capturé sont la même personne, donc rien à différer dans ce cas.
+    // On note seulement l'info nécessaire — la vérification effective est déclenchée plus
+    // tard par checkPendingReciprocalExchange(). Une auto-capture (selfCapture) ne peut
+    // jamais créer de réciprocité puisque le capturant et le propriétaire capturé sont la
+    // même personne, donc rien à différer dans ce cas.
     if (!result.selfCapture) {
         gs()._pendingReciprocalCheck = {
             capturingPlayerId: playerId,
@@ -714,9 +748,10 @@ export function executeTowerCaptureHost(meepleKey, playerId) {
 
 /**
  * Applique la capture de façon identique côté hôte ET invités : retrait du plateau,
- * mutation de gameState.prisoners (ou retour réserve si auto-capture), retrait visuel.
- * ⚠️ C'est ici et uniquement ici que la mutation a lieu — appelé par le hôte directement
- * et par les invités via le listener réseau, pour que gameState.prisoners soit cohérent partout.
+ * mutation de gameState.extraState.prisoners (ou retour réserve si auto-capture), retrait
+ * visuel. ⚠️ C'est ici et uniquement ici que la mutation a lieu — appelé par le hôte
+ * directement et par les invités via le listener réseau, pour que
+ * gameState.extraState.prisoners soit cohérent partout (pas seulement chez l'hôte).
  *
  * ✨ NOUVEAU : si la clé capturée est un garde verrouillant une tour ("tower-lock:x,y"),
  * la tour est déverrouillée (lockedBy/lockMeepleType/lockMeepleColor réinitialisés) et le
@@ -730,8 +765,8 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
         const player = gameState.players.find(p => p.id === capturingPlayerId);
         if (player) _returnCapturedMeeple(player, meepleType);
     } else if (capturingPlayerId) {
-        if (!gameState.prisoners[capturingPlayerId]) gameState.prisoners[capturingPlayerId] = [];
-        gameState.prisoners[capturingPlayerId].push({ type: meepleType, ownerId });
+        if (!gameState.extraState.prisoners[capturingPlayerId]) gameState.extraState.prisoners[capturingPlayerId] = [];
+        gameState.extraState.prisoners[capturingPlayerId].push({ type: meepleType, ownerId });
 
         // ✨ NOUVEAU : marque cette capture comme "fraîche" (pas encore validée par la fin du
         // tour du détenteur) — bloque temporairement son rachat, cf. GameState._freshCaptures.
@@ -743,7 +778,7 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
     // et retire le pion visuel au lieu de manipuler placedMeeples.
     if (meepleKey.startsWith('tower-lock:')) {
         const coords = meepleKey.slice('tower-lock:'.length);
-        const tower  = gameState.towers[coords];
+        const tower  = gameState.extraState.towers[coords];
         if (tower) {
             tower.lockedBy        = null;
             tower.lockMeepleType  = null;
@@ -804,14 +839,12 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
     clearTowerCursors();
 }
 
-// ── ✨ NOUVEAU — Échange automatique de prisonniers ─────────────────────────
+// ── ✨ Échange automatique de prisonniers ─────────────────────────
 //
 // Règle : si le joueur qui vient de capturer (X) détient désormais un prisonnier
 // du propriétaire capturé (Y), ET que Y détenait déjà un ou plusieurs prisonniers
 // de X, alors il y a réciprocité :
-//   - le meeple fraîchement capturé par X retourne TOUJOURS automatiquement à Y
-//     (✅ FIX : c'était documenté ici mais jamais appliqué — voir freshlyCapturedType
-//     ci-dessous, qui porte désormais ce retour dans applyPrisonerExchangeResolved) ;
+//   - le meeple fraîchement capturé par X retourne TOUJOURS automatiquement à Y ;
 //   - si Y ne détient qu'UN SEUL type de meeple de X, ce type revient
 //     automatiquement à X (aucune ambiguïté possible) ;
 //   - si Y détient PLUSIEURS types distincts de meeples de X, X doit choisir
@@ -821,18 +854,16 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
 // réciprocité — c'est donc toujours X (le joueur actif) qui, le cas échéant,
 // doit choisir, jamais Y.
 //
-// ✨ MODIFIÉ : la vérification elle-même (_checkAndHandleReciprocalExchange) n'est plus
-// appelée directement après la capture. Elle est désormais invoquée par
-// checkPendingReciprocalExchange(), au moment où le tour du capturant se termine
-// (undoManager.reset()) — voir GameEventSetup._installEndTurn et
-// GameSyncCallbacks.onTurnEndRequest. Cela garantit que la capture qui déclenche
-// potentiellement l'échange n'est plus annulable au moment où gameState.prisoners
-// est muté pour les DEUX joueurs (voir executeTowerCaptureHost pour le détail du
-// raisonnement).
+// La vérification elle-même (_checkAndHandleReciprocalExchange) n'est plus appelée
+// directement après la capture. Elle est invoquée par checkPendingReciprocalExchange(),
+// au moment où le tour du capturant se termine (undoManager.reset()) — voir
+// GameEventSetup._installEndTurn et GameSyncCallbacks.onTurnEndRequest. Cela garantit
+// que la capture qui déclenche potentiellement l'échange n'est plus annulable au moment
+// où gameState.extraState.prisoners est muté pour les DEUX joueurs (voir
+// executeTowerCaptureHost pour le détail du raisonnement).
 
 /**
- * ✨ NOUVEAU
- * [HÔTE] Point d'entrée appelé à la fin du tour du capturant (au même point que
+ * ✨ [HÔTE] Point d'entrée appelé à la fin du tour du capturant (au même point que
  * undoManager.reset() — cf. GameEventSetup._installEndTurn et
  * GameSyncCallbacks.onTurnEndRequest), une fois que la capture Tour de ce tour n'est
  * plus annulable. Consomme gameState._pendingReciprocalCheck s'il existe (posé par
@@ -850,8 +881,6 @@ export function checkPendingReciprocalExchange() {
 /**
  * [HÔTE] Vérifie la réciprocité et déclenche la résolution automatique (un seul type
  * possible) ou la demande de choix (plusieurs types).
- * ✨ MODIFIÉ : appelée désormais par checkPendingReciprocalExchange() en fin de tour du
- * capturant, plutôt qu'immédiatement après la capture (voir la note en tête de section).
  * @param {string} capturingPlayerId — X, le joueur qui a capturé
  * @param {string} capturedOwnerId   — Y, le propriétaire d'origine du meeple qui a été capturé
  * @param {string} freshlyCapturedType — type du meeple que X a capturé chez Y,
@@ -877,7 +906,7 @@ function _checkAndHandleReciprocalExchange(capturingPlayerId, capturedOwnerId, f
 }
 
 /**
- * ✨ NOUVEAU — Échange automatique de prisonniers
+ * ✨ Échange automatique de prisonniers
  * Applique la résolution de façon identique côté hôte ET invités (même principe que
  * applyCaptureExecuted) : retire UNE entrée du type choisi appartenant à `chooserId` dans
  * les prisonniers de `opponentId`, et la rend à la réserve de `chooserId`. Affiche ensuite
@@ -887,24 +916,21 @@ function _checkAndHandleReciprocalExchange(capturingPlayerId, capturedOwnerId, f
  * @param {string} chooserId    — X, vient de capturer et récupère chosenType
  * @param {string} chosenType   — type que X récupère (choisi ou déduit sans ambiguïté)
  * @param {string} [freshlyCapturedType] — type du meeple que X vient tout juste de
- *        capturer chez Y (via la tour) — il doit lui aussi retourner à Y automatiquement,
- *        ce que cette fonction ne faisait pas jusqu'ici (seul le retour vers X était appliqué).
+ *        capturer chez Y (via la tour) — il doit lui aussi retourner à Y automatiquement.
  */
 export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType, freshlyCapturedType) {
     const gameState = gs();
-    const held = gameState.prisoners[opponentId] ?? [];
+    const held = gameState.extraState.prisoners[opponentId] ?? [];
     const idx = held.findIndex(p => p.ownerId === chooserId && p.type === chosenType);
     if (idx !== -1) held.splice(idx, 1);
 
     const player = gameState.players.find(p => p.id === chooserId);
     if (player) _returnCapturedMeeple(player, chosenType);
 
-    // ✅ FIX : retour automatique, vers Y, du meeple que X vient tout juste de capturer.
-    // C'est CETTE capture qui a déclenché la vérification de réciprocité — sans ce bloc,
-    // elle restait indéfiniment prisonnière dans le panel de X (bug rapporté : "l'un des
-    // prisonniers est échangé et l'autre reste dans le panel du joueur qui a capturé").
+    // Retour automatique, vers Y, du meeple que X vient tout juste de capturer.
+    // C'est CETTE capture qui a déclenché la vérification de réciprocité.
     if (freshlyCapturedType) {
-        const chooserHeld = gameState.prisoners[chooserId] ?? [];
+        const chooserHeld = gameState.extraState.prisoners[chooserId] ?? [];
         const freshIdx = chooserHeld.findIndex(p => p.ownerId === opponentId && p.type === freshlyCapturedType);
         if (freshIdx !== -1) {
             chooserHeld.splice(freshIdx, 1);
@@ -912,7 +938,7 @@ export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType,
             if (opponentPlayer) _returnCapturedMeeple(opponentPlayer, freshlyCapturedType);
         }
         // La capture ayant motivé cet échange est désormais résolue et a quitté
-        // gameState.prisoners — elle ne doit plus être suivie comme "fraîche"
+        // gameState.extraState.prisoners — elle ne doit plus être suivie comme "fraîche"
         // (cf. GameState._freshCaptures, utilisé pour bloquer temporairement le rachat).
         if (gameState._freshCaptures) {
             gameState._freshCaptures = gameState._freshCaptures.filter(
@@ -924,12 +950,12 @@ export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType,
     gameState._pendingPrisonerExchange = null;
     _closePrisonerSelectionUI();
 
-    showPrisonerExchangeModal({ needsChoice: false, chooserId, opponentId, chosenType });
+    showPrisonerExchangeModal({ needsChoice: false, chooserId, opponentId, chosenType, freshlyCapturedType });
     _deps.onUpdateTurnDisplay();
 }
 
 /**
- * ✨ NOUVEAU — Échange automatique de prisonniers
+ * ✨ Échange automatique de prisonniers
  * Affiche l'état "en attente de choix" de façon identique côté hôte ET invités : pose
  * gameState._pendingPrisonerExchange (transitoire, non sérialisé) et ouvre la modale
  * adaptée au rôle du joueur local (bouton "Choisir" pour le joueur concerné, "Fermer"
@@ -942,11 +968,11 @@ export function applyPrisonerExchangePending(opponentId, chooserId, availableTyp
     gs()._pendingPrisonerExchange = { chooserId, opponentId, availableTypes, freshlyCapturedType };
 
     const isChooser = chooserId === mp().playerId;
-    showPrisonerExchangeModal({ needsChoice: isChooser, chooserId, opponentId, availableTypes });
+    showPrisonerExchangeModal({ needsChoice: isChooser, chooserId, opponentId, availableTypes, freshlyCapturedType });
 }
 
 /**
- * ✨ NOUVEAU — Échange automatique de prisonniers
+ * ✨ Échange automatique de prisonniers
  * [HÔTE] Valide et applique le choix du joueur concerné, puis broadcast la résolution.
  */
 export function executePrisonerChoiceHost(chosenType, playerId) {
@@ -960,7 +986,7 @@ export function executePrisonerChoiceHost(chosenType, playerId) {
 }
 
 /**
- * ✨ NOUVEAU — Échange automatique de prisonniers
+ * ✨ Échange automatique de prisonniers
  * Appelée quand le joueur concerné clique sur un de ses prisonniers sélectionnables
  * dans le panel adverse (voir _openPrisonerSelectionUI / ScorePanelUI.enablePrisonerSelection).
  * Envoie la requête à l'hôte, ou résout directement si hôte/solo.
@@ -982,7 +1008,7 @@ function handlePrisonerChoiceConfirm(chosenType) {
 }
 
 /**
- * ✨ NOUVEAU — Échange automatique de prisonniers
+ * ✨ Échange automatique de prisonniers
  * Libellés français courts pour les types de meeples, utilisés dans le texte de la modale.
  * @private
  */
@@ -998,15 +1024,18 @@ function _meepleLabel(type) {
 }
 
 /**
- * ✨ NOUVEAU — Échange automatique de prisonniers
+ * ✨ Échange automatique de prisonniers
  * Affiche la modale d'échange, adaptée selon le rôle du joueur local :
  *   - chosenType fourni : échange déjà résolu, message informatif, bouton "Fermer" pour tous.
  *   - needsChoice=true (uniquement chez le joueur qui doit choisir) : bouton "Choisir".
  *   - needsChoice=false sans chosenType (les autres joueurs pendant que quelqu'un choisit) :
  *     bouton "Fermer".
+ * ✅ FIX : le texte ne décrivait jusqu'ici qu'un seul sens de l'échange (X récupère chez Y),
+ * jamais le retour symétrique et systématique du meeple que X vient tout juste de capturer
+ * chez Y (freshlyCapturedType) — pourtant bien appliqué (cf. applyPrisonerExchangeResolved).
  * @private
  */
-function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenType = null, availableTypes = null }) {
+function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenType = null, availableTypes = null, freshlyCapturedType = null }) {
     const modal     = document.getElementById('prisoner-exchange-modal');
     const text      = document.getElementById('prisoner-exchange-text');
     const chooseBtn = document.getElementById('prisoner-exchange-choose-btn');
@@ -1017,10 +1046,15 @@ function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenT
     const chooserName  = gameState.players.find(p => p.id === chooserId)?.name  ?? '?';
     const opponentName = gameState.players.find(p => p.id === opponentId)?.name ?? '?';
 
+    // ✅ FIX : décrire les deux sens de l'échange dans la même phrase
+    const freshPart = freshlyCapturedType
+        ? ` et ${opponentName} récupère en retour son ${_meepleLabel(freshlyCapturedType)}`
+        : '';
+
     if (chosenType) {
-        text.textContent = `Échange de prisonniers : ${chooserName} récupère son ${_meepleLabel(chosenType)} auprès de ${opponentName}.`;
+        text.textContent = `Échange de prisonniers : ${chooserName} récupère son ${_meepleLabel(chosenType)} auprès de ${opponentName}${freshPart}.`;
     } else {
-        text.textContent = `Échange de prisonniers : ${chooserName} doit choisir lequel de ses meeples récupérer auprès de ${opponentName}.`;
+        text.textContent = `Échange de prisonniers : ${chooserName} doit choisir lequel de ses meeples récupérer auprès de ${opponentName}${freshPart}.`;
     }
 
     chooseBtn.style.display = needsChoice ? '' : 'none';
@@ -1036,13 +1070,9 @@ function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenT
 }
 
 /**
- * ✨ NOUVEAU — Échange automatique de prisonniers
+ * ✨ Échange automatique de prisonniers
  * Ouvre le voile gris + force l'ouverture du panel du joueur adverse concerné, en rendant
  * sélectionnables uniquement ses prisonniers appartenant au joueur qui doit choisir.
- *
- * Le mécanisme de sélection lui-même (ScorePanelUI.enablePrisonerSelection) est générique —
- * prévu pour être réutilisé plus tard par le rachat de prisonnier (probablement sans modale
- * ni voile gris dans ce futur cas d'usage, à la charge de l'appelant à ce moment-là).
  * @private
  */
 function _openPrisonerSelectionUI(opponentId, chooserId, availableTypes) {
@@ -1061,7 +1091,7 @@ function _openPrisonerSelectionUI(opponentId, chooserId, availableTypes) {
 }
 
 /**
- * ✨ NOUVEAU — Échange automatique de prisonniers
+ * ✨ Échange automatique de prisonniers
  * Referme le voile gris et désactive la sélection de prisonniers.
  * @private
  */
@@ -1073,24 +1103,7 @@ function _closePrisonerSelectionUI() {
     if (scorePanelUI) scorePanelUI.disablePrisonerSelection();
 }
 
-// ── ✨ NOUVEAU — Rachat de prisonnier ───────────────────────────────────────
-//
-// Contrairement à l'échange automatique (déclenché par une capture, résolu
-// uniquement au moment où elle survient), le rachat est disponible à tout
-// moment de la partie, pour n'importe quel joueur, dès qu'il ouvre le panel
-// d'un adversaire qui détient un de ses prisonniers. Coût fixe
-// (PRISONER_BUYBACK_COST) : les points vont directement au joueur qui détient
-// le prisonnier (le capturant, propriétaire du panel) — c'est une vraie
-// transaction entre les deux joueurs, pas une dépense dans une réserve neutre.
-//
-// Réutilise le mécanisme générique de sélection de ScorePanelUI, exactement
-// comme prévu lors de sa conception pour l'échange automatique — mais via
-// setBuybackHandler(), un gestionnaire PERMANENT appliqué à TOUS les panels
-// (contrairement à enablePrisonerSelection(), qui cible un seul panel pour la
-// durée d'un échange précis). Le rachat est automatiquement désactivé tant
-// qu'un échange automatique attend sa résolution (gameState._pendingPrisonerExchange),
-// pour éviter tout conflit de mutation entre les deux mécanismes sur les mêmes
-// prisonniers (fenêtre entre l'annonce de l'échange et le choix du joueur concerné).
+// ── ✨ Rachat de prisonnier ───────────────────────────────────────────────
 
 /**
  * Enregistre le gestionnaire de rachat auprès de ScorePanelUI. Appelé une fois
@@ -1107,11 +1120,9 @@ function setupPrisonerBuyback() {
             // Aucun rachat tant qu'un échange automatique attend sa résolution —
             // évite tout conflit de mutation sur les mêmes prisonniers.
             if (gameState._pendingPrisonerExchange) return false;
-            // ✨ NOUVEAU : aucun rachat pour une capture effectuée pendant le tour EN COURS
+            // Aucun rachat pour une capture effectuée pendant le tour EN COURS
             // du détenteur (panelPlayerId) — tant que ce tour n'est pas terminé, il pourrait
-            // encore être annulé (une fois l'annulation adaptée à l'extension Tour). Ne
-            // concerne jamais les prisonniers de tours précédents (liste vidée à chaque
-            // 'turn-changed', cf. home.js).
+            // encore être annulé.
             const isFreshThisTurn = (gameState._freshCaptures ?? []).some(
                 c => c.holderId === panelPlayerId && c.ownerId === entry.ownerId && c.type === entry.type
             );
@@ -1171,7 +1182,7 @@ export function executePrisonerBuybackHost(opponentId, meepleType, buyerId) {
     const gameState = gs();
     if (gameState._pendingPrisonerExchange) return; // sécurité : pas de rachat pendant un échange en cours
 
-    // ✨ NOUVEAU : revalidation côté hôte — aucun rachat tant que la capture concernée n'a pas
+    // Revalidation côté hôte — aucun rachat tant que la capture concernée n'a pas
     // été validée par la fin du tour du détenteur (défense en profondeur, cf. setupPrisonerBuyback).
     const isFreshThisTurn = (gameState._freshCaptures ?? []).some(
         c => c.holderId === opponentId && c.ownerId === buyerId && c.type === meepleType
@@ -1181,7 +1192,7 @@ export function executePrisonerBuybackHost(opponentId, meepleType, buyerId) {
     const buyer = gameState.players.find(p => p.id === buyerId);
     if (!buyer || (buyer.score ?? 0) < PRISONER_BUYBACK_COST) return;
 
-    const held = gameState.prisoners[opponentId] ?? [];
+    const held = gameState.extraState.prisoners[opponentId] ?? [];
     const stillHeld = held.some(p => p.ownerId === buyerId && p.type === meepleType);
     if (!stillHeld) return; // déjà racheté entre-temps (double-clic / course réseau)
 
@@ -1198,7 +1209,7 @@ export function executePrisonerBuybackHost(opponentId, meepleType, buyerId) {
  */
 export function applyPrisonerBuybackExecuted(buyerId, opponentId, meepleType) {
     const gameState = gs();
-    const held = gameState.prisoners[opponentId] ?? [];
+    const held = gameState.extraState.prisoners[opponentId] ?? [];
     const idx = held.findIndex(p => p.ownerId === buyerId && p.type === meepleType);
     if (idx !== -1) held.splice(idx, 1);
 

@@ -27,31 +27,41 @@ export class GameState {
             meepleKey: null,  // clé "x,y,position" du meeple attaché
         };
 
-        // ── Extension Tour ───────────────────────────────────────────────
-        // Map "x,y" -> { height, lockedBy, contributions: { playerId: count } }
-        // lockedBy réservé pour une passe future (toujours null pour l'instant)
-        this.towers = {};
-
-        // Meeples capturés par une tour : Map playerId (capturant) -> [{ type, ownerId }]
-        this.prisoners = {};
+        // ✨ NOUVEAU : conteneur générique pour tout état persistant "de plateau" qui n'est
+        // pas un meeple classique dans placedMeeples (pion/structure/compteur spécifique à
+        // une extension). Créé pour l'extension Tour (towers/prisoners), pensé pour accueillir
+        // sans modification les futures extensions à état persistant non-meeple (moutons liés
+        // au berger, granges, ponts, forteresses...). Sérialisé en un seul bloc (voir
+        // serialize/deserialize ci-dessous) et restauré génériquement par
+        // UndoManager.restoreExtraState — AUCUN de ces deux mécanismes n'a besoin d'être
+        // modifié quand une nouvelle sous-clé est ajoutée ici. Voir ARCHITECTURE.md, section
+        // "Ajouter une extension avec pièces/état persistant", pour la marche à suivre.
+        this.extraState = {
+            // Map "x,y" -> { height, lockedBy, lockMeepleType, lockMeepleColor, contributions: { playerId: count } }
+            towers: {},
+            // Map playerId (capturant) -> [{ type, ownerId }]
+            prisoners: {},
+        };
 
         // ✨ NOUVEAU : cible de capture en attente après pose d'un étage (comme _pendingPrincessTile)
+        // Transitoire, turn-scoped, non sérialisé — délibérément PAS dans extraState (voir
+        // ARCHITECTURE.md : extraState ne contient que de l'état persistant, pas les _pending*).
         this._pendingTowerCapture = null;
 
         // ✨ NOUVEAU : échange automatique de prisonniers — vérification différée à la fin du
         // tour du capturant (voir TowerUI.checkPendingReciprocalExchange). Posé immédiatement
         // après une capture non-auto (executeTowerCaptureHost), consommé et remis à null au
         // moment où undoManager.reset() verrouille le tour (la capture n'est alors plus
-        // annulable — résoudre l'échange avant ce verrouillage mettrait gameState.prisoners
-        // dans un état incohérent avec une éventuelle annulation ultérieure de la capture).
-        // Transitoire, non sérialisé (comme les autres _pending*).
+        // annulable). Également réinitialisé par UndoManager.restoreSnapshot lors d'une
+        // annulation — sinon une capture annulée laisserait une vérification fantôme se
+        // déclencher en fin de tour. Transitoire, non sérialisé.
         // Forme : { capturingPlayerId, capturedOwnerId, freshlyCapturedType }
         this._pendingReciprocalCheck = null;
 
         // ✨ NOUVEAU : échange automatique de prisonniers en attente d'un choix du joueur
         // concerné (posé quand la réciprocité laisse plusieurs types de meeples possibles).
-        // { chooserId, opponentId, availableTypes } — transitoire, non sérialisé (comme
-        // _pendingTowerCapture/_pendingPrincessTile/_pendingPortalTile).
+        // { chooserId, opponentId, availableTypes, freshlyCapturedType } — transitoire, non
+        // sérialisé (comme _pendingTowerCapture/_pendingPrincessTile/_pendingPortalTile).
         this._pendingPrisonerExchange = null;
 
         // ✨ NOUVEAU : indique si au moins un rachat de prisonnier a eu lieu durant la partie —
@@ -62,9 +72,9 @@ export class GameState {
         // ✨ NOUVEAU : liste transitoire des captures effectuées durant le tour EN COURS
         // (non sérialisée, comme les autres _pending*). Vidée intégralement à chaque
         // 'turn-changed' (cf. home.js). Sert de garde-fou temporaire : tant que le tour du
-        // joueur qui a capturé n'est pas terminé, il pourrait encore annuler son action (une
-        // fois l'annulation adaptée à l'extension Tour) — le rachat de CETTE capture précise
-        // est donc bloqué jusque-là, sans affecter les prisonniers de tours précédents.
+        // joueur qui a capturé n'est pas terminé, il pourrait encore annuler son action — le
+        // rachat de CETTE capture précise est donc bloqué jusque-là, sans affecter les
+        // prisonniers de tours précédents.
         // Forme : [{ holderId, ownerId, type }]
         this._freshCaptures = [];
     }
@@ -222,9 +232,8 @@ export class GameState {
             dragonPos:          this.dragonPos,
             dragonPhase:        this.dragonPhase,
             fairyState:         this.fairyState,
-            towers:             this.towers,     // ✨ NOUVEAU
-            prisoners:          this.prisoners,  // ✨ NOUVEAU
-            hasPrisonerBuybacks: this.hasPrisonerBuybacks, // ✨ NOUVEAU
+            extraState:         this.extraState, // ✨ NOUVEAU : remplace les anciens champs towers/prisoners séparés
+            hasPrisonerBuybacks: this.hasPrisonerBuybacks,
         };
     }
 
@@ -264,9 +273,12 @@ export class GameState {
             meepleKey: data.fairyState?.meepleKey ?? null,
         };
 
-        // ✨ NOUVEAU
-        this.towers    = data.towers    ?? {};
-        this.prisoners = data.prisoners ?? {};
+        // ✨ NOUVEAU : extraState générique — ajouter une nouvelle sous-clé ici (ex: sheep,
+        // barns, bridges, fortresses) ne demande AUCUNE autre modification dans ce fichier.
+        this.extraState = {
+            towers:    data.extraState?.towers    ?? {},
+            prisoners: data.extraState?.prisoners ?? {},
+        };
         this.hasPrisonerBuybacks = data.hasPrisonerBuybacks ?? false;
     }
 }

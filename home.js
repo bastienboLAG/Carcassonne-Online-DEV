@@ -27,7 +27,10 @@ import {
     onDragonPhaseEnded, advanceDragonTurnHost,
     renderDragonPiece, renderFairyPiece, removeFairyPiece, releaseFairyIfDetached,
 } from './modules/game/DragonUI.js';
-import { initTowerUI, clearTowerCursors, checkPendingReciprocalExchange } from './modules/game/TowerUI.js'; // ✨ NOUVEAU : checkPendingReciprocalExchange — échange automatique différé à la fin du tour
+import {
+    initTowerUI, clearTowerCursors, checkPendingReciprocalExchange,
+    renderAllTowersFromState, // ✨ NOUVEAU — redessine towers/gardes après undo ou reconnexion
+} from './modules/game/TowerUI.js';
 import { TowerRules } from './modules/rules/TowerRules.js'; // ✨ NOUVEAU (import direct non utilisé ici mais gardé pour clarté — l'instanciation réelle se fait dans GameModuleInitializer)
 import {
     initTurnUI,
@@ -819,8 +822,6 @@ document.getElementById('start-game-btn').addEventListener('click', async () => 
 // ═══════════════════════════════════════════════════════
 // INITIALISATION COMMUNE DES MODULES
 // ═══════════════════════════════════════════════════════
-// INITIALISATION COMMUNE DES MODULES
-// ═══════════════════════════════════════════════════════
 function initializeGameModules() {
     new GameModuleInitializer({
         getEventBus:          () => eventBus,
@@ -885,6 +886,7 @@ function initializeGameModules() {
         showDragonMoveCursors,
         showDragonVisitedTiles,
         hideAllCursors,
+        renderAllTowersFromState, // ✨ NOUVEAU — relayé jusqu'à UndoManager.initVisualHandlers
     }).init();
 }
 
@@ -1282,6 +1284,7 @@ function _makeStarter() {
             renderFairyPiece,
             startGameTimerFrom,
             updateTurnDisplay,
+            renderAllTowersFromState, // ✨ NOUVEAU — corrige le rendu des tours manquant à la reconnexion
         }),
         // deps pour reconnectionManager.initInGameNetworkHandler
         getInGameNetworkDeps: () => ({
@@ -1325,30 +1328,6 @@ async function startGameForInvite(fullStateData = null) {
     await _makeStarter().startGuest(fullStateData);
 }
 
-// ═══════════════════════════════════════════════════════
-// MOBILE — Mise à jour de l'UI
-// ═══════════════════════════════════════════════════════
-
-/**
- * Met à jour le style de la carte mobile du joueur actif selon le tour bonus
- */
-
-
-
-// ═══════════════════════════════════════════════════════
-// ABBÉ — Rappel anticipé
-// ═══════════════════════════════════════════════════════
-
-/**
- * Rappeler l'Abbé depuis le plateau
- * Appelé quand le joueur clique sur l'Abbé rappelable en phase 2
- */
-// ═══════════════════════════════════════════════════════
-// MEEPLES
-// ═══════════════════════════════════════════════════════
-// ── Dragon prématuré : modales 1 et 2 ────────────────────────────────
-
-// Invités : modale dragon prématuré
 // ═══════════════════════════════════════════════════════
 // EVENT LISTENERS DU JEU
 // ═══════════════════════════════════════════════════════

@@ -61,10 +61,16 @@ export class UndoManager {
                 hasAbbot: p.hasAbbot,
                 hasLargeMeeple: p.hasLargeMeeple,
                 hasBuilder: p.hasBuilder,
-                hasPig:     p.hasPig
+                hasPig:     p.hasPig,
+                towerPieces: p.towerPieces // ✨ NOUVEAU
             })),
             lastPlacedTile: this.lastPlacedTileBeforeTurn, // épingle avant ce tour
-            fairyState: this.deepCopy(this.gameState.fairyState ?? { ownerId: null, meepleKey: null })
+            fairyState: this.deepCopy(this.gameState.fairyState ?? { ownerId: null, meepleKey: null }),
+            // ✨ NOUVEAU : état persistant des extensions (towers/prisoners, et futures
+            // structures — moutons, granges, ponts, forteresses, cf. ARCHITECTURE.md).
+            // Copié en bloc, restauré génériquement par restoreExtraState() — aucune extension
+            // future n'a besoin de toucher ce fichier pour être prise en compte par l'undo.
+            extraState: this.deepCopy(this.gameState.extraState)
         };
         
         // Reset état du tour
@@ -106,12 +112,15 @@ export class UndoManager {
                 hasAbbot: p.hasAbbot,
                 hasLargeMeeple: p.hasLargeMeeple,
                 hasBuilder: p.hasBuilder,
-                hasPig:     p.hasPig
+                hasPig:     p.hasPig,
+                towerPieces: p.towerPieces // ✨ NOUVEAU
             })),
             fairyState: this.deepCopy(this.gameState.fairyState ?? { ownerId: null, meepleKey: null }),
             pendingPortalTile: this.gameState._pendingPortalTile
                 ? JSON.parse(JSON.stringify(this.gameState._pendingPortalTile))
-                : null
+                : null,
+            // ✨ NOUVEAU : voir saveTurnStart — même conteneur générique
+            extraState: this.deepCopy(this.gameState.extraState)
         };
         
         this.tilePlacedThisTurn = true;
@@ -145,10 +154,14 @@ export class UndoManager {
             dragonPos:   this.deepCopy(this.gameState.dragonPos),
             dragonPhase: this.deepCopy(this.gameState.dragonPhase),
             fairyState:  this.deepCopy(this.gameState.fairyState ?? { ownerId: null, meepleKey: null }),
+            // ✨ NOUVEAU : un déplacement du dragon peut manger un garde verrouillant une
+            // tour (cf. DragonRules._eatMeeplesAt) — l'annulation doit pouvoir le restaurer.
+            extraState:  this.deepCopy(this.gameState.extraState),
             playerMeeples: this.gameState.players.map(p => ({
                 id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot,
                 hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder,
-                hasPig: p.hasPig, hasFairy: p.hasFairy
+                hasPig: p.hasPig, hasFairy: p.hasFairy,
+                towerPieces: p.towerPieces // ✨ NOUVEAU
             }))
         };
         this.dragonMovePlacedThisTurn = true;
@@ -170,6 +183,10 @@ export class UndoManager {
         this.gameState.dragonPos   = this.deepCopy(snap.dragonPos);
         this.gameState.dragonPhase = this.deepCopy(snap.dragonPhase);
         this.gameState.fairyState  = this.deepCopy(snap.fairyState);
+
+        // ✨ NOUVEAU : restaurer extraState (towers/prisoners — un garde de tour mangé par
+        // le dragon pendant ce déplacement doit être reverrouillé)
+        this.restoreExtraState(snap.extraState);
 
         // Restaurer les meeples des joueurs
         snap.playerMeeples.forEach(pm => {
@@ -277,6 +294,25 @@ export class UndoManager {
     }
 
     /**
+     * ✨ NOUVEAU : restaure gameState.extraState de façon générique, sans connaître la liste
+     * des sous-structures qu'il contient (towers, prisoners, et toute future structure
+     * d'extension type moutons/granges/ponts/forteresses — cf. ARCHITECTURE.md, section
+     * "Ajouter une extension avec pièces/état persistant"). Préserve l'identité des objets
+     * (vidage + réassignation) plutôt que de remplacer la référence, par cohérence avec le
+     * traitement de placedMeeples ailleurs dans ce fichier.
+     * @param {object} source - extraState sauvegardé (depuis un snapshot local ou reçu du réseau)
+     */
+    restoreExtraState(source) {
+        if (!source) return;
+        Object.keys(this.gameState.extraState).forEach(subKey => {
+            const target = this.gameState.extraState[subKey];
+            if (!target || typeof target !== 'object') return;
+            Object.keys(target).forEach(k => delete target[k]);
+            Object.assign(target, this.deepCopy(source[subKey] ?? {}));
+        });
+    }
+
+    /**
      * Restaurer un snapshot
      */
     restoreSnapshot(snapshot, placedMeeples) {
@@ -331,6 +367,20 @@ export class UndoManager {
             if (fairyOwner) fairyOwner.hasFairy = true;
         }
 
+        // ✨ NOUVEAU : restaurer extraState (towers/prisoners, et futures structures
+        // d'extension — générique, cf. restoreExtraState).
+        this.restoreExtraState(snapshot.extraState);
+
+        // ✨ NOUVEAU : champs transitoires liés à l'extension Tour, non couverts par
+        // extraState car turn-scoped et jamais sérialisés — doivent être explicitement
+        // réinitialisés ici, sinon une capture/pose d'étage annulée laisserait une
+        // vérification ou une cible de capture fantôme se déclencher plus tard dans le tour.
+        // gameState._freshCaptures peut contenir des entrées obsolètes après restauration ;
+        // c'est sans conséquence, car ScorePanelUI ne peut plus les atteindre (le prisonnier
+        // qu'elles référencent n'existe plus une fois extraState.prisoners restauré ci-dessus).
+        this.gameState._pendingTowerCapture    = null;
+        this.gameState._pendingReciprocalCheck = null;
+
         // Restaurer compteur de meeples des joueurs
         snapshot.playerMeeples.forEach(saved => {
             // Chercher par id d'abord, puis par nom+couleur (fallback reconnexion : peerId change)
@@ -342,6 +392,7 @@ export class UndoManager {
                 if (saved.hasLargeMeeple !== undefined) player.hasLargeMeeple = saved.hasLargeMeeple;
                 if (saved.hasBuilder     !== undefined) player.hasBuilder     = saved.hasBuilder;
                 if (saved.hasPig         !== undefined) player.hasPig         = saved.hasPig;
+                if (saved.towerPieces    !== undefined) player.towerPieces    = saved.towerPieces; // ✨ NOUVEAU
             }
         });
     }
@@ -396,6 +447,15 @@ export class UndoManager {
         const gameConfig    = d.getGameConfig();
         const multiplayer   = d.getMultiplayer();
         const plateau       = this.plateau;
+
+        // ✨ NOUVEAU : redessine systématiquement l'état Tour (étages + gardes de
+        // verrouillage) depuis gameState.extraState.towers, qui a déjà été restauré à ce
+        // stade (par restoreSnapshot ou undoDragonMove, appelés avant applyLocally par
+        // undo()/applyRemote()). Plus simple et plus sûr que de traiter chaque branche
+        // ci-dessous séparément — une pose d'étage, une capture, un verrouillage ou un
+        // déplacement dragon ayant mangé un garde peuvent tous avoir eu lieu dans le même
+        // tour qu'une autre action annulée. Coût négligeable si l'extension Tour est inactive.
+        d.renderAllTowersFromState?.();
 
         // Cas dragon : annuler un déplacement dragon
         if (undoneAction.type === 'dragon-move-undo') {
@@ -470,7 +530,8 @@ export class UndoManager {
                 // Undo placement meeple normal : retirer le meeple DOM
                 document.querySelectorAll(`.meeple[data-key="${undoneAction.meeple.key}"]`).forEach(el => el.remove());
             } else {
-                // Undo éjection princesse : re-rendre tous les meeples du snapshot
+                // Undo éjection princesse OU pose d'étage/capture Tour : re-rendre tous les
+                // meeples du snapshot (le pion de tour a déjà été redessiné plus haut)
                 document.querySelectorAll('.meeple').forEach(el => el.remove());
                 Object.entries(placedMeeples).forEach(([key, meeple]) => {
                     const [mx, my, mp] = key.split(',').map(Number);
@@ -589,8 +650,14 @@ export class UndoManager {
                     player.hasLargeMeeple = saved.hasLargeMeeple;
                     player.hasBuilder     = saved.hasBuilder;
                     player.hasPig         = saved.hasPig;
+                    if (saved.towerPieces !== undefined) player.towerPieces = saved.towerPieces; // ✨ NOUVEAU
                 }
             });
+            // ✨ NOUVEAU : restaurer extraState (towers/prisoners, générique) et les champs
+            // transitoires Tour — même traitement que restoreSnapshot() côté hôte.
+            if (s.extraState) this.restoreExtraState(s.extraState);
+            gameState._pendingTowerCapture    = null;
+            gameState._pendingReciprocalCheck = null;
             // Restaurer et afficher la fée
             if (s.fairyState !== undefined && gameState.fairyState) {
                 gameState.fairyState.ownerId   = s.fairyState.ownerId;

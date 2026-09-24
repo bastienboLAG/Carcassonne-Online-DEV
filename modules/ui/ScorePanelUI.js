@@ -16,6 +16,11 @@ import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
  * enablePrisonerSelection()/disablePrisonerSelection()/forceOpenPlayerPanel() plus bas.
  * Utilisé aujourd'hui par l'échange automatique de prisonniers (extension Tour, cf.
  * TowerUI.js), et prévu pour être réutilisé plus tard par le rachat de prisonnier.
+ *
+ * ✨ NOUVEAU : gameState.prisoners a été déplacé sous gameState.extraState.prisoners
+ * (conteneur générique partagé par toutes les extensions à état persistant — voir
+ * GameState.js et ARCHITECTURE.md). Seule la lecture dans _buildMeeplesDisplay() ci-dessous
+ * a dû être mise à jour en conséquence.
  */
 export class ScorePanelUI {
     constructor(eventBus, gameState, config = {}) {
@@ -438,7 +443,8 @@ export class ScorePanelUI {
 
         // ✨ NOUVEAU — Ligne 3 : prisonniers (butin), un chip par meeple capturé avec la couleur d'origine
         if (this.config?.extensions?.tower) {
-            const myPrisoners = this.gameState?.prisoners?.[player.id] ?? [];
+            // ✨ NOUVEAU : gameState.prisoners a été déplacé sous gameState.extraState.prisoners
+            const myPrisoners = this.gameState?.extraState?.prisoners?.[player.id] ?? [];
             if (myPrisoners.length > 0) {
                 const prisonRow = document.createElement('div');
                 prisonRow.className = 'prison-row';

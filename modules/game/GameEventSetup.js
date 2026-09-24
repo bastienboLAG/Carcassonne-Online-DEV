@@ -388,11 +388,16 @@ export class GameEventSetup {
                 zones:          zoneMerger.registry.serialize(),
                 tileToZone:     Array.from(zoneMerger.tileToZone.entries()),
                 placedMeeples:  JSON.parse(JSON.stringify(placedMeeples)),
-                playerMeeples:  gameState.players.map(p => ({ id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot, hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder, hasPig: p.hasPig })),
+                playerMeeples:  gameState.players.map(p => ({
+                    id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot,
+                    hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder, hasPig: p.hasPig,
+                    towerPieces: p.towerPieces // ✨ NOUVEAU
+                })),
                 fairyState:     JSON.parse(JSON.stringify(gameState.fairyState ?? { ownerId: null, meepleKey: null })),
                 dragonPos:      JSON.parse(JSON.stringify(gameState.dragonPos ?? null)),
                 dragonPhase:    JSON.parse(JSON.stringify(gameState.dragonPhase ?? {})),
-                pendingPortalTile: gameState._pendingPortalTile ? JSON.parse(JSON.stringify(gameState._pendingPortalTile)) : null
+                pendingPortalTile: gameState._pendingPortalTile ? JSON.parse(JSON.stringify(gameState._pendingPortalTile)) : null,
+                extraState:     JSON.parse(JSON.stringify(gameState.extraState)) // ✨ NOUVEAU
             };
 
             undoManager.applyLocally(undoneAction);

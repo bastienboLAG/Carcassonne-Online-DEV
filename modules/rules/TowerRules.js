@@ -8,8 +8,11 @@
  *   - Exécuter une capture (retour réserve si soi-même, sinon prisonnier de l'adversaire)
  *   - Détecter les échanges automatiques de prisonniers (réciprocité entre deux joueurs)
  *
- * État stocké dans GameState.towers : Map "x,y" -> { height, lockedBy }
- * (lockedBy réservé pour une passe future — toujours null ici)
+ * État stocké dans GameState.extraState.towers : Map "x,y" -> { height, lockedBy, ... }
+ * et GameState.extraState.prisoners : Map playerId -> [{ type, ownerId }].
+ * ✨ NOUVEAU : anciennement GameState.towers/GameState.prisoners directement — regroupés
+ * sous extraState pour que l'undo/le réseau/la reconnexion n'aient qu'un seul champ générique
+ * à traiter, y compris pour les futures extensions à état persistant (cf. ARCHITECTURE.md).
  */
 
 import { isTowerCapturable } from './TowerConfig.js';
@@ -43,14 +46,14 @@ export class TowerRules {
      * Hauteur actuelle d'une tour (0 si pas encore commencée).
      */
     getHeight(x, y) {
-        return this.gameState.towers[`${x},${y}`]?.height ?? 0;
+        return this.gameState.extraState.towers[`${x},${y}`]?.height ?? 0;
     }
 
     /**
      * Indique si une tour est verrouillée.
      */
     isLocked(x, y) {
-        return !!this.gameState.towers[`${x},${y}`]?.lockedBy;
+        return !!this.gameState.extraState.towers[`${x},${y}`]?.lockedBy;
     }
 
     /**
@@ -89,10 +92,10 @@ export class TowerRules {
         if (!this.canAddFloor(x, y, playerId)) return -1;
 
         const key = `${x},${y}`;
-        if (!this.gameState.towers[key]) {
-            this.gameState.towers[key] = { height: 0, lockedBy: null, contributions: {} };
+        if (!this.gameState.extraState.towers[key]) {
+            this.gameState.extraState.towers[key] = { height: 0, lockedBy: null, contributions: {} };
         }
-        const tower = this.gameState.towers[key];
+        const tower = this.gameState.extraState.towers[key];
         tower.height++;
         tower.contributions[playerId] = (tower.contributions[playerId] ?? 0) + 1;
 
@@ -150,13 +153,13 @@ export class TowerRules {
     /**
      * ✨ NOUVEAU : ajoute à `targets` le meeple verrouillant la tour (x,y), s'il existe et est capturable.
      * Un meeple qui verrouille une tour n'est PAS stocké dans placedMeeples (voir TowerRules.lockTower /
-     * TowerUI.applyLockExecuted) — il vit uniquement dans gameState.towers[x,y]. On lui attribue donc
-     * une clé spéciale "tower-lock:x,y" (jamais en collision avec une clé meeple classique "x,y,position")
-     * pour que TowerUI puisse le distinguer lors de l'exécution de la capture.
+     * TowerUI.applyLockExecuted) — il vit uniquement dans gameState.extraState.towers[x,y]. On lui
+     * attribue donc une clé spéciale "tower-lock:x,y" (jamais en collision avec une clé meeple classique
+     * "x,y,position") pour que TowerUI puisse le distinguer lors de l'exécution de la capture.
      * @private
      */
     _collectLockedMeepleOnTile(x, y, targets) {
-        const tower = this.gameState.towers[`${x},${y}`];
+        const tower = this.gameState.extraState.towers[`${x},${y}`];
         if (!tower?.lockedBy) return;
         if (!isTowerCapturable(tower.lockMeepleType)) return;
         targets.push({
@@ -169,14 +172,14 @@ export class TowerRules {
      * Valide une demande de capture et retourne les infos nécessaires, sans muter l'état.
      * La mutation réelle (retrait du plateau, ajout aux prisonniers ou retour réserve)
      * est appliquée de façon identique côté hôte et invités par TowerUI.applyCaptureExecuted,
-     * pour garantir que gameState.prisoners est cohérent partout (pas seulement chez l'hôte).
+     * pour garantir que gameState.extraState.prisoners est cohérent partout (pas seulement chez l'hôte).
      * @returns {{ key, meeple, selfCapture }|null}
      */
     executeCapture(meepleKey, capturingPlayerId, placedMeeples) {
-        // ✨ NOUVEAU : capture d'un garde verrouillant une tour — résolu depuis gameState.towers
+        // ✨ NOUVEAU : capture d'un garde verrouillant une tour — résolu depuis gameState.extraState.towers
         if (meepleKey.startsWith('tower-lock:')) {
             const coords = meepleKey.slice('tower-lock:'.length);
-            const tower  = this.gameState.towers[coords];
+            const tower  = this.gameState.extraState.towers[coords];
             if (!tower?.lockedBy) return null;
             const meeple = { type: tower.lockMeepleType, color: tower.lockMeepleColor, playerId: tower.lockedBy };
             const selfCapture = meeple.playerId === capturingPlayerId;
@@ -205,7 +208,7 @@ export class TowerRules {
      *          (tableau vide si aucune réciprocité)
      */
     checkReciprocalCapture(capturingPlayerId, capturedOwnerId) {
-        const held = this.gameState.prisoners[capturedOwnerId] ?? [];
+        const held = this.gameState.extraState.prisoners[capturedOwnerId] ?? [];
         return [...new Set(
             held.filter(p => p.ownerId === capturingPlayerId).map(p => p.type)
         )];
@@ -219,7 +222,16 @@ export class TowerRules {
     lockTower(x, y, playerId, meepleType) {
         const key = `${x},${y}`;
         if (this.isLocked(x, y)) return false;
-        if ((this.gameState.towers[key]?.height ?? 0) <= 0) return false;
+        if ((this.gameState.extraState.towers[key]?.height ?? 0) <= 0) return false;
+
+        // ✅ FIX : verrouillage interdit sur la tuile où se trouve actuellement le dragon —
+        // sinon celui-ci pourrait rester piégé sur une tour devenue immuable, et rien
+        // n'empêcherait de la reverrouiller aussitôt après un déplacement. Même principe
+        // d'exclusion que le portail magique pour la tuile du dragon (cf.
+        // DragonRules.getPortalTargets). Ne s'applique volontairement qu'au verrouillage :
+        // aucune règle ne mentionne de restriction pour la simple pose d'un étage.
+        const dragonPos = this.gameState.dragonPos;
+        if (dragonPos && dragonPos.x === x && dragonPos.y === y) return false;
 
         const player = this.gameState.players.find(p => p.id === playerId);
         if (!player) return false;
@@ -234,9 +246,9 @@ export class TowerRules {
             return false; // type non autorisé au verrouillage
         }
 
-        this.gameState.towers[key].lockedBy         = playerId;
-        this.gameState.towers[key].lockMeepleType   = meepleType;
-        this.gameState.towers[key].lockMeepleColor  = player.color.charAt(0).toUpperCase() + player.color.slice(1);
+        this.gameState.extraState.towers[key].lockedBy         = playerId;
+        this.gameState.extraState.towers[key].lockMeepleType   = meepleType;
+        this.gameState.extraState.towers[key].lockMeepleColor  = player.color.charAt(0).toUpperCase() + player.color.slice(1);
         return true;
     }
 }

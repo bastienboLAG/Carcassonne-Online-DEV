@@ -392,6 +392,15 @@ export class ReconnectionManager {
             if (gameState.fairyState?.meepleKey) d.renderFairyPiece(gameState.fairyState.meepleKey);
         }
 
+        // ✅ FIX : les tours et leurs éventuels gardes de verrouillage n'étaient jamais
+        // redessinés à la reconnexion (contrairement au Dragon/Fée ci-dessus), alors que
+        // gameState.extraState.towers est déjà resynchronisé par gameState.deserialize()
+        // plus haut. Un invité qui se reconnectait voyait donc un plateau sans aucune tour,
+        // même quand des tours avaient été posées avant sa déconnexion.
+        if (gameConfig.tileGroups?.tower) {
+            d.renderAllTowersFromState?.();
+        }
+
         const tuilePosee = data.tuilePosee ?? false;
         d.setTuilePosee(tuilePosee);
         if (turnManager) turnManager.tilePlaced = tuilePosee;

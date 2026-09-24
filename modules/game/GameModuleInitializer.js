@@ -135,6 +135,7 @@ export class GameModuleInitializer {
             showMeepleActionCursors: d.showMeepleActionCursors,
             hideAllCursors:       d.hideAllCursors,
             updateTurnDisplay:    d.updateTurnDisplay,
+            renderAllTowersFromState: d.renderAllTowersFromState, // ✨ NOUVEAU — redessine towers/gardes après une annulation
         });
         d.setUndoManager(undoManager);
 

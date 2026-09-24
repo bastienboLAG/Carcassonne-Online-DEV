@@ -187,6 +187,31 @@ export class DragonRules {
         }
 
         keysToDelete.forEach(k => delete this.placedMeeples[k]);
+
+        // ✅ FIX : garde verrouillant une tour sur cette tuile — vit dans
+        // gameState.extraState.towers (cf. TowerRules.lockTower / TowerUI.applyLockExecuted),
+        // pas dans placedMeeples, donc invisible pour la boucle ci-dessus. Le dragon doit
+        // pouvoir le manger comme n'importe quel meeple normal/grand meeple. Traité
+        // séparément avec la même clé spéciale "tower-lock:x,y" qu'utilise déjà
+        // TowerRules.getCaptureTargets pour ce cas (capture Tour classique) — DragonUI
+        // reconnaît ce préfixe pour retirer le bon élément visuel (.tower-lock-meeple
+        // au lieu de .meeple[data-key]).
+        const towerKey = `${x},${y}`;
+        const tower = this.gameState.extraState?.towers?.[towerKey];
+        if (tower?.lockedBy && isDragonEdible(tower.lockMeepleType)) {
+            const lockMeeple = { type: tower.lockMeepleType, color: tower.lockMeepleColor, playerId: tower.lockedBy };
+            eaten.push({ key: `tower-lock:${towerKey}`, meeple: lockMeeple });
+
+            const lockPlayer = this.gameState.players.find(p => p.id === tower.lockedBy);
+            if (lockPlayer) this._returnMeeple(lockPlayer, tower.lockMeepleType);
+
+            tower.lockedBy        = null;
+            tower.lockMeepleType  = null;
+            tower.lockMeepleColor = null;
+            // Pas de vérification fée ici : aucun chemin UI n'attache la fée à un garde
+            // de tour (getFairyTargets ne parcourt que placedMeeples).
+        }
+
         return eaten;
     }
 

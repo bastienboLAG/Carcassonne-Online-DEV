@@ -253,6 +253,16 @@ export function executeDragonMoveHost(x, y) {
     const { eaten, blocked } = dragonRules.executeDragonMove(x, y);
 
     eaten.forEach(({ key }) => {
+        // ✅ FIX : un garde verrouillant une tour n'est pas dans placedMeeples — sa clé
+        // spéciale "tower-lock:x,y" (posée par DragonRules._eatMeeplesAt) désigne le pion
+        // visuel .tower-lock-meeple du conteneur de cette tuile, pas un .meeple[data-key].
+        // La mutation d'état (déverrouillage) est déjà faite côté DragonRules ; ici on ne
+        // retire que le rendu visuel.
+        if (key.startsWith('tower-lock:')) {
+            const coords = key.slice('tower-lock:'.length);
+            document.querySelector(`.meeple-container[data-pos="${coords}"] .tower-lock-meeple`)?.remove();
+            return;
+        }
         document.querySelectorAll(`.meeple[data-key="${key}"]`).forEach(el => el.remove());
         releaseFairyIfDetached(key);
     });
