@@ -257,6 +257,15 @@ eventBus.on('tile-drawn', (data) => {
     if (isOwnTurnStart && gameState) {
         gameState._pendingPrincessTile = null;
         gameState._pendingPortalTile = null;
+        // ✅ FIX : _pendingTowerCapture (transitoire, non sérialisé — voir GameState.js)
+        // manquait ici. Côté invité, GameEventSetup._installEndTurn retourne avant de le
+        // remettre à null (seul l'hôte le fait, sur SA copie locale) : sans ce reset au
+        // début du tour suivant du même joueur, une ancienne cible de capture Tour
+        // (ex: le garde d'une tour voisine, calculé lors d'une pose d'étage un tour
+        // précédent) pouvait réapparaître comme curseur cliquable sans qu'aucun nouvel
+        // étage n'ait été posé ce tour-ci (showPendingTowerCaptureIfAny relit cette
+        // valeur à chaque showMeepleActionCursors).
+        gameState._pendingTowerCapture = null;
     }
     // Invité : reset des flags de placement du tour précédent
     // (l'hôte le fait via undoManager.reset(), le guest doit le faire ici)
@@ -1005,6 +1014,22 @@ eventBus.on('network-dragon-state-update', (data) => {
             // tôt via GameState.deserialize()/mutation directe côté hôte).
             if (key.startsWith('tower-lock:')) {
                 const coords = key.slice('tower-lock:'.length);
+                // ✅ FIX : broadcastDragonState() ne transporte que dragonPos/dragonPhase/
+                // fairyState/players — jamais gameState.extraState. Le déverrouillage de la
+                // tour (lockedBy/lockMeepleType/lockMeepleColor mis à null) n'était donc
+                // appliqué QUE sur la copie de gameState de l'hôte (via DragonRules
+                // ._eatMeeplesAt), jamais répercuté sur la copie locale d'un invité. Résultat :
+                // la tour restait "verrouillée par ce joueur" à tort dans son propre état —
+                // l'empêchant d'y reposer un étage/garde plus tard (TowerRules.isLocked
+                // renvoie true), ET laissant la fée continuer de le proposer comme cible
+                // valide (DragonRules.getFairyTargets relit ce même état local). On applique
+                // donc ici la même mutation que côté hôte.
+                const tower = gameState.extraState?.towers?.[coords];
+                if (tower) {
+                    tower.lockedBy        = null;
+                    tower.lockMeepleType  = null;
+                    tower.lockMeepleColor = null;
+                }
                 document.querySelector(`.meeple-container[data-pos="${coords}"] .tower-lock-meeple`)?.remove();
                 return;
             }

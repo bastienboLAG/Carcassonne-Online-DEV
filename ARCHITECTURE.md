@@ -375,9 +375,21 @@ Cas particuliers notables dans `Deck.js` :
     déclenché que côté hôte (`DragonUI.executeDragonMoveHost`) — le handler
     réseau `network-dragon-state-update` (`home.js`) ne traitait que le cas
     classique `.meeple[data-key]` pour `eatenKeys`, laissant le garde affiché
-    à tort chez les invités bien que l'état fût déjà correct
-    (`gameState.extraState.towers`, resynchronisé). Corrigé en y ajoutant le
-    même traitement de la clé `tower-lock:x,y` que côté hôte.
+    à tort chez les invités. Corrigé en y ajoutant le même traitement de la
+    clé `tower-lock:x,y` que côté hôte. **✅ FIX (plus profond)** :
+    `DragonUI.broadcastDragonState()` ne transporte que `dragonPos`/
+    `dragonPhase`/`fairyState`/`players` — **jamais** `gameState.extraState`.
+    Le déverrouillage de la tour (`lockedBy`/`lockMeepleType`/`lockMeepleColor`
+    remis à `null` par `DragonRules._eatMeeplesAt`) n'était donc appliqué que
+    sur la copie `gameState` de l'**hôte** ; chaque invité gardait sa propre
+    copie de `extraState.towers` figée sur "verrouillée par ce joueur",
+    l'empêchant à tort de reposer un étage/garde sur cette tour par la suite
+    (`TowerRules.isLocked` local renvoyait `true`), et laissant la fée
+    continuer de proposer ce garde comme cible valide
+    (`DragonRules.getFairyTargets` relit ce même état local). Corrigé en
+    mutant directement `gameState.extraState.towers[coords]` dans le handler
+    `network-dragon-state-update` (`home.js`), pour la clé `tower-lock:x,y`,
+    en plus du retrait visuel déjà en place.
   - **Fée** : **✅ FIX** — peut désormais être attachée à un garde de tour du
     joueur (`DragonRules.getFairyTargets` parcourt aussi
     `gameState.extraState.towers`, en plus de `placedMeeples`). Le curseur
@@ -400,6 +412,23 @@ Cas particuliers notables dans `Deck.js` :
     (rendu juste après la pose de tuile) visible et cliquable malgré le flag
     `meeplePlacedThisTurn` désormais à `true`. `TowerUI.applyLockExecuted`
     appelle maintenant le même nettoyage, symétriquement à la pose d'étage.
+  - **✅ FIX — capture Tour fantôme chez l'invité** : `gameState._pendingTowerCapture`
+    (posé par `applyFloorPlaced`, transitoire et volontairement non sérialisé)
+    doit être remis à `null` à chaque fin de tour. Ce nettoyage n'existait que
+    côté hôte (`GameEventSetup._installEndTurn` après le bloc invité,
+    `GameSyncCallbacks.onTurnEndRequest`) : la branche invité de
+    `_installEndTurn` retourne plus tôt (après l'envoi du `turn-end-request`)
+    sans jamais nettoyer sa propre copie locale. Contrairement à
+    `_pendingPrincessTile`/`_pendingPortalTile`, qui ont ce même risque mais
+    sont déjà couverts par un reset générique au **début du tour suivant du
+    joueur concerné** (`eventBus.on('tile-drawn', ...)` dans `home.js`,
+    bloc `isOwnTurnStart`), `_pendingTowerCapture` avait été oublié de ce
+    même bloc. Un invité ayant posé un étage se retrouvait donc, à son tour
+    suivant, avec l'ancienne cible de capture (ex: le garde d'une tour
+    voisine) réaffichée par `showPendingTowerCaptureIfAny()` sans qu'aucun
+    nouvel étage n'ait été posé ce tour-là. Corrigé en ajoutant
+    `gameState._pendingTowerCapture = null;` au même bloc que
+    `_pendingPrincessTile`/`_pendingPortalTile`.
 - **Échange automatique de prisonniers** : après chaque capture non-auto,
   vérification de réciprocité entre le capturant (X) et le propriétaire
   capturé (Y) : Y détient-il déjà un ou plusieurs prisonniers de X ?
@@ -473,6 +502,8 @@ aussi la section `gameState.extraState` en tête de ce document.
 | Bug spécifique Tour (pose d'étage, capture, verrouillage, stock de pièces) | `modules/game/TowerUI.js`, `modules/rules/TowerRules.js`, `modules/rules/TowerConfig.js`, `modules/GameState.js` (`extraState.towers`/`extraState.prisoners`), `modules/game/GameSyncCallbacks.js`, `modules/ui/MeepleActionsUI.js` |
 | Interaction Dragon/Fée ↔ garde de tour (capture, blocage verrouillage, fée attachée à un garde) | `modules/rules/DragonRules.js` (`_eatMeeplesAt`, `getFairyTargets`), `modules/game/DragonUI.js` (`executeDragonMoveHost`, `renderFairyPiece`), `modules/rules/TowerRules.js` (`lockTower`), `modules/game/TowerUI.js` (`showTowerCursors`/`_openTowerFloorSelector`, `getTowerLockMeepleAnchor`, `applyCaptureExecuted`, `applyLockExecuted`), `modules/ui/MeepleActionsUI.js` (`showMeepleActionCursors`), `modules/GameState.js` (`isFairyOnTile`) |
 | Un garde de tour mangé par le dragon reste visible chez un invité | `home.js` (handler `network-dragon-state-update`, boucle `eatenKeys`) — vérifier qu'il traite bien le préfixe `tower-lock:` comme le fait `DragonUI.executeDragonMoveHost` côté hôte |
+| Après qu'un dragon a mangé un garde de tour, ce joueur ne peut plus reposer d'étage/garde sur cette tour (mais un autre joueur le peut), ou la fée peut encore cibler ce garde disparu | `home.js` (handler `network-dragon-state-update`) — vérifier que `gameState.extraState.towers[coords]` est bien démuté localement (pas seulement le rendu DOM) ; `DragonUI.broadcastDragonState` ne transporte jamais `extraState`, toute mutation Tour déclenchée par le dragon doit donc être répliquée manuellement côté invité |
+| Un curseur de capture Tour apparaît sans qu'aucun étage n'ait été posé ce tour-ci | `home.js` (handler `eventBus.on('tile-drawn', ...)`, bloc `isOwnTurnStart`) — vérifier que `gameState._pendingTowerCapture` y est bien remis à `null`, comme `_pendingPrincessTile`/`_pendingPortalTile` |
 | Une action censée consommer la phase meeple du tour (pose d'étage, verrouillage) laisse un curseur d'action encore cliquable | `modules/game/TowerUI.js` (`applyFloorPlaced`/`applyLockExecuted`, doivent appeler `_deps.hideAllCursors?.()` pour le joueur local) |
 | Bug spécifique à l'échange automatique de prisonniers (y compris timing/annulation) | `modules/game/TowerUI.js` (`executeTowerCaptureHost`, `checkPendingReciprocalExchange`, `_checkAndHandleReciprocalExchange`, `applyPrisonerExchangeResolved`, `applyPrisonerExchangePending`), `modules/rules/TowerRules.js` (`checkReciprocalCapture`), `modules/ui/ScorePanelUI.js`, `modules/core/GameSync.js`/`modules/game/GameSyncCallbacks.js`, `modules/GameState.js` (`_pendingReciprocalCheck`) |
 | Bug spécifique au rachat de prisonnier | `modules/game/TowerUI.js` (`setupPrisonerBuyback`, `executePrisonerBuybackHost`), `modules/rules/TowerConfig.js`, `modules/ui/ScorePanelUI.js`, `modules/game/Scoring.js`/`modules/game/FinalScoresManager.js` |
