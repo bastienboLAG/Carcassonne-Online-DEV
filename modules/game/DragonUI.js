@@ -20,6 +20,11 @@
  *   onHostDrawAndSend() → callback → tile | null
  */
 
+// ✅ FIX : nécessaire pour ancrer visuellement la fée quand elle est attachée à un garde
+// verrouillant une tour (clé "tower-lock:x,y") — voir renderFairyPiece ci-dessous. Import
+// à sens unique (TowerUI.js n'importe rien de ce fichier), aucun cycle introduit.
+import { getTowerLockMeepleAnchor } from './TowerUI.js';
+
 let _deps = null;
 
 function gs()   { return _deps.getGameState(); }
@@ -261,11 +266,19 @@ export function executeDragonMoveHost(x, y) {
         if (key.startsWith('tower-lock:')) {
             const coords = key.slice('tower-lock:'.length);
             document.querySelector(`.meeple-container[data-pos="${coords}"] .tower-lock-meeple`)?.remove();
+            releaseFairyIfDetached(key);
             return;
         }
         document.querySelectorAll(`.meeple[data-key="${key}"]`).forEach(el => el.remove());
         releaseFairyIfDetached(key);
     });
+
+    // ✅ FIX : re-synchroniser le rendu visuel de la fée avec l'état courant — nécessaire
+    // depuis qu'elle peut être attachée à un garde de tour mangé par le dragon (le
+    // meeple/garde visuel a pu disparaître sans que le pion fée, sibling du pion mangé, ne
+    // soit lui-même retiré du DOM).
+    if (gs().fairyState?.meepleKey) renderFairyPiece(gs().fairyState.meepleKey);
+    else removeFairyPiece();
 
     // Fix 5 — Builder/Cochon orphelins
     if (eaten.length > 0 && zoneMerger) {
@@ -422,6 +435,14 @@ export function renderDragonPiece(x, y) {
 
 // ── Rendu pion Fée ─────────────────────────────────────────────────────────
 
+/**
+ * Rend le pion fée sur le plateau, attaché au meeple/garde désigné par `meepleKey`.
+ * ✅ FIX : gère désormais aussi le format spécial "tower-lock:x,y" (fée attachée à un
+ * garde verrouillant une tour, cf. DragonRules.getFairyTargets) — l'ancrage est dans ce
+ * cas calculé depuis la position réelle déjà rendue du pion de verrouillage
+ * (TowerUI.getTowerLockMeepleAnchor), au lieu du calcul en grille 5×5 utilisé pour un
+ * meeple classique posé sur une des 25 positions d'une tuile.
+ */
 export function renderFairyPiece(meepleKey) {
     removeFairyPiece();
     if (!meepleKey) return;
@@ -429,17 +450,27 @@ export function renderFairyPiece(meepleKey) {
     const boardEl = document.getElementById('board');
     if (!boardEl) return;
 
-    const parts = meepleKey.split(',');
-    const mx = Number(parts[0]);
-    const my = Number(parts[1]);
-    const pos = Number(parts[2]);
+    let mx, my, fairyX, fairyY;
 
-    const row = Math.floor((pos - 1) / 5);
-    const col = (pos - 1) % 5;
-    const baseX = 20.8 + col * 41.6;
-    const baseY = 20.8 + row * 41.6;
-    const fairyX = baseX - 18;
-    const fairyY = baseY - 20;
+    if (meepleKey.startsWith('tower-lock:')) {
+        const coords = meepleKey.slice('tower-lock:'.length);
+        [mx, my] = coords.split(',').map(Number);
+        const anchor = getTowerLockMeepleAnchor(mx, my);
+        fairyX = anchor.left - 18;
+        fairyY = anchor.top - 20;
+    } else {
+        const parts = meepleKey.split(',');
+        mx = Number(parts[0]);
+        my = Number(parts[1]);
+        const pos = Number(parts[2]);
+
+        const row = Math.floor((pos - 1) / 5);
+        const col = (pos - 1) % 5;
+        const baseX = 20.8 + col * 41.6;
+        const baseY = 20.8 + row * 41.6;
+        fairyX = baseX - 18;
+        fairyY = baseY - 20;
+    }
 
     let container = boardEl.querySelector(`.meeple-container[data-pos="${mx},${my}"]`);
     if (!container) {

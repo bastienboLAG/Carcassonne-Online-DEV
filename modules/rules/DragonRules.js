@@ -205,11 +205,21 @@ export class DragonRules {
             const lockPlayer = this.gameState.players.find(p => p.id === tower.lockedBy);
             if (lockPlayer) this._returnMeeple(lockPlayer, tower.lockMeepleType);
 
+            // ✅ FIX : la fée peut désormais être attachée à un garde verrouillant une tour
+            // (cf. getFairyTargets ci-dessous) — si c'est le cas, la retirer comme pour un
+            // meeple classique mangé par le dragon (même logique que dans la boucle ci-dessus).
+            // Auparavant ce cas n'était volontairement pas traité, aucun chemin UI n'attachant
+            // encore la fée à un garde de tour.
+            const towerLockKey = `tower-lock:${towerKey}`;
+            if (this.gameState.fairyState.meepleKey === towerLockKey) {
+                console.log(`🧚 [Fée] Garde de tour mangé — fée retirée`);
+                this.gameState.removeFairy();
+                this.eventBus.emit('fairy-removed', { reason: 'dragon-ate-meeple' });
+            }
+
             tower.lockedBy        = null;
             tower.lockMeepleType  = null;
             tower.lockMeepleColor = null;
-            // Pas de vérification fée ici : aucun chemin UI n'attache la fée à un garde
-            // de tour (getFairyTargets ne parcourt que placedMeeples).
         }
 
         return eaten;
@@ -241,13 +251,29 @@ export class DragonRules {
 
     /**
      * Calcule les meeples sur lesquels le joueur peut poser/voler la fée.
+     * ✅ FIX : inclut désormais un éventuel garde du joueur verrouillant une tour
+     * (gameState.extraState.towers), en plus des meeples classiques de placedMeeples —
+     * auparavant totalement absent de ce calcul, la fée ne pouvait jamais y être attachée.
      * @param {string} playerId
      * @returns {Array<{key, meeple}>}
      */
     getFairyTargets(playerId) {
-        return Object.entries(this.placedMeeples)
+        const targets = Object.entries(this.placedMeeples)
             .filter(([, m]) => m.playerId === playerId && isFairyAttachable(m.type))
             .map(([key, meeple]) => ({ key, meeple }));
+
+        // ✅ FIX : garde verrouillant une tour — clé spéciale "tower-lock:x,y" (même
+        // convention que TowerRules.getCaptureTargets), résolu depuis extraState.towers.
+        Object.entries(this.gameState.extraState?.towers ?? {}).forEach(([coords, tower]) => {
+            if (tower.lockedBy === playerId && isFairyAttachable(tower.lockMeepleType)) {
+                targets.push({
+                    key: `tower-lock:${coords}`,
+                    meeple: { type: tower.lockMeepleType, color: tower.lockMeepleColor, playerId: tower.lockedBy }
+                });
+            }
+        });
+
+        return targets;
     }
 
     /**

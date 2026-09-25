@@ -24,7 +24,7 @@ export class GameState {
 
         this.fairyState = {
             ownerId: null,    // playerId du propriétaire de la fée
-            meepleKey: null,  // clé "x,y,position" du meeple attaché
+            meepleKey: null,  // clé "x,y,position" du meeple attaché, ou "tower-lock:x,y"
         };
 
         // ✨ NOUVEAU : conteneur générique pour tout état persistant "de plateau" qui n'est
@@ -147,7 +147,17 @@ export class GameState {
 
     isFairyOnTile(x, y) {
         if (!this.fairyState.meepleKey) return false;
-        const parts = this.fairyState.meepleKey.split(',');
+        const key = this.fairyState.meepleKey;
+        // ✅ FIX : la fée peut désormais être attachée à un garde verrouillant une tour, dont
+        // la clé suit le format "tower-lock:x,y" au lieu du format classique "x,y,position".
+        // Sans ce cas particulier, le parsing générique ci-dessous produisait NaN pour ce
+        // format et retournait silencieusement false : le dragon pouvait alors se déplacer
+        // sur une tuile pourtant protégée par la fée (règle de protection contournée).
+        if (key.startsWith('tower-lock:')) {
+            const [tx, ty] = key.slice('tower-lock:'.length).split(',').map(Number);
+            return tx === x && ty === y;
+        }
+        const parts = key.split(',');
         return Number(parts[0]) === x && Number(parts[1]) === y;
     }
 

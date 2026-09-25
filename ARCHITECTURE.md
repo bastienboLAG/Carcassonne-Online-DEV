@@ -174,6 +174,15 @@ nouvelle extension reste à écrire, comme pour la Tour :
   et `GameSyncCallbacks.onTurnEndRequest`, juste après `undoManager.reset()`)
   plutôt que de le résoudre immédiatement, pour ne pas le rendre incohérent
   avec une éventuelle annulation de l'action qui l'a déclenché.
+- **Interaction avec un pion générique existant (fée, dragon...)** : si un
+  pion générique (la fée, par exemple) doit pouvoir cibler ta nouvelle pièce
+  d'`extraState`, il faut lui donner une clé identifiable distincte du format
+  `"x,y,position"` de `placedMeeples` (voir la convention `"tower-lock:x,y"`
+  ci-dessous pour le garde de tour) et mettre à jour **chaque** endroit qui
+  traite une clé de pion générique en supposant implicitement le format
+  classique — l'exercice fait pour la fée et la Tour (détaillé dans la
+  section "Interaction Dragon ↔ garde de tour" plus bas) est un bon modèle
+  de la liste des points à parcourir.
 
 ### Pièges spécifiques aux futures pièces déjà identifiés
 
@@ -215,7 +224,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 |---|---|---|
 | `index.html` | 494 | Structure DOM complète (lobby, plateau, modales, badge dragon, sélecteurs, section extension Tour, modale + voile gris d'échange automatique de prisonniers, modale de confirmation de rachat de prisonnier) |
 | `style.css` | 1569 | Tous les styles |
-| `home.js` | 1463 | Chef d'orchestre : état global, listeners `eventBus` (singleton — voir section "Piège récurrent" ci-dessus), init lobby, `startGame`/`startGameForInvite` |
+| `home.js` | 1463 | Chef d'orchestre : état global, listeners `eventBus` (singleton — voir section "Piège récurrent" ci-dessus), init lobby, `startGame`/`startGameForInvite`. Le handler `network-dragon-state-update` retire désormais aussi le pion `.tower-lock-meeple` d'un garde de tour mangé par le dragon (auparavant seul l'hôte le faisait — cf. section "Interaction Dragon ↔ garde de tour"), et re-synchronise le rendu visuel de la fée depuis `gameState.fairyState` reçu de l'hôte |
 | `version.js` | — | Constante `APP_VERSION` |
 
 ---
@@ -226,7 +235,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 |---|---|---|
 | `Board.js` | 121 | Modèle du plateau : `placedTiles`, `isFree`, `canPlaceTile` (check géométrique, ne connaît pas les règles spéciales type "dragon sans volcan") |
 | `Deck.js` | 217 | Chargement des tuiles (`loadAllTiles`, fetch parallèle par groupe depuis `data/{Groupe}/{id}.json`, y compris `data/Tower/` si `tileGroups.tower`), mélange, pioche, `reshuffleDragonTile()` |
-| `GameState.js` | ~230 | État global : joueurs (dont `towerPieces` par joueur), `dragonPos`, `dragonPhase`, `fairyState`, `currentTilePlaced`, `destroyedTilesCount`, **`extraState`** (conteneur générique — voir section dédiée en tête de ce document — contenant aujourd'hui `towers` et `prisoners`), `_pendingTowerCapture`, `_pendingReciprocalCheck` (échange automatique différé à la fin du tour du capturant — voir plus bas), `_pendingPrisonerExchange` (choix en attente), `_freshCaptures` (captures du tour en cours pas encore validées, bloque temporairement leur rachat), `hasPrisonerBuybacks` (flag sérialisé) |
+| `GameState.js` | ~230 | État global : joueurs (dont `towerPieces` par joueur), `dragonPos`, `dragonPhase`, `fairyState` (le champ `meepleKey` peut désormais valoir soit une clé classique `"x,y,position"`, soit `"tower-lock:x,y"` — voir `isFairyOnTile`, mis à jour pour reconnaître ce second format), `currentTilePlaced`, `destroyedTilesCount`, **`extraState`** (conteneur générique — voir section dédiée en tête de ce document — contenant aujourd'hui `towers` et `prisoners`), `_pendingTowerCapture`, `_pendingReciprocalCheck` (échange automatique différé à la fin du tour du capturant — voir plus bas), `_pendingPrisonerExchange` (choix en attente), `_freshCaptures` (captures du tour en cours pas encore validées, bloque temporairement leur rachat), `hasPrisonerBuybacks` (flag sérialisé) |
 | `LobbyOptions.js` | 548 | Cases à cocher du lobby (extensions, presets, coches maîtres — dont "Tour" / `all-tower`, `tiles-tower`, `ext-tower`), `localStorage`, sync réseau |
 | `MeepleConfig.js` | 134 | Tailles/configuration des meeples (`getMeepleSize`) |
 | `MeepleUtils.js` | 21 | Utilitaires génériques meeples — poids pour calcul de majorité (Grand Meeple = 2, Bâtisseur/Cochon = 0, Normal/Abbé = 1) |
@@ -250,16 +259,16 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | `BaseRules.js` | 74 | Règles de base (villes, routes, champs) |
 | `BuilderRules.js` | 313 | Règles Bâtisseur / Cochon / Marchands |
 | `DragonConfig.js` | 42 | Constantes extension Dragon : `DRAGON_EDIBLE_MEEPLES`, `FAIRY_ATTACHABLE_MEEPLES` |
-| `DragonRules.js` | ~400 | Règles extension Dragon (déplacement, cible Princesse, etc.). **✅ FIX** : `_eatMeeplesAt(x, y)` mange désormais aussi un garde verrouillant une tour présent sur la tuile visitée (lu dans `gameState.extraState.towers[x,y]`, absent de `placedMeeples`) — auparavant le dragon l'ignorait complètement. Le meeple est toujours rendu à la réserve du joueur (jamais capturé comme prisonnier Tour, cohérent avec le comportement du dragon sur un meeple classique), et la tour est déverrouillée dans la foulée. Traité avec la clé spéciale `tower-lock:x,y` (même convention que `TowerRules.getCaptureTargets`), résolue côté visuel par `DragonUI.executeDragonMoveHost` |
+| `DragonRules.js` | ~410 | Règles extension Dragon (déplacement, cible Princesse, etc.). **✅ FIX** : `getFairyTargets(playerId)` inclut désormais un éventuel garde du joueur verrouillant une tour (`gameState.extraState.towers`, clé spéciale `"tower-lock:x,y"`), en plus des meeples classiques de `placedMeeples` — auparavant la fée ne pouvait jamais être attachée à un garde de tour, cf. section "Interaction Dragon ↔ garde de tour". **✅ FIX** : `_eatMeeplesAt(x, y)` mange désormais aussi un garde verrouillant une tour présent sur la tuile visitée (lu dans `gameState.extraState.towers[x,y]`, absent de `placedMeeples`) — auparavant le dragon l'ignorait complètement — **et retire la fée si elle y était attachée** (même logique que pour un meeple classique mangé, ci-dessus dans la boucle). Le meeple est toujours rendu à la réserve du joueur (jamais capturé comme prisonnier Tour, cohérent avec le comportement du dragon sur un meeple classique), et la tour est déverrouillée dans la foulée. Traité avec la clé spéciale `tower-lock:x,y` (même convention que `TowerRules.getCaptureTargets`), résolue côté visuel par `DragonUI.executeDragonMoveHost` |
 | `InnsRules.js` | 127 | Règles Auberges & Cathédrales |
 | `TowerConfig.js` | 42 | Constantes extension Tour : `TOWER_PIECES_BY_PLAYER_COUNT`, `TOWER_CAPTURABLE_MEEPLES`, `TOWER_LOCK_MEEPLES` (réservé), `PRISONER_BUYBACK_COST`, helpers `getTowerPiecesForPlayerCount()` / `isTowerCapturable()` |
-| `TowerRules.js` | ~230 | Règles extension Tour, lisant/mutant désormais `gameState.extraState.towers`/`gameState.extraState.prisoners` (anciennement `gameState.towers`/`gameState.prisoners` directement — voir section extraState). Détection des tuiles à zone `tower`, pose d'étage (`addFloor`), calcul de la portée de capture (`getCaptureTargets`), exécution de capture (`executeCapture`), verrouillage d'une tour (`lockTower` — **✅ FIX** : refuse désormais le verrouillage sur la tuile où se trouve actuellement le dragon, `gameState.dragonPos`, même principe d'exclusion que `DragonRules.getPortalTargets` pour le portail ; ne s'applique volontairement qu'au verrouillage, aucune règle ne restreint la simple pose d'un étage), et `checkReciprocalCapture` (détection de réciprocité pour l'échange automatique de prisonniers) |
+| `TowerRules.js` | ~230 | Règles extension Tour, lisant/mutant désormais `gameState.extraState.towers`/`gameState.extraState.prisoners` (anciennement `gameState.towers`/`gameState.prisoners` directement — voir section extraState). Détection des tuiles à zone `tower`, pose d'étage (`addFloor`), calcul de la portée de capture (`getCaptureTargets`), exécution de capture (`executeCapture`), verrouillage d'une tour (`lockTower` — refuse le verrouillage sur la tuile où se trouve actuellement le dragon, `gameState.dragonPos`, même principe d'exclusion que `DragonRules.getPortalTargets` pour le portail ; ne s'applique volontairement qu'au verrouillage, aucune règle ne restreint la simple pose d'un étage), et `checkReciprocalCapture` (détection de réciprocité pour l'échange automatique de prisonniers) |
 
 ## `modules/game/` — Logique de partie côté client
 
 | Fichier | Lignes | Rôle |
 |---|---|---|
-| `DragonUI.js` | ~490 | Détection zones dragon/volcan/portail, affichage pion dragon/fée, curseurs de déplacement. **✅ FIX** : `executeDragonMoveHost` reconnaît désormais dans `eaten` les clés préfixées `tower-lock:x,y` (garde de tour mangé par `DragonRules._eatMeeplesAt`) et retire le bon élément visuel (`.tower-lock-meeple`) au lieu de chercher un `.meeple[data-key]` inexistant |
+| `DragonUI.js` | ~500 | Détection zones dragon/volcan/portail, affichage pion dragon/fée, curseurs de déplacement. **✅ FIX** : `renderFairyPiece(meepleKey)` gère désormais le format spécial `"tower-lock:x,y"` (fée attachée à un garde de tour) en s'ancrant sur `TowerUI.getTowerLockMeepleAnchor(x, y)` au lieu du calcul en grille 5×5 utilisé pour un meeple classique — import à sens unique depuis `TowerUI.js`, aucun cycle introduit (`TowerUI.js` n'importe rien de ce fichier). **✅ FIX** : `executeDragonMoveHost` reconnaît les clés préfixées `tower-lock:x,y` (garde de tour mangé par `DragonRules._eatMeeplesAt`) et retire le bon élément visuel (`.tower-lock-meeple`) au lieu de chercher un `.meeple[data-key]` inexistant, puis re-synchronise le rendu de la fée depuis `gameState.fairyState` (nécessaire car la fée peut désormais disparaître avec un garde mangé, sans que son propre pion visuel soit retiré autrement) |
 | `FinalScoresManager.js` | 292 | Calcul et affichage des scores de fin de partie |
 | `GameEventSetup.js` | ~510 | Installe tous les listeners DOM du jeu. Point de fin de tour (`_installEndTurn`) : appelle désormais `d.checkPendingReciprocalExchange?.()` juste après `undoManager.reset()` (échange automatique de prisonniers différé — voir plus bas) ; `_installUndo` inclut `extraState` et `towerPieces` dans le `postUndoState` envoyé aux invités. Utilise déjà le pattern de garde contre la double installation (flag `_installed`) |
 | `GameModuleInitializer.js` | ~185 | Instancie les modules UI de jeu, dont `TowerRules` si `tileGroups.tower && extensions.tower`. Relaie `renderAllTowersFromState` (via `d`) dans `undoManager.initVisualHandlers({...})`, pour que l'undo puisse redessiner l'état Tour après restauration |
@@ -268,10 +277,10 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | `GameTimer.js` | 59 | Chronomètre de partie |
 | `MeeplePlacement.js` | 253 | Logique de pose de meeple |
 | `NavigationManager.js` | 161 | Zoom et déplacement (pan) sur le plateau |
-| `ReconnectionManager.js` | ~680 | Pause/reprise de partie, resynchronisation complète. `applyFullStateSync` : **✅ FIX** — appelle désormais `d.renderAllTowersFromState?.()` (si `tileGroups.tower`) juste après le rendu Dragon/Fée. Auparavant, les tours et leurs gardes de verrouillage n'étaient **jamais** redessinés à la reconnexion (contrairement au Dragon/Fée, qui avaient déjà leur bloc dédié), alors que `gameState.extraState.towers` était déjà resynchronisé par `gameState.deserialize()` juste avant — un invité qui se reconnectait voyait un plateau sans aucune tour |
+| `ReconnectionManager.js` | ~680 | Pause/reprise de partie, resynchronisation complète. `applyFullStateSync` : appelle `d.renderAllTowersFromState?.()` (si `tileGroups.tower`) juste après le rendu Dragon/Fée |
 | `Scoring.js` | 380 | Calcul des points. `applyAndGetFinalScores` inclut `buybacks` dans les scores détaillés |
 | `TilePlacement.js` | 283 | Logique de pose de tuile |
-| `TowerUI.js` | ~950 | UI et orchestration de l'extension Tour, entièrement migrée vers `gameState.extraState.towers`/`gameState.extraState.prisoners` (voir section extraState en tête de document). Curseurs de pose d'étage/capture, sélecteurs de confirmation, pose d'étage/verrouillage/capture hôte. **✅ FIX** : `showTowerCursors`/`_openTowerFloorSelector` masquent désormais l'option de verrouillage sur la tuile où se trouve le dragon (cohérent avec `TowerRules.lockTower`). **✨ NOUVEAU** : `renderAllTowersFromState()` — (re)dessine l'intégralité des tours et gardes depuis `gameState.extraState.towers`, utilisée par `UndoManager.applyLocally` (un seul appel générique en tête de fonction, couvrant tous les types d'action annulée) et par `ReconnectionManager.applyFullStateSync`. **Échange automatique de prisonniers différé** : `executeTowerCaptureHost` ne déclenche plus `_checkAndHandleReciprocalExchange` immédiatement — elle note l'info dans `gameState._pendingReciprocalCheck`, consommée uniquement par la nouvelle fonction exportée `checkPendingReciprocalExchange()`, appelée en fin de tour du capturant (au même point que `undoManager.reset()`, dans `GameEventSetup._installEndTurn` et `GameSyncCallbacks.onTurnEndRequest`) — une fois la capture non annulable. Raison : résoudre l'échange avant ce verrouillage aurait pu créer un état incohérent si le capturant annulait ensuite sa capture. **✅ FIX texte modale** : `showPrisonerExchangeModal` décrit désormais les deux sens de l'échange (le meeple que X récupère chez Y, ET le retour automatique du meeple que X vient de capturer chez Y via `freshlyCapturedType`) — auparavant seul le premier sens était mentionné dans le texte affiché, bien que les deux sens étaient déjà appliqués en interne. **Rachat de prisonnier** : inchangé dans son fonctionnement, migré vers `extraState.prisoners` |
+| `TowerUI.js` | ~960 | UI et orchestration de l'extension Tour, entièrement migrée vers `gameState.extraState.towers`/`gameState.extraState.prisoners` (voir section extraState en tête de document). Curseurs de pose d'étage/capture, sélecteurs de confirmation, pose d'étage/verrouillage/capture hôte. **✅ FIX** : `_getTowerLockMeepleAnchor` renommée et **exportée** en `getTowerLockMeepleAnchor(x, y)` — anciennement privée, réutilisée par `MeepleActionsUI.js` (positionnement du curseur fée sur un garde de tour) et `DragonUI.js` (rendu du pion fée sur un garde de tour), en plus de l'usage interne déjà existant (`showTowerCaptureCursors`). **✅ FIX** : `applyLockExecuted` appelle désormais `_deps.hideAllCursors?.()` pour le joueur local, exactement comme `applyFloorPlaced` le fait déjà — sans cet appel, des curseurs déjà affichés (notamment le curseur fée) restaient visibles et cliquables après un verrouillage, alors que la phase meeple venait d'être consommée par `markMeeplePlaced(x, y, -1, null)` (cf. section "Interaction Dragon ↔ garde de tour" pour le détail du bug). **✅ FIX** : `applyCaptureExecuted` retire désormais la fée (`gameState.removeFairy()` + `_deps.removeFairyPiece?.()`) dans la branche `tower-lock:` si elle y était attachée — auparavant ce cas ne pouvait pas se produire, la fée ne pouvant pas encore s'attacher à un garde. `showTowerCursors`/`_openTowerFloorSelector` masquent l'option de verrouillage sur la tuile où se trouve le dragon (cohérent avec `TowerRules.lockTower`). `renderAllTowersFromState()` — (re)dessine l'intégralité des tours et gardes depuis `gameState.extraState.towers`, utilisée par `UndoManager.applyLocally` et par `ReconnectionManager.applyFullStateSync`. **Échange automatique de prisonniers différé** : `executeTowerCaptureHost` ne déclenche plus `_checkAndHandleReciprocalExchange` immédiatement — elle note l'info dans `gameState._pendingReciprocalCheck`, consommée uniquement par la nouvelle fonction exportée `checkPendingReciprocalExchange()`, appelée en fin de tour du capturant. **Rachat de prisonnier** : inchangé dans son fonctionnement, migré vers `extraState.prisoners` |
 | `TurnManager.js` | 415 | Gestion du tour courant, tour bonus |
 | `UndoManager.js` | ~700 | Annulation d'actions du tour en cours. **✨ ÉTENDU (Extension Tour)** : `saveTurnStart`/`saveAfterTilePlaced`/`saveDragonMove` copient désormais `gameState.extraState` (deep copy, générique) et `player.towerPieces` en plus des champs déjà existants. `restoreExtraState(source)` restaure `gameState.extraState` génériquement (boucle sur `Object.keys`, sans connaître les sous-clés — voir section extraState) ; appelée par `restoreSnapshot()` (undo tuile/meeple/abbé) et `undoDragonMove()` (undo déplacement dragon — nécessaire car le dragon peut désormais manger un garde de tour). `restoreSnapshot()` réinitialise aussi explicitement `gameState._pendingTowerCapture`/`_pendingReciprocalCheck` (turn-scoped, non couverts par `extraState`). `applyLocally()` appelle un seul `d.renderAllTowersFromState?.()` générique en tête de fonction (avant le `switch` sur le type d'action), qui redessine l'état Tour quel que soit le type d'annulation — plus simple et plus sûr que de traiter chaque branche séparément. `applyRemote()` (invités) fait le même travail de restauration `extraState`/`towerPieces`/`_pending*` avant de déléguer à `applyLocally()` |
 | `UnplaceableTileManager.js` | 401 | Gestion des tuiles implaçables |
@@ -287,12 +296,12 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | `LobbyJoin.js` | 168 | Logique de connexion en tant qu'invité |
 | `LobbyNavigator.js` | ~185 | Retour au lobby / lobby initial ; réinitialise `towerRules` au retour lobby |
 | `LobbyUI.js` | 356 | Interface du lobby |
-| `MeepleActionsUI.js` | ~660 | Actions meeples : rappel abbé, portail, éjection princesse, placement fée ; orchestre l'extension Tour via les imports de `TowerUI.js`. `initNetworkMeepleListeners(eventBus)` protégée par flag module-level (`_networkListenersInstalled`) contre la double installation — voir "Piège récurrent" |
+| `MeepleActionsUI.js` | ~670 | Actions meeples : rappel abbé, portail, éjection princesse, placement fée ; orchestre l'extension Tour via les imports de `TowerUI.js`. **✅ FIX** : `showMeepleActionCursors` résout désormais une cible fée dont la clé est `"tower-lock:x,y"` (garde verrouillant une tour) en lisant `gameState.extraState.towers`, et positionne son curseur via `TowerUI.getTowerLockMeepleAnchor(x, y)` au lieu du calcul en grille 5×5 utilisé pour un meeple classique — sans ce cas, la cible calculée par `DragonRules.getFairyTargets` n'avait aucun curseur affiché (`placedMeeples[key]` étant `undefined` pour ce format de clé). `initNetworkMeepleListeners(eventBus)` protégée par flag module-level (`_networkListenersInstalled`) contre la double installation — voir "Piège récurrent" |
 | `MeepleCursorsUI.js` | 455 | Curseurs de placement de meeple ; exclut la zone `tower` (et `dragon`/`volcano`/`portal`) des positions de meeple classiques |
 | `MeepleDisplayUI.js` | 91 | Affichage visuel des meeples posés |
 | `MeepleSelectorUI.js` | 333 | Sélecteur de type de meeple |
 | `ModalUI.js` | 528 | Utilitaires génériques de modales |
-| `ScorePanelUI.js` | ~500 | Panneau des scores (desktop + mobile). Lit désormais `gameState.extraState.prisoners[player.id]` (anciennement `gameState.prisoners[player.id]` directement — seule référence à migrer dans ce fichier). Sélection de prisonniers (mécanisme générique `enablePrisonerSelection`/`setBuybackHandler`), inchangée par ailleurs |
+| `ScorePanelUI.js` | ~500 | Panneau des scores (desktop + mobile). Lit `gameState.extraState.prisoners[player.id]`. Sélection de prisonniers (mécanisme générique `enablePrisonerSelection`/`setBuybackHandler`) |
 | `SlotsUI.js` | 234 | Slots de placement de tuile |
 | `TilePreviewUI.js` | 65 | Aperçu de la tuile en main |
 | `TurnUI.js` | 293 | Affichage tour courant, boutons mobile, messages/toasts |
@@ -343,22 +352,54 @@ Cas particuliers notables dans `Deck.js` :
   distance = hauteur. Auto-capture → retour réserve. Capture d'un adversaire
   → prisonnier (`gameState.extraState.prisoners`), sauf échange automatique
   différé (voir ci-dessous). Nettoyage des Bâtisseurs/Cochons orphelins
-  identique au Dragon.
+  identique au Dragon. Si le garde capturé (voir ci-dessous) portait la fée,
+  elle est retirée (`applyCaptureExecuted`).
 - **Verrouillage** : à partir de 1 étage, n'importe quel joueur peut verrouiller
   une tour avec un meeple normal ou grand meeple (ressource personnelle
-  consommée), ce qui l'exclut des tuiles éligibles à un nouvel étage.
-  **✅ FIX** : interdit sur la tuile où se trouve actuellement le dragon
-  (`gameState.dragonPos`), pour éviter de piéger le dragon sur une tour
-  devenue immuable — masqué côté UI (`showTowerCursors`/`_openTowerFloorSelector`)
-  et refusé côté autorité hôte (`TowerRules.lockTower`).
-- **Interaction Dragon ↔ garde de tour** : **✅ FIX** — un garde qui verrouille
-  une tour (vivant dans `gameState.extraState.towers[x,y]`, absent de
-  `placedMeeples`) est désormais mangé par le dragon comme n'importe quel
-  meeple classique lorsque celui-ci visite la tuile (`DragonRules._eatMeeplesAt`),
-  avec retour à la réserve du joueur et déverrouillage de la tour. Le
-  déplacement dragon correspondant est annulable comme les autres
-  (`UndoManager.saveDragonMove`/`undoDragonMove` incluent désormais
-  `gameState.extraState`).
+  consommée), ce qui l'exclut des tuiles éligibles à un nouvel étage et
+  consomme la phase meeple du tour, exactement comme la pose d'un étage.
+  Interdit sur la tuile où se trouve actuellement le dragon
+  (`gameState.dragonPos`).
+- **Interaction Dragon/Fée ↔ garde de tour** : un garde qui verrouille une
+  tour (vivant dans `gameState.extraState.towers[x,y]`, absent de
+  `placedMeeples`) se comporte comme un meeple classique vis-à-vis du dragon
+  et de la fée, moyennant une clé d'identification spéciale `"tower-lock:x,y"`
+  (au lieu du format `"x,y,position"` habituel) utilisée de façon cohérente
+  à travers tout le code :
+  - **Dragon** : mangé comme n'importe quel meeple classique lorsque le
+    dragon visite la tuile (`DragonRules._eatMeeplesAt`), avec retour à la
+    réserve du joueur et déverrouillage de la tour. Le déplacement dragon
+    correspondant est annulable comme les autres (`UndoManager.saveDragonMove`/
+    `undoDragonMove` incluent `gameState.extraState`). **✅ FIX** : côté
+    invité, le retrait visuel du pion `.tower-lock-meeple` n'était auparavant
+    déclenché que côté hôte (`DragonUI.executeDragonMoveHost`) — le handler
+    réseau `network-dragon-state-update` (`home.js`) ne traitait que le cas
+    classique `.meeple[data-key]` pour `eatenKeys`, laissant le garde affiché
+    à tort chez les invités bien que l'état fût déjà correct
+    (`gameState.extraState.towers`, resynchronisé). Corrigé en y ajoutant le
+    même traitement de la clé `tower-lock:x,y` que côté hôte.
+  - **Fée** : **✅ FIX** — peut désormais être attachée à un garde de tour du
+    joueur (`DragonRules.getFairyTargets` parcourt aussi
+    `gameState.extraState.towers`, en plus de `placedMeeples`). Le curseur
+    d'action (`MeepleActionsUI.showMeepleActionCursors`) et le rendu du pion
+    fée (`DragonUI.renderFairyPiece`) reconnaissent tous deux la clé spéciale
+    et s'ancrent sur la position réelle du garde
+    (`TowerUI.getTowerLockMeepleAnchor`, exportée pour l'occasion). La fée
+    est retirée si le garde qui la porte est mangé par le dragon
+    (`DragonRules._eatMeeplesAt`) ou capturé par une autre tour
+    (`TowerUI.applyCaptureExecuted`). `GameState.isFairyOnTile` reconnaît le
+    format `"tower-lock:x,y"` pour que la protection de la fée continue de
+    bloquer le dragon sur cette tuile (auparavant le parsing générique
+    produisait silencieusement `NaN` et laissait la tuile non protégée).
+  - **✅ FIX — ordre pose de garde / pose de fée** : poser un étage ou
+    verrouiller une tour consomme la phase meeple du tour
+    (`undoManager.markMeeplePlaced(x, y, -1, null)`), ce qui doit empêcher
+    toute pose de fée dans le même tour. La pose d'étage nettoyait déjà tous
+    les curseurs affichés après coup (`_deps.hideAllCursors?.()`) ; le
+    verrouillage ne le faisait pas, laissant un curseur fée déjà affiché
+    (rendu juste après la pose de tuile) visible et cliquable malgré le flag
+    `meeplePlacedThisTurn` désormais à `true`. `TowerUI.applyLockExecuted`
+    appelle maintenant le même nettoyage, symétriquement à la pose d'étage.
 - **Échange automatique de prisonniers** : après chaque capture non-auto,
   vérification de réciprocité entre le capturant (X) et le propriétaire
   capturé (Y) : Y détient-il déjà un ou plusieurs prisonniers de X ?
@@ -377,8 +418,6 @@ Cas particuliers notables dans `Deck.js` :
     ne fait que noter l'info nécessaire ; résoudre l'échange avant que la
     capture soit verrouillée aurait pu créer un état de prisonniers
     incohérent (des deux joueurs) en cas d'annulation ultérieure.
-  - **✅ FIX texte de la modale** : décrit désormais les deux sens de
-    l'échange dans la même phrase (`showPrisonerExchangeModal`).
   - Non annulable en tant que tel (l'échange n'a lieu qu'une fois la capture
     déjà verrouillée par la fin du tour) — mais la capture qui le précède l'est.
 - **Rachat de prisonnier** : disponible à tout moment de la partie, coût fixe
@@ -396,9 +435,9 @@ Cas particuliers notables dans `Deck.js` :
   qui le déclenche est encore annulable ; le second n'est pas lié à un tour).
 - **Réseau** : architecture réactive identique aux autres actions (invité →
   requête, hôte → applique et broadcast, y compris echo à l'émetteur).
-- **Reconnexion** : ✅ FIX — les tours et gardes de verrouillage sont
-  désormais correctement redessinés (`ReconnectionManager.applyFullStateSync`
-  → `renderAllTowersFromState`), alors qu'ils ne l'étaient jamais auparavant.
+- **Reconnexion** : les tours et gardes de verrouillage sont correctement
+  redessinés (`ReconnectionManager.applyFullStateSync` →
+  `renderAllTowersFromState`).
 - **Scoring** : pas de points directement liés à la Tour — le seul bénéfice
   est l'avantage stratégique de capturer/neutraliser des meeples adverses.
 
@@ -432,7 +471,9 @@ aussi la section `gameState.extraState` en tête de ce document.
 | Bug lié au chargement/mélange/composition du deck | `modules/Deck.js` |
 | Bug spécifique Dragon/Fée/Princesse/Portail | `modules/game/DragonUI.js`, `modules/rules/DragonRules.js`, `modules/rules/DragonConfig.js`, `modules/game/GameSyncCallbacks.js` |
 | Bug spécifique Tour (pose d'étage, capture, verrouillage, stock de pièces) | `modules/game/TowerUI.js`, `modules/rules/TowerRules.js`, `modules/rules/TowerConfig.js`, `modules/GameState.js` (`extraState.towers`/`extraState.prisoners`), `modules/game/GameSyncCallbacks.js`, `modules/ui/MeepleActionsUI.js` |
-| Interaction Dragon / garde de tour (capture, blocage verrouillage) | `modules/rules/DragonRules.js` (`_eatMeeplesAt`), `modules/game/DragonUI.js` (`executeDragonMoveHost`), `modules/rules/TowerRules.js` (`lockTower`), `modules/game/TowerUI.js` (`showTowerCursors`/`_openTowerFloorSelector`) |
+| Interaction Dragon/Fée ↔ garde de tour (capture, blocage verrouillage, fée attachée à un garde) | `modules/rules/DragonRules.js` (`_eatMeeplesAt`, `getFairyTargets`), `modules/game/DragonUI.js` (`executeDragonMoveHost`, `renderFairyPiece`), `modules/rules/TowerRules.js` (`lockTower`), `modules/game/TowerUI.js` (`showTowerCursors`/`_openTowerFloorSelector`, `getTowerLockMeepleAnchor`, `applyCaptureExecuted`, `applyLockExecuted`), `modules/ui/MeepleActionsUI.js` (`showMeepleActionCursors`), `modules/GameState.js` (`isFairyOnTile`) |
+| Un garde de tour mangé par le dragon reste visible chez un invité | `home.js` (handler `network-dragon-state-update`, boucle `eatenKeys`) — vérifier qu'il traite bien le préfixe `tower-lock:` comme le fait `DragonUI.executeDragonMoveHost` côté hôte |
+| Une action censée consommer la phase meeple du tour (pose d'étage, verrouillage) laisse un curseur d'action encore cliquable | `modules/game/TowerUI.js` (`applyFloorPlaced`/`applyLockExecuted`, doivent appeler `_deps.hideAllCursors?.()` pour le joueur local) |
 | Bug spécifique à l'échange automatique de prisonniers (y compris timing/annulation) | `modules/game/TowerUI.js` (`executeTowerCaptureHost`, `checkPendingReciprocalExchange`, `_checkAndHandleReciprocalExchange`, `applyPrisonerExchangeResolved`, `applyPrisonerExchangePending`), `modules/rules/TowerRules.js` (`checkReciprocalCapture`), `modules/ui/ScorePanelUI.js`, `modules/core/GameSync.js`/`modules/game/GameSyncCallbacks.js`, `modules/GameState.js` (`_pendingReciprocalCheck`) |
 | Bug spécifique au rachat de prisonnier | `modules/game/TowerUI.js` (`setupPrisonerBuyback`, `executePrisonerBuybackHost`), `modules/rules/TowerConfig.js`, `modules/ui/ScorePanelUI.js`, `modules/game/Scoring.js`/`modules/game/FinalScoresManager.js` |
 | Bug d'annulation (undo) qui touche l'extension Tour (étage/capture/verrouillage/dragon-mange-garde non restauré) | `modules/game/UndoManager.js` (`restoreExtraState`, `saveTurnStart`/`saveAfterTilePlaced`/`saveDragonMove`, `applyLocally`), `modules/game/TowerUI.js` (`renderAllTowersFromState`), `modules/game/GameModuleInitializer.js` (câblage de la dépendance) |

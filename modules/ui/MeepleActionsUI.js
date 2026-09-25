@@ -8,6 +8,7 @@
 import {
     clearTowerCursors, showTowerCursors, showPendingTowerCaptureIfAny,
     applyFloorPlaced, applyCaptureExecuted, applyLockExecuted,
+    getTowerLockMeepleAnchor, // ✅ FIX — positionnement du curseur fée sur un garde de tour
 } from '../game/TowerUI.js'; // ✨ NOUVEAU
 
 let _deps = null;
@@ -71,6 +72,9 @@ export function showMeepleActionCursors() {
      || gameConfig?.extensions?.fairyScoreZone
     );
     if (_fairyEnabled && !undoManager?.meeplePlacedThisTurn) {
+        // ✅ FIX : getFairyTargets inclut désormais aussi un éventuel garde du joueur
+        // verrouillant une tour (clé spéciale "tower-lock:x,y"), en plus des meeples
+        // classiques de placedMeeples — cf. DragonRules.getFairyTargets.
         const fairyTargets = dragonRules.getFairyTargets(multiplayer.playerId);
         fairyTargets.forEach(({ key, meeple }) => {
             if (key === currentFairyKey) return;
@@ -104,15 +108,38 @@ export function showMeepleActionCursors() {
     }
 
     Object.entries(actionsByKey).forEach(([key, actions]) => {
-        const meeple = placedMeeples[key];
+        // ✅ FIX : une cible "tower-lock:x,y" désigne un garde verrouillant une tour —
+        // absent de placedMeeples, résolu depuis gameState.extraState.towers, et positionné
+        // via l'ancrage déjà calculé pour ce pion (TowerUI.getTowerLockMeepleAnchor) au lieu
+        // du calcul en grille 5×5 utilisé pour un meeple classique posé sur une tuile.
+        const isTowerLockEntry = key.startsWith('tower-lock:');
+        let meeple = placedMeeples[key];
+        if (isTowerLockEntry) {
+            const coords = key.slice('tower-lock:'.length);
+            const tower  = gameState.extraState.towers[coords];
+            if (tower?.lockedBy) {
+                meeple = { type: tower.lockMeepleType, color: tower.lockMeepleColor, playerId: tower.lockedBy };
+            }
+        }
         const isPortalEntry = actions.some(a => a.type === 'portal' && a.isPortalZone);
         if (!meeple && !isPortalEntry) return;
-        const parts   = key.split(',');
-        const mx      = Number(parts[0]), my = Number(parts[1]), mp = Number(parts[2]);
-        const row     = Math.floor((mp - 1) / 5);
-        const col     = (mp - 1) % 5;
-        const offsetX = 20.8 + col * 41.6;
-        const offsetY = 20.8 + row * 41.6;
+
+        let mx, my, offsetX, offsetY;
+        if (isTowerLockEntry) {
+            const coords = key.slice('tower-lock:'.length);
+            [mx, my] = coords.split(',').map(Number);
+            const anchor = getTowerLockMeepleAnchor(mx, my);
+            offsetX = anchor.left;
+            offsetY = anchor.top;
+        } else {
+            const parts = key.split(',');
+            mx = Number(parts[0]); my = Number(parts[1]);
+            const mp = Number(parts[2]);
+            const row = Math.floor((mp - 1) / 5);
+            const col = (mp - 1) % 5;
+            offsetX = 20.8 + col * 41.6;
+            offsetY = 20.8 + row * 41.6;
+        }
 
         const overlay = document.createElement('div');
         overlay.className        = 'meeple-action-overlay';
@@ -597,7 +624,7 @@ export function placerMeeple(x, y, position, meepleType) {
 // cette garde, chaque redémarrage de partie ajoutait un NOUVEAU listener sans jamais
 // retirer les précédents : après N parties, un événement réseau (ex: capture Tour)
 // déclenchait applyCaptureExecuted() N fois côté client qui le reçoit, dupliquant
-// l'entrée dans gameState.prisoners à chaque itération — uniquement visible côté
+// l'entrée dans gameState.extraState.prisoners à chaque itération — uniquement visible côté
 // invité, car gs.onTowerCaptureExecuted (et les équivalents Princesse/Portail) ne
 // réémettent ces événements que si `!isHost` (l'hôte applique directement, sans
 // passer par l'event bus, donc jamais concerné par ce doublon).

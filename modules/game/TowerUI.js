@@ -15,6 +15,7 @@
  *   getIsMyTurn()       → boolean
  *   onUpdateTurnDisplay() → callback
  *   getScorePanelUI()   → scorePanelUI — ✨ NOUVEAU (échange automatique de prisonniers)
+ *   removeFairyPiece()  → callback — ✅ FIX (retrait du pion fée si le garde qui la porte est capturé)
  *
  * ✨ NOUVEAU : gameState.towers/gameState.prisoners ont été regroupés sous
  * gameState.extraState.towers/gameState.extraState.prisoners (conteneur générique partagé
@@ -83,14 +84,17 @@ function _getTowerAnchor(x, y) {
 }
 
 /**
- * ✨ NOUVEAU : ancrage visuel (left/top en px, repère 'top') du meeple qui verrouille
- * une tour, pour y placer précisément le curseur de capture. Lit directement la position
- * déjà calculée et appliquée par _positionLockMeepleOverTower() sur l'image rendue
- * (.tower-lock-meeple), pour rester correct quelle que soit la hauteur/rotation de la tour.
+ * Ancrage visuel (left/top en px, repère 'top') du meeple qui verrouille une tour, pour y
+ * placer précisément un curseur d'action (capture, ou fée — cf. DragonUI.renderFairyPiece).
+ * Lit directement la position déjà calculée et appliquée par _positionLockMeepleOverTower()
+ * sur l'image rendue (.tower-lock-meeple), pour rester correct quelle que soit la hauteur/
+ * rotation de la tour.
+ * ✅ FIX : exportée (anciennement `_getTowerLockMeepleAnchor`, privée) — désormais réutilisée
+ * par MeepleActionsUI.js (curseur fée sur un garde de tour) et DragonUI.js (rendu du pion
+ * fée sur un garde de tour), en plus de l'usage interne à ce fichier.
  * @returns {{ left: number, top: number }}
- * @private
  */
-function _getTowerLockMeepleAnchor(x, y) {
+export function getTowerLockMeepleAnchor(x, y) {
     const boardEl = document.getElementById('board');
     const lockImg = boardEl?.querySelector(`.meeple-container[data-pos="${x},${y}"] .tower-lock-meeple`);
     if (lockImg) {
@@ -566,6 +570,14 @@ export function applyLockExecuted(x, y, playerId, meepleType, color, meeples, ha
     if (playerId === mp().playerId) {
         const undoManager = _deps.getUndoManager();
         if (undoManager) undoManager.markMeeplePlaced(x, y, -1, null);
+
+        // ✅ FIX : sans ce nettoyage, des curseurs déjà affichés (notamment le curseur fée,
+        // rendu juste après la pose de tuile) restaient visibles et cliquables après le
+        // verrouillage d'une tour, alors que markMeeplePlaced() vient de consommer la phase
+        // meeple pour ce tour — permettant à tort d'assigner la fée à un autre meeple dans le
+        // même tour. Même correctif déjà appliqué symétriquement à la pose d'étage
+        // (cf. applyFloorPlaced ci-dessus, qui l'a de son côté depuis le départ).
+        _deps.hideAllCursors?.();
     }
     _deps.onUpdateTurnDisplay();
 }
@@ -590,7 +602,7 @@ export function showTowerCaptureCursors(targets) {
             // ✨ NOUVEAU : clé "tower-lock:x,y" — coordonnées après le préfixe
             const coords = key.slice('tower-lock:'.length);
             [mx, my] = coords.split(',').map(Number);
-            const anchor = _getTowerLockMeepleAnchor(mx, my);
+            const anchor = getTowerLockMeepleAnchor(mx, my);
             offsetX = anchor.left;
             offsetY = anchor.top;
         } else {
@@ -783,6 +795,15 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
             tower.lockedBy        = null;
             tower.lockMeepleType  = null;
             tower.lockMeepleColor = null;
+        }
+        // ✅ FIX : la fée peut désormais être attachée à un garde verrouillant une tour (cf.
+        // DragonRules.getFairyTargets) — si c'était le cas, la retirer ici (même logique que
+        // pour un meeple classique capturé, cf. plus bas dans cette fonction pour le cas
+        // non-tower-lock). Auparavant ce cas n'existait pas, la fée ne pouvant jamais s'y
+        // attacher.
+        if (gameState.fairyState?.meepleKey === meepleKey) {
+            gameState.removeFairy();
+            _deps.removeFairyPiece?.();
         }
         const [tx, ty] = coords.split(',');
         document.querySelector(`.meeple-container[data-pos="${tx},${ty}"] .tower-lock-meeple`)?.remove();

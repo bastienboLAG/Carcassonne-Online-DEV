@@ -996,6 +996,18 @@ eventBus.on('network-dragon-state-update', (data) => {
     // Retirer visuellement les meeples mangés
     if (data.eatenKeys?.length) {
         data.eatenKeys.forEach(key => {
+            // ✅ FIX : un garde verrouillant une tour n'est pas dans placedMeeples — sa clé
+            // spéciale "tower-lock:x,y" (posée par DragonRules._eatMeeplesAt) désigne le pion
+            // visuel .tower-lock-meeple du conteneur de cette tuile, pas un .meeple[data-key].
+            // Sans ce cas, le garde mangé par le dragon restait affiché visuellement chez les
+            // invités, alors que l'état (retour réserve, déverrouillage) était déjà correct
+            // côté hôte et répercuté ici via gameState.extraState.towers (désérialisé plus
+            // tôt via GameState.deserialize()/mutation directe côté hôte).
+            if (key.startsWith('tower-lock:')) {
+                const coords = key.slice('tower-lock:'.length);
+                document.querySelector(`.meeple-container[data-pos="${coords}"] .tower-lock-meeple`)?.remove();
+                return;
+            }
             document.querySelectorAll(`.meeple[data-key="${key}"]`).forEach(el => el.remove());
             delete placedMeeples[key];
             releaseFairyIfDetached(key);
@@ -1006,6 +1018,12 @@ eventBus.on('network-dragon-state-update', (data) => {
     if (gameState.dragonPos) {
         renderDragonPiece(gameState.dragonPos.x, gameState.dragonPos.y);
     }
+    // ✅ FIX : re-synchroniser le rendu visuel de la fée avec l'état reçu de l'hôte —
+    // nécessaire car la fée peut désormais être attachée à un garde de tour mangé par le
+    // dragon (cf. DragonRules._eatMeeplesAt), et gameState.fairyState vient d'être écrasé
+    // par data.fairyState juste au-dessus sans qu'aucun rendu ne soit déclenché ici.
+    if (gameState.fairyState?.meepleKey) renderFairyPiece(gameState.fairyState.meepleKey);
+    else removeFairyPiece();
 
     // Détecter si le dragon vient de se déplacer (position changée)
     const newPos = gameState.dragonPos ? `${gameState.dragonPos.x},${gameState.dragonPos.y}` : null;
@@ -1209,6 +1227,10 @@ function _makeStarter() {
             onUpdateTurnDisplay: () => updateTurnDisplay(),
             hideAllCursors:      () => hideAllCursors(),
             afficherToast, // ✨ NOUVEAU — toast du rachat de prisonnier
+            // ✅ FIX : nécessaire pour retirer le pion fée si le garde de tour auquel elle
+            // est attachée est capturé (cf. TowerUI.applyCaptureExecuted) — la fée pouvant
+            // désormais être posée sur un garde de tour (cf. DragonRules.getFairyTargets).
+            removeFairyPiece,
         }),
         // deps pour initMeepleActionsUI
         getMeepleActionsUIDeps: () => ({
