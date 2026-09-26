@@ -70,7 +70,14 @@ export class UndoManager {
             // structures — moutons, granges, ponts, forteresses, cf. ARCHITECTURE.md).
             // Copié en bloc, restauré génériquement par restoreExtraState() — aucune extension
             // future n'a besoin de toucher ce fichier pour être prise en compte par l'undo.
-            extraState: this.deepCopy(this.gameState.extraState)
+            extraState: this.deepCopy(this.gameState.extraState),
+            // ✅ FIX : rachat de prisonnier — le compteur "une rançon par tour" doit suivre le
+            // même cycle de vie que extraState.prisoners (qu'il verrouille). Sans ce champ dans
+            // le snapshot, annuler une tuile/un meeple posé APRÈS un rachat remettait bien le
+            // prisonnier en prison (via extraState ci-dessus) mais laissait _turnBuybackUsed à
+            // true, bloquant tout nouveau rachat pour le reste du tour alors que celui qui
+            // vient d'être annulé n'a plus d'effet.
+            turnBuybackUsed: this.gameState._turnBuybackUsed ?? false
         };
         
         // Reset état du tour
@@ -120,7 +127,9 @@ export class UndoManager {
                 ? JSON.parse(JSON.stringify(this.gameState._pendingPortalTile))
                 : null,
             // ✨ NOUVEAU : voir saveTurnStart — même conteneur générique
-            extraState: this.deepCopy(this.gameState.extraState)
+            extraState: this.deepCopy(this.gameState.extraState),
+            // ✅ FIX : voir saveTurnStart — même raison
+            turnBuybackUsed: this.gameState._turnBuybackUsed ?? false
         };
         
         this.tilePlacedThisTurn = true;
@@ -157,6 +166,8 @@ export class UndoManager {
             // ✨ NOUVEAU : un déplacement du dragon peut manger un garde verrouillant une
             // tour (cf. DragonRules._eatMeeplesAt) — l'annulation doit pouvoir le restaurer.
             extraState:  this.deepCopy(this.gameState.extraState),
+            // ✅ FIX : voir saveTurnStart — même raison (cohérence avec extraState.prisoners)
+            turnBuybackUsed: this.gameState._turnBuybackUsed ?? false,
             playerMeeples: this.gameState.players.map(p => ({
                 id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot,
                 hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder,
@@ -187,6 +198,10 @@ export class UndoManager {
         // ✨ NOUVEAU : restaurer extraState (towers/prisoners — un garde de tour mangé par
         // le dragon pendant ce déplacement doit être reverrouillé)
         this.restoreExtraState(snap.extraState);
+
+        // ✅ FIX : voir saveTurnStart — restaurer le compteur de rançon en cohérence avec
+        // extraState.prisoners restauré juste au-dessus.
+        this.gameState._turnBuybackUsed = snap.turnBuybackUsed ?? false;
 
         // Restaurer les meeples des joueurs
         snap.playerMeeples.forEach(pm => {
@@ -370,6 +385,13 @@ export class UndoManager {
         // ✨ NOUVEAU : restaurer extraState (towers/prisoners, et futures structures
         // d'extension — générique, cf. restoreExtraState).
         this.restoreExtraState(snapshot.extraState);
+
+        // ✅ FIX : rachat de prisonnier — restaurer le compteur "une rançon par tour" en
+        // cohérence avec extraState.prisoners restauré juste au-dessus. Sans cette ligne,
+        // annuler une action posée après un rachat remettait bien le prisonnier en prison
+        // mais laissait le joueur bloqué (impossible de racheter à nouveau ce tour-ci) alors
+        // que le rachat annulé n'a plus d'effet.
+        this.gameState._turnBuybackUsed = snapshot.turnBuybackUsed ?? false;
 
         // ✨ NOUVEAU : champs transitoires liés à l'extension Tour, non couverts par
         // extraState car turn-scoped et jamais sérialisés — doivent être explicitement
@@ -658,6 +680,10 @@ export class UndoManager {
             if (s.extraState) this.restoreExtraState(s.extraState);
             gameState._pendingTowerCapture    = null;
             gameState._pendingReciprocalCheck = null;
+            // ✅ FIX : rachat de prisonnier — restaurer le compteur "une rançon par tour" côté
+            // invité, en cohérence avec extraState.prisoners restauré juste au-dessus (même
+            // raison que UndoManager.restoreSnapshot côté hôte).
+            gameState._turnBuybackUsed = s.turnBuybackUsed ?? false;
             // Restaurer et afficher la fée
             if (s.fairyState !== undefined && gameState.fairyState) {
                 gameState.fairyState.ownerId   = s.fairyState.ownerId;

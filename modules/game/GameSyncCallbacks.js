@@ -314,7 +314,13 @@ export class GameSyncCallbacks {
                 dragonPos:      JSON.parse(JSON.stringify(this.gameState.dragonPos ?? null)),
                 dragonPhase:    JSON.parse(JSON.stringify(this.gameState.dragonPhase ?? {})),
                 pendingPortalTile: this.gameState._pendingPortalTile ? JSON.parse(JSON.stringify(this.gameState._pendingPortalTile)) : null,
-                extraState:     JSON.parse(JSON.stringify(this.gameState.extraState)) // ✨ NOUVEAU
+                extraState:     JSON.parse(JSON.stringify(this.gameState.extraState)), // ✨ NOUVEAU
+                // ✅ FIX : rachat de prisonnier — même raison que GameEventSetup._installUndo :
+                // um.undo() ci-dessus a déjà restauré gameState._turnBuybackUsed en cohérence
+                // avec extraState.prisoners ; on transmet cette valeur à l'invité qui a demandé
+                // l'annulation pour qu'il lève lui aussi le blocage "une rançon par tour" si le
+                // rachat annulé en faisait partie.
+                turnBuybackUsed: this.gameState._turnBuybackUsed ?? false
             };
             um.applyLocally(undoneAction);
             if (this.gameSync) this.gameSync.syncUndo(undoneAction);
@@ -509,9 +515,10 @@ export class GameSyncCallbacks {
                 executePrisonerChoiceHost(data.chosenType, from);
                 return;
             }
-            // ✨ NOUVEAU — Rachat de prisonnier : requête invité → hôte. Disponible à tout moment
-            // de la partie (pas lié au tour en cours) — toute la validation (score suffisant,
-            // prisonnier toujours détenu, pas d'échange en attente) est faite dans
+            // ✨ NOUVEAU — Rachat de prisonnier : requête invité → hôte. Disponible durant le
+            // tour de l'acheteur uniquement, une fois par tour (double tour inclus) — toute la
+            // validation (score suffisant, prisonnier toujours détenu, pas d'échange en attente,
+            // c'est bien le tour de `from`, pas déjà racheté ce tour-ci) est faite dans
             // executePrisonerBuybackHost, avec `from` comme identité fiable de l'acheteur.
             if (data.type === 'prisoner-buyback-request') {
                 executePrisonerBuybackHost(data.opponentId, data.meepleType, from);

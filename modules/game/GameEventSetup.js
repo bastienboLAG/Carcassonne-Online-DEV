@@ -397,7 +397,13 @@ export class GameEventSetup {
                 dragonPos:      JSON.parse(JSON.stringify(gameState.dragonPos ?? null)),
                 dragonPhase:    JSON.parse(JSON.stringify(gameState.dragonPhase ?? {})),
                 pendingPortalTile: gameState._pendingPortalTile ? JSON.parse(JSON.stringify(gameState._pendingPortalTile)) : null,
-                extraState:     JSON.parse(JSON.stringify(gameState.extraState)) // ✨ NOUVEAU
+                extraState:     JSON.parse(JSON.stringify(gameState.extraState)), // ✨ NOUVEAU
+                // ✅ FIX : rachat de prisonnier — transmettre aux invités la valeur DÉJÀ
+                // restaurée par undoManager.undo() ci-dessus (restoreSnapshot mutant
+                // gameState._turnBuybackUsed en cohérence avec extraState.prisoners), pour
+                // qu'ils lèvent aussi le blocage "une rançon par tour" quand le rachat qui
+                // l'avait posé vient d'être annulé.
+                turnBuybackUsed: gameState._turnBuybackUsed ?? false
             };
 
             undoManager.applyLocally(undoneAction);
