@@ -1252,10 +1252,6 @@ function _makeStarter() {
             onUpdateTurnDisplay: () => updateTurnDisplay(),
             hideAllCursors:      () => hideAllCursors(),
             afficherToast, // ✨ NOUVEAU — toast du rachat de prisonnier
-            // ✅ FIX : nécessaire pour retirer le pion fée si le garde de tour auquel elle
-            // est attachée est capturé (cf. TowerUI.applyCaptureExecuted) — la fée pouvant
-            // désormais être posée sur un garde de tour (cf. DragonRules.getFairyTargets).
-            removeFairyPiece,
         }),
         // deps pour initMeepleActionsUI
         getMeepleActionsUIDeps: () => ({

@@ -797,13 +797,14 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
             tower.lockMeepleColor = null;
         }
         // ✅ FIX : la fée peut désormais être attachée à un garde verrouillant une tour (cf.
-        // DragonRules.getFairyTargets) — si c'était le cas, la retirer ici (même logique que
-        // pour un meeple classique capturé, cf. plus bas dans cette fonction pour le cas
-        // non-tower-lock). Auparavant ce cas n'existait pas, la fée ne pouvant jamais s'y
-        // attacher.
+        // DragonRules.getFairyTargets) — si c'était le cas, la détacher SANS la retirer du
+        // plateau : une fois posée, la fée ne disparaît jamais tant qu'aucun joueur ne la
+        // reprend pour lui (même règle que pour une fermeture de zone classique, cf.
+        // DragonUI.releaseFairyIfDetached). Elle reste affichée à sa position et continue de
+        // bloquer le dragon là où se trouvait le garde.
         if (gameState.fairyState?.meepleKey === meepleKey) {
-            gameState.removeFairy();
-            _deps.removeFairyPiece?.();
+            gameState.fairyState.ownerId = null;
+            gameState.players.forEach(p => { p.hasFairy = false; });
         }
         const [tx, ty] = coords.split(',');
         document.querySelector(`.meeple-container[data-pos="${tx},${ty}"] .tower-lock-meeple`)?.remove();
@@ -811,8 +812,11 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
         return;
     }
 
+    // ✅ FIX : même règle que ci-dessus (garde de tour) — la fée reste sur le plateau,
+    // seule sa propriété est détachée.
     if (gameState.fairyState?.meepleKey === meepleKey) {
-        gameState.removeFairy();
+        gameState.fairyState.ownerId = null;
+        gameState.players.forEach(p => { p.hasFairy = false; });
     }
 
     delete placedMeeples[meepleKey];

@@ -178,11 +178,15 @@ export class DragonRules {
                 this._returnMeeple(player, meeple.type);
             }
 
-            // Si la fée était attachée à ce meeple, la retirer
+            // Si la fée était attachée à ce meeple, la détacher — SANS la retirer du
+            // plateau : une fois posée, la fée ne disparaît jamais tant qu'aucun joueur
+            // ne la reprend pour lui (même règle que pour une fermeture de zone classique,
+            // cf. DragonUI.releaseFairyIfDetached). Elle reste visible à cette position et
+            // continue de bloquer le dragon.
             if (this.gameState.fairyState.meepleKey === key) {
-                console.log(`🧚 [Fée] Meeple mangé — fée retirée`);
-                this.gameState.removeFairy();
-                this.eventBus.emit('fairy-removed', { reason: 'dragon-ate-meeple' });
+                console.log(`🧚 [Fée] Meeple mangé — fée détachée (reste sur le plateau)`);
+                this.gameState.fairyState.ownerId = null;
+                this.gameState.players.forEach(p => { p.hasFairy = false; });
             }
         }
 
@@ -206,15 +210,14 @@ export class DragonRules {
             if (lockPlayer) this._returnMeeple(lockPlayer, tower.lockMeepleType);
 
             // ✅ FIX : la fée peut désormais être attachée à un garde verrouillant une tour
-            // (cf. getFairyTargets ci-dessous) — si c'est le cas, la retirer comme pour un
-            // meeple classique mangé par le dragon (même logique que dans la boucle ci-dessus).
-            // Auparavant ce cas n'était volontairement pas traité, aucun chemin UI n'attachant
-            // encore la fée à un garde de tour.
+            // (cf. getFairyTargets ci-dessous) — si c'est le cas, la détacher (et non la
+            // retirer du plateau : elle ne disparaît jamais tant qu'aucun joueur ne la
+            // reprend, même règle que pour un meeple classique mangé, ci-dessus).
             const towerLockKey = `tower-lock:${towerKey}`;
             if (this.gameState.fairyState.meepleKey === towerLockKey) {
-                console.log(`🧚 [Fée] Garde de tour mangé — fée retirée`);
-                this.gameState.removeFairy();
-                this.eventBus.emit('fairy-removed', { reason: 'dragon-ate-meeple' });
+                console.log(`🧚 [Fée] Garde de tour mangé — fée détachée (reste sur le plateau)`);
+                this.gameState.fairyState.ownerId = null;
+                this.gameState.players.forEach(p => { p.hasFairy = false; });
             }
 
             tower.lockedBy        = null;
