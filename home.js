@@ -340,6 +340,13 @@ eventBus.on('turn-changed', (data) => {
     // annulée — les captures de tour en attente de validation deviennent définitivement
     // rachetables (cf. GameState._freshCaptures / TowerUI.setupPrisonerBuyback).
     if (gameState) gameState._freshCaptures = [];
+    // ✅ FIX : rachat de prisonnier — une seule rançon par tour de jeu, un tour bonus
+    // (bâtisseur) comptant comme la suite du tour précédent. À cet instant,
+    // turnManager.isBonusTurn a déjà été mis à jour ci-dessus (ou l'était déjà pour le
+    // tour en cours) : on ne réinitialise donc ce flag que lorsqu'on entre dans un
+    // véritable nouveau tour (isBonusTurn === false), jamais lors du passage vers/depuis
+    // le tour bonus du même joueur (cf. GameState._turnBuybackUsed).
+    if (gameState && !turnManager?.isBonusTurn) gameState._turnBuybackUsed = false;
     updateTurnDisplay();
 });
 

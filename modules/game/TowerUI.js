@@ -1154,6 +1154,15 @@ function setupPrisonerBuyback() {
             if (isFreshThisTurn) return false;
             const localId = mp().playerId;
             if (entry.ownerId !== localId) return false; // uniquement ses propres meeples
+            // ✅ FIX : règle officielle — "Durant votre tour, vous pouvez également libérer
+            // un de vos meeples capturés par un autre joueur". Le rachat n'est donc autorisé
+            // que pendant son propre tour, plus possible à tout moment de la partie.
+            if (!_deps.getIsMyTurn?.()) return false;
+            // ✅ FIX : "Le paiement de rançon pour récupérer un prisonnier ne se fait qu'une
+            // fois par tour, même lorsqu'il y a un double tour" — un tour bonus (bâtisseur)
+            // compte comme la suite du tour précédent (cf. GameState._turnBuybackUsed,
+            // réinitialisé uniquement à l'entrée d'un véritable nouveau tour dans home.js).
+            if (gameState._turnBuybackUsed) return false;
             const player = gameState.players.find(p => p.id === localId);
             return (player?.score ?? 0) >= PRISONER_BUYBACK_COST;
         },
@@ -1201,11 +1210,18 @@ function _confirmBuyback(opponentId, meepleType) {
 
 /**
  * [HÔTE] Valide (score suffisant, prisonnier toujours détenu, pas d'échange
- * automatique en attente) puis applique le rachat, et broadcast le résultat.
+ * automatique en attente, c'est bien le tour du demandeur, et il n'a pas déjà
+ * racheté un prisonnier ce tour-ci) puis applique le rachat, et broadcast le résultat.
  */
 export function executePrisonerBuybackHost(opponentId, meepleType, buyerId) {
     const gameState = gs();
     if (gameState._pendingPrisonerExchange) return; // sécurité : pas de rachat pendant un échange en cours
+
+    // ✅ FIX — revalidation hôte (seule source de vérité, ne fait pas confiance au client) :
+    // le rachat n'est autorisé que pendant le tour du joueur acheteur, et une seule fois par
+    // tour de jeu (double tour bonus inclus, cf. GameState._turnBuybackUsed).
+    if (gameState.getCurrentPlayer()?.id !== buyerId) return;
+    if (gameState._turnBuybackUsed) return;
 
     // Revalidation côté hôte — aucun rachat tant que la capture concernée n'a pas
     // été validée par la fin du tour du détenteur (défense en profondeur, cf. setupPrisonerBuyback).
@@ -1255,6 +1271,11 @@ export function applyPrisonerBuybackExecuted(buyerId, opponentId, meepleType) {
     // Marque la partie comme ayant eu au moins un rachat — utilisé par
     // FinalScoresManager pour n'afficher la colonne "Rachats" que si pertinent.
     gameState.hasPrisonerBuybacks = true;
+
+    // ✅ FIX : une seule rançon par tour de jeu — marque le tour courant comme "utilisé".
+    // Remis à false uniquement à l'entrée d'un véritable nouveau tour (pas un tour bonus),
+    // cf. home.js, listener 'turn-changed'.
+    gameState._turnBuybackUsed = true;
 
     const buyerName    = buyer?.name    ?? '?';
     const capturerName = capturer?.name ?? '?';

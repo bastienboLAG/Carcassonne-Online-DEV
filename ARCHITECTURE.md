@@ -165,7 +165,12 @@ nouvelle extension reste à écrire, comme pour la Tour :
   ton propre champ `gameState._pendingXxx`, et n'oublie pas de le réinitialiser
   explicitement dans `UndoManager.restoreSnapshot()`/`applyRemote()`, exactement
   comme `_pendingTowerCapture`/`_pendingReciprocalCheck` le sont aujourd'hui —
-  `extraState` ne les couvre pas automatiquement.
+  `extraState` ne les couvre pas automatiquement. Le même principe s'applique
+  à un compteur "une fois par tour" qui n'est pas turn-scoped au sens d'une
+  capture en attente, mais qui doit néanmoins être remis à zéro précisément —
+  voir `gameState._turnBuybackUsed` (rachat de prisonnier) ci-dessous et dans
+  la section Tour : reset conditionné à un événement précis (ici, l'entrée
+  dans un véritable nouveau tour), pas seulement à `'turn-changed'` en général.
 - **Différer une conséquence non-annulable** (comme l'échange automatique de
   prisonniers) : si une action de ta nouvelle mécanique déclenche un effet qui
   mute l'état d'un **autre** joueur (pas seulement le joueur actif), différer
@@ -224,7 +229,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 |---|---|---|
 | `index.html` | 494 | Structure DOM complète (lobby, plateau, modales, badge dragon, sélecteurs, section extension Tour, modale + voile gris d'échange automatique de prisonniers, modale de confirmation de rachat de prisonnier) |
 | `style.css` | 1569 | Tous les styles |
-| `home.js` | 1463 | Chef d'orchestre : état global, listeners `eventBus` (singleton — voir section "Piège récurrent" ci-dessus), init lobby, `startGame`/`startGameForInvite`. Le handler `network-dragon-state-update` retire désormais aussi le pion `.tower-lock-meeple` d'un garde de tour mangé par le dragon (auparavant seul l'hôte le faisait — cf. section "Interaction Dragon ↔ garde de tour"), et re-synchronise le rendu visuel de la fée depuis `gameState.fairyState` reçu de l'hôte |
+| `home.js` | ~1470 | Chef d'orchestre : état global, listeners `eventBus` (singleton — voir section "Piège récurrent" ci-dessus), init lobby, `startGame`/`startGameForInvite`. Le handler `network-dragon-state-update` retire désormais aussi le pion `.tower-lock-meeple` d'un garde de tour mangé par le dragon (auparavant seul l'hôte le faisait — cf. section "Interaction Dragon ↔ garde de tour"), et re-synchronise le rendu visuel de la fée depuis `gameState.fairyState` reçu de l'hôte. Le listener `'turn-changed'` réinitialise désormais aussi `gameState._turnBuybackUsed` (rachat de prisonnier — une seule rançon par tour), mais uniquement lorsque le tour qui commence n'est PAS un tour bonus (`turnManager.isBonusTurn === false`) |
 | `version.js` | — | Constante `APP_VERSION` |
 
 ---
@@ -235,7 +240,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 |---|---|---|
 | `Board.js` | 121 | Modèle du plateau : `placedTiles`, `isFree`, `canPlaceTile` (check géométrique, ne connaît pas les règles spéciales type "dragon sans volcan") |
 | `Deck.js` | 217 | Chargement des tuiles (`loadAllTiles`, fetch parallèle par groupe depuis `data/{Groupe}/{id}.json`, y compris `data/Tower/` si `tileGroups.tower`), mélange, pioche, `reshuffleDragonTile()` |
-| `GameState.js` | ~230 | État global : joueurs (dont `towerPieces` par joueur), `dragonPos`, `dragonPhase`, `fairyState` (le champ `meepleKey` peut désormais valoir soit une clé classique `"x,y,position"`, soit `"tower-lock:x,y"` — voir `isFairyOnTile`, mis à jour pour reconnaître ce second format), `currentTilePlaced`, `destroyedTilesCount`, **`extraState`** (conteneur générique — voir section dédiée en tête de ce document — contenant aujourd'hui `towers` et `prisoners`), `_pendingTowerCapture`, `_pendingReciprocalCheck` (échange automatique différé à la fin du tour du capturant — voir plus bas), `_pendingPrisonerExchange` (choix en attente), `_freshCaptures` (captures du tour en cours pas encore validées, bloque temporairement leur rachat), `hasPrisonerBuybacks` (flag sérialisé) |
+| `GameState.js` | ~245 | État global : joueurs (dont `towerPieces` par joueur), `dragonPos`, `dragonPhase`, `fairyState` (le champ `meepleKey` peut désormais valoir soit une clé classique `"x,y,position"`, soit `"tower-lock:x,y"` — voir `isFairyOnTile`, mis à jour pour reconnaître ce second format), `currentTilePlaced`, `destroyedTilesCount`, **`extraState`** (conteneur générique — voir section dédiée en tête de ce document — contenant aujourd'hui `towers` et `prisoners`), `_pendingTowerCapture`, `_pendingReciprocalCheck` (échange automatique différé à la fin du tour du capturant — voir plus bas), `_pendingPrisonerExchange` (choix en attente), `_freshCaptures` (captures du tour en cours pas encore validées, bloque temporairement leur rachat), `hasPrisonerBuybacks` (flag sérialisé), **`_turnBuybackUsed`** (transitoire, non sérialisé — une seule rançon de prisonnier autorisée par tour de jeu, un tour bonus comptant comme la suite du tour précédent ; remis à `false` uniquement à l'entrée d'un véritable nouveau tour, cf. `home.js` listener `'turn-changed'`) |
 | `LobbyOptions.js` | 548 | Cases à cocher du lobby (extensions, presets, coches maîtres — dont "Tour" / `all-tower`, `tiles-tower`, `ext-tower`), `localStorage`, sync réseau |
 | `MeepleConfig.js` | 134 | Tailles/configuration des meeples (`getMeepleSize`) |
 | `MeepleUtils.js` | 21 | Utilitaires génériques meeples — poids pour calcul de majorité (Grand Meeple = 2, Bâtisseur/Cochon = 0, Normal/Abbé = 1) |
@@ -280,9 +285,9 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | `ReconnectionManager.js` | ~680 | Pause/reprise de partie, resynchronisation complète. `applyFullStateSync` : appelle `d.renderAllTowersFromState?.()` (si `tileGroups.tower`) juste après le rendu Dragon/Fée |
 | `Scoring.js` | 380 | Calcul des points. `applyAndGetFinalScores` inclut `buybacks` dans les scores détaillés |
 | `TilePlacement.js` | 283 | Logique de pose de tuile |
-| `TowerUI.js` | ~960 | UI et orchestration de l'extension Tour, entièrement migrée vers `gameState.extraState.towers`/`gameState.extraState.prisoners` (voir section extraState en tête de document). Curseurs de pose d'étage/capture, sélecteurs de confirmation, pose d'étage/verrouillage/capture hôte. **✅ FIX** : `_getTowerLockMeepleAnchor` renommée et **exportée** en `getTowerLockMeepleAnchor(x, y)` — anciennement privée, réutilisée par `MeepleActionsUI.js` (positionnement du curseur fée sur un garde de tour) et `DragonUI.js` (rendu du pion fée sur un garde de tour), en plus de l'usage interne déjà existant (`showTowerCaptureCursors`). **✅ FIX** : `applyLockExecuted` appelle désormais `_deps.hideAllCursors?.()` pour le joueur local, exactement comme `applyFloorPlaced` le fait déjà — sans cet appel, des curseurs déjà affichés (notamment le curseur fée) restaient visibles et cliquables après un verrouillage, alors que la phase meeple venait d'être consommée par `markMeeplePlaced(x, y, -1, null)` (cf. section "Interaction Dragon ↔ garde de tour" pour le détail du bug). **✅ FIX** : `applyCaptureExecuted` détache désormais la fée (`ownerId = null`, `meepleKey` conservé) au lieu de la retirer complètement du plateau si elle était attachée au meeple/garde capturé — la fée ne disparaît jamais une fois posée, même règle que pour une fermeture de zone classique. `showTowerCursors`/`_openTowerFloorSelector` masquent l'option de verrouillage sur la tuile où se trouve le dragon (cohérent avec `TowerRules.lockTower`). `renderAllTowersFromState()` — (re)dessine l'intégralité des tours et gardes depuis `gameState.extraState.towers`, utilisée par `UndoManager.applyLocally` et par `ReconnectionManager.applyFullStateSync`. **Échange automatique de prisonniers différé** : `executeTowerCaptureHost` ne déclenche plus `_checkAndHandleReciprocalExchange` immédiatement — elle note l'info dans `gameState._pendingReciprocalCheck`, consommée uniquement par la nouvelle fonction exportée `checkPendingReciprocalExchange()`, appelée en fin de tour du capturant. **Rachat de prisonnier** : inchangé dans son fonctionnement, migré vers `extraState.prisoners` |
+| `TowerUI.js` | ~970 | UI et orchestration de l'extension Tour, entièrement migrée vers `gameState.extraState.towers`/`gameState.extraState.prisoners` (voir section extraState en tête de document). Curseurs de pose d'étage/capture, sélecteurs de confirmation, pose d'étage/verrouillage/capture hôte. **✅ FIX** : `_getTowerLockMeepleAnchor` renommée et **exportée** en `getTowerLockMeepleAnchor(x, y)` — anciennement privée, réutilisée par `MeepleActionsUI.js` (positionnement du curseur fée sur un garde de tour) et `DragonUI.js` (rendu du pion fée sur un garde de tour), en plus de l'usage interne déjà existant (`showTowerCaptureCursors`). **✅ FIX** : `applyLockExecuted` appelle désormais `_deps.hideAllCursors?.()` pour le joueur local, exactement comme `applyFloorPlaced` le fait déjà — sans cet appel, des curseurs déjà affichés (notamment le curseur fée) restaient visibles et cliquables après un verrouillage, alors que la phase meeple venait d'être consommée par `markMeeplePlaced(x, y, -1, null)` (cf. section "Interaction Dragon ↔ garde de tour" pour le détail du bug). **✅ FIX** : `applyCaptureExecuted` détache désormais la fée (`ownerId = null`, `meepleKey` conservé) au lieu de la retirer complètement du plateau si elle était attachée au meeple/garde capturé — la fée ne disparaît jamais une fois posée, même règle que pour une fermeture de zone classique. `showTowerCursors`/`_openTowerFloorSelector` masquent l'option de verrouillage sur la tuile où se trouve le dragon (cohérent avec `TowerRules.lockTower`). `renderAllTowersFromState()` — (re)dessine l'intégralité des tours et gardes depuis `gameState.extraState.towers`, utilisée par `UndoManager.applyLocally` et par `ReconnectionManager.applyFullStateSync`. **Échange automatique de prisonniers différé** : `executeTowerCaptureHost` ne déclenche plus `_checkAndHandleReciprocalExchange` immédiatement — elle note l'info dans `gameState._pendingReciprocalCheck`, consommée uniquement par la nouvelle fonction exportée `checkPendingReciprocalExchange()`, appelée en fin de tour du capturant. **✅ FIX — Rachat de prisonnier** : `setupPrisonerBuyback` (`isSelectable`) et `executePrisonerBuybackHost` (revalidation hôte, seule source de vérité) n'autorisent désormais le rachat que durant le propre tour du joueur (`_deps.getIsMyTurn()` côté client, `gameState.getCurrentPlayer()?.id === buyerId` côté hôte) et une seule fois par tour de jeu, un tour bonus comptant comme la suite du tour précédent (`gameState._turnBuybackUsed`, posé à `true` dans `applyPrisonerBuybackExecuted`, remis à `false` uniquement à l'entrée d'un véritable nouveau tour dans `home.js`) — auparavant possible à tout moment de la partie et sans limite |
 | `TurnManager.js` | 415 | Gestion du tour courant, tour bonus |
-| `UndoManager.js` | ~700 | Annulation d'actions du tour en cours. **✨ ÉTENDU (Extension Tour)** : `saveTurnStart`/`saveAfterTilePlaced`/`saveDragonMove` copient désormais `gameState.extraState` (deep copy, générique) et `player.towerPieces` en plus des champs déjà existants. `restoreExtraState(source)` restaure `gameState.extraState` génériquement (boucle sur `Object.keys`, sans connaître les sous-clés — voir section extraState) ; appelée par `restoreSnapshot()` (undo tuile/meeple/abbé) et `undoDragonMove()` (undo déplacement dragon — nécessaire car le dragon peut désormais manger un garde de tour). `restoreSnapshot()` réinitialise aussi explicitement `gameState._pendingTowerCapture`/`_pendingReciprocalCheck` (turn-scoped, non couverts par `extraState`). `applyLocally()` appelle un seul `d.renderAllTowersFromState?.()` générique en tête de fonction (avant le `switch` sur le type d'action), qui redessine l'état Tour quel que soit le type d'annulation — plus simple et plus sûr que de traiter chaque branche séparément. `applyRemote()` (invités) fait le même travail de restauration `extraState`/`towerPieces`/`_pending*` avant de déléguer à `applyLocally()` |
+| `UndoManager.js` | ~700 | Annulation d'actions du tour en cours. **✨ ÉTENDU (Extension Tour)** : `saveTurnStart`/`saveAfterTilePlaced`/`saveDragonMove` copient désormais `gameState.extraState` (deep copy, générique) et `player.towerPieces` en plus des champs déjà existants. `restoreExtraState(source)` restaure `gameState.extraState` génériquement (boucle sur `Object.keys`, sans connaître les sous-clés — voir section extraState) ; appelée par `restoreSnapshot()` (undo tuile/meeple/abbé) et `undoDragonMove()` (undo déplacement dragon — nécessaire car le dragon peut désormais manger un garde de tour). `restoreSnapshot()` réinitialise aussi explicitement `gameState._pendingTowerCapture`/`_pendingReciprocalCheck` (turn-scoped, non couverts par `extraState`). `applyLocally()` appelle un seul `d.renderAllTowersFromState?.()` générique en tête de fonction (avant le `switch` sur le type d'action), qui redessine l'état Tour quel que soit le type d'annulation — plus simple et plus sûr que de traiter chaque branche séparément. `applyRemote()` (invités) fait le même travail de restauration `extraState`/`towerPieces`/`_pending*` avant de déléguer à `applyLocally()`. Le rachat de prisonnier n'est volontairement pas concerné par l'undo (non annulable, cf. section Tour) : `_turnBuybackUsed` n'est ni sauvegardé ni restauré par ce fichier |
 | `UnplaceableTileManager.js` | 401 | Gestion des tuiles implaçables |
 | `ZoneMerger.js` | 720 | Fusionne les zones entre tuiles adjacentes |
 | `ZoneRegistry.js` | 201 | Registre central des zones fusionnées |
@@ -301,7 +306,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | `MeepleDisplayUI.js` | 91 | Affichage visuel des meeples posés |
 | `MeepleSelectorUI.js` | 333 | Sélecteur de type de meeple |
 | `ModalUI.js` | 528 | Utilitaires génériques de modales |
-| `ScorePanelUI.js` | ~500 | Panneau des scores (desktop + mobile). Lit `gameState.extraState.prisoners[player.id]`. Sélection de prisonniers (mécanisme générique `enablePrisonerSelection`/`setBuybackHandler`) |
+| `ScorePanelUI.js` | ~500 | Panneau des scores (desktop + mobile). Lit `gameState.extraState.prisoners[player.id]`. Sélection de prisonniers (mécanisme générique `enablePrisonerSelection`/`setBuybackHandler`) — les conditions d'éligibilité effectives (propre tour, une fois par tour) sont posées par le gestionnaire enregistré depuis `TowerUI.setupPrisonerBuyback`, pas par ce fichier |
 | `SlotsUI.js` | 234 | Slots de placement de tuile |
 | `TilePreviewUI.js` | 65 | Aperçu de la tuile en main |
 | `TurnUI.js` | 293 | Affichage tour courant, boutons mobile, messages/toasts |
@@ -461,11 +466,23 @@ Cas particuliers notables dans `Deck.js` :
     incohérent (des deux joueurs) en cas d'annulation ultérieure.
   - Non annulable en tant que tel (l'échange n'a lieu qu'une fois la capture
     déjà verrouillée par la fin du tour) — mais la capture qui le précède l'est.
-- **Rachat de prisonnier** : disponible à tout moment de la partie, coût fixe
-  `PRISONER_BUYBACK_COST` (3 points), transaction directe acheteur → capturant.
-  Désactivé tant qu'un échange automatique est en attente, et tant que la
-  capture concernée est "fraîche" (`gameState._freshCaptures`, vidé à chaque
-  `'turn-changed'`).
+- **Rachat de prisonnier** : règle officielle — "Durant votre tour, vous
+  pouvez également libérer un de vos meeples capturés par un autre joueur" et
+  "Le paiement de rançon pour récupérer un prisonnier ne se fait qu'une fois
+  par tour, même lorsqu'il y a un double tour". Le rachat n'est donc autorisé
+  que **pendant le tour du joueur acheteur** (`_deps.getIsMyTurn()` côté
+  client dans `TowerUI.setupPrisonerBuyback`, `gameState.getCurrentPlayer()?.id
+  === buyerId` côté hôte dans `executePrisonerBuybackHost` — seule source de
+  vérité), et **limité à une seule rançon par tour de jeu**, un tour bonus
+  (bâtisseur) comptant comme la suite du tour précédent
+  (`gameState._turnBuybackUsed`, transitoire non sérialisé, posé à `true` par
+  `applyPrisonerBuybackExecuted` et remis à `false` uniquement à l'entrée d'un
+  véritable nouveau tour — cf. `home.js`, listener `'turn-changed'`, qui ne
+  réinitialise ce flag que si `turnManager.isBonusTurn` est `false` à cet
+  instant). Coût fixe `PRISONER_BUYBACK_COST` (3 points), transaction directe
+  acheteur → capturant. Désactivé tant qu'un échange automatique est en
+  attente, et tant que la capture concernée est "fraîche"
+  (`gameState._freshCaptures`, vidé à chaque `'turn-changed'`).
 - **Undo** : ✨ pleinement pris en charge — pose d'étage, capture, verrouillage
   et déplacement dragon ayant mangé un garde sont tous annulables comme les
   autres actions du tour (granularité "tout-en-un" : annuler après une
@@ -473,14 +490,18 @@ Cas particuliers notables dans `Deck.js` :
   tour, cohérent avec le reste du système d'undo — voir `UndoManager.js`).
   L'échange automatique de prisonniers et le rachat restent hors du système
   d'undo (le premier ne peut de toute façon plus survenir tant que l'action
-  qui le déclenche est encore annulable ; le second n'est pas lié à un tour).
+  qui le déclenche est encore annulable ; le second n'est pas lié à un tour
+  au sens de l'undo, et son unique compteur `_turnBuybackUsed` n'est ni
+  sauvegardé ni restauré par `UndoManager`).
 - **Réseau** : architecture réactive identique aux autres actions (invité →
   requête, hôte → applique et broadcast, y compris echo à l'émetteur).
 - **Reconnexion** : les tours et gardes de verrouillage sont correctement
   redessinés (`ReconnectionManager.applyFullStateSync` →
   `renderAllTowersFromState`).
 - **Scoring** : pas de points directement liés à la Tour — le seul bénéfice
-  est l'avantage stratégique de capturer/neutraliser des meeples adverses.
+  est l'avantage stratégique de capturer/neutraliser des meeples adverses
+  (hormis le coût/gain ponctuel du rachat de prisonnier, comptabilisé à part
+  dans `scoreDetail.buybacks`).
 
 ---
 
@@ -519,7 +540,8 @@ aussi la section `gameState.extraState` en tête de ce document.
 | La fée disparaît du plateau quand le meeple/garde qui la porte est capturé (Tour) ou mangé (Dragon) | `modules/game/TowerUI.js` (`applyCaptureExecuted`), `modules/rules/DragonRules.js` (`_eatMeeplesAt`) — doivent détacher la fée (`fairyState.ownerId = null`, `meepleKey` conservé) et non appeler `gameState.removeFairy()`, cf. `DragonUI.releaseFairyIfDetached` pour le comportement de référence (fermeture de zone) |
 | Une action censée consommer la phase meeple du tour (pose d'étage, verrouillage) laisse un curseur d'action encore cliquable | `modules/game/TowerUI.js` (`applyFloorPlaced`/`applyLockExecuted`, doivent appeler `_deps.hideAllCursors?.()` pour le joueur local) |
 | Bug spécifique à l'échange automatique de prisonniers (y compris timing/annulation) | `modules/game/TowerUI.js` (`executeTowerCaptureHost`, `checkPendingReciprocalExchange`, `_checkAndHandleReciprocalExchange`, `applyPrisonerExchangeResolved`, `applyPrisonerExchangePending`), `modules/rules/TowerRules.js` (`checkReciprocalCapture`), `modules/ui/ScorePanelUI.js`, `modules/core/GameSync.js`/`modules/game/GameSyncCallbacks.js`, `modules/GameState.js` (`_pendingReciprocalCheck`) |
-| Bug spécifique au rachat de prisonnier | `modules/game/TowerUI.js` (`setupPrisonerBuyback`, `executePrisonerBuybackHost`), `modules/rules/TowerConfig.js`, `modules/ui/ScorePanelUI.js`, `modules/game/Scoring.js`/`modules/game/FinalScoresManager.js` |
+| Le rachat de prisonnier est possible hors de son tour, ou plusieurs fois dans le même tour (double tour bâtisseur inclus) | `modules/game/TowerUI.js` (`setupPrisonerBuyback` pour l'UI, `executePrisonerBuybackHost` pour la revalidation autoritaire, `applyPrisonerBuybackExecuted` qui pose `gameState._turnBuybackUsed = true`), `home.js` (listener `eventBus.on('turn-changed', ...)`, doit remettre `_turnBuybackUsed` à `false` uniquement quand `turnManager.isBonusTurn` est `false`), `modules/GameState.js` (déclaration de `_turnBuybackUsed`) |
+| Bug spécifique au rachat de prisonnier (hors timing propre-tour/une-fois-par-tour ci-dessus) | `modules/game/TowerUI.js` (`setupPrisonerBuyback`, `executePrisonerBuybackHost`), `modules/rules/TowerConfig.js`, `modules/ui/ScorePanelUI.js`, `modules/game/Scoring.js`/`modules/game/FinalScoresManager.js` |
 | Bug d'annulation (undo) qui touche l'extension Tour (étage/capture/verrouillage/dragon-mange-garde non restauré) | `modules/game/UndoManager.js` (`restoreExtraState`, `saveTurnStart`/`saveAfterTilePlaced`/`saveDragonMove`, `applyLocally`), `modules/game/TowerUI.js` (`renderAllTowersFromState`), `modules/game/GameModuleInitializer.js` (câblage de la dépendance) |
 | Bug de reconnexion où un état d'extension (Tour ou future) n'apparaît pas chez l'invité reconnecté | `modules/game/ReconnectionManager.js` (`applyFullStateSync`) — vérifier qu'un rendu `renderAllXxxFromState()` est bien appelé pour cette extension, comme pour Dragon/Fée/Tour |
 | Un événement réseau semble appliqué plusieurs fois (état dupliqué), surtout après un retour lobby + nouvelle partie, et seulement côté invité | Section "⚠️ Piège récurrent — `eventBus` singleton" en tête de ce document |

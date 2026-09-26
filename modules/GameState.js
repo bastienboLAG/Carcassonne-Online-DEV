@@ -77,6 +77,18 @@ export class GameState {
         // prisonniers de tours précédents.
         // Forme : [{ holderId, ownerId, type }]
         this._freshCaptures = [];
+
+        // ✅ FIX : une seule rançon (rachat de prisonnier) autorisée par tour de jeu — règle
+        // officielle : "Le paiement de rançon pour récupérer un prisonnier ne se fait qu'une
+        // fois par tour, même lorsqu'il y a un double tour". Un tour bonus (bâtisseur) compte
+        // donc comme la suite du tour précédent : ce flag n'est PAS réinitialisé au passage
+        // vers un tour bonus, seulement au passage vers le tour normal suivant (cf. home.js,
+        // listener 'turn-changed', qui ne réinitialise que si turnManager.isBonusTurn est
+        // false à cet instant). Transitoire, non sérialisé (comme _freshCaptures ci-dessus) :
+        // chaque client le recalcule localement via les événements 'turn-changed' déjà
+        // synchronisés réseau. Voir aussi TowerUI.setupPrisonerBuyback (vérification UI) et
+        // TowerUI.executePrisonerBuybackHost (revalidation côté hôte, seule source de vérité).
+        this._turnBuybackUsed = false;
     }
 
     // ── Dragon ───────────────────────────────────────────────────────────
