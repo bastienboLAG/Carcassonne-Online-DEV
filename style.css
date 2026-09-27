@@ -1714,3 +1714,52 @@ body.prisoner-selection-mode #mobile-player-detail {
     transform: scale(1.15);
     box-shadow: 0 0 10px 3px rgba(255, 215, 0, 0.85);
 }
+
+/* ✨ NOUVEAU — Masquage/mise en avant des panels pendant l'échange automatique de prisonniers
+   (et réutilisable tel quel pour le rachat de prisonnier, qui utilise le même mécanisme de
+   sélection dans ScorePanelUI). Trois classes posées dynamiquement par ScorePanelUI selon le
+   rôle de chaque panel pendant une sélection :
+   - .prisoner-selection-hidden  → panel d'un joueur non concerné, masqué entièrement
+   - .prisoner-selection-target  → panel du joueur qui détient les prisonniers proposés au choix
+   - .prisoner-selection-chooser → panel du joueur qui choisit (desktop uniquement — sur mobile
+                                    un seul panel est visible à la fois, donc ce cas ne se pose pas) */
+
+.player-score-card.prisoner-selection-hidden,
+.mobile-player-card.prisoner-selection-hidden {
+    display: none !important;
+}
+
+/* Panel cible : entièrement visible au-dessus du voile, mais son contenu est masqué par
+   EXCEPTION plutôt que par énumération — tout est caché sauf la ligne des prisonniers
+   (.prison-row), et dans cette ligne tout sauf les prisonniers proposés au choix
+   (.prisoner-selectable). Toute ligne ajoutée par une future extension (marchandises,
+   pièces de tour, ou une ligne encore inconnue) est donc automatiquement masquée sans
+   qu'il faille revenir modifier cette règle. */
+.player-score-card.prisoner-selection-target,
+.mobile-player-detail-card.prisoner-selection-target {
+    position: relative;
+    z-index: 10;
+}
+.player-score-card.prisoner-selection-target .player-meeples-display > *:not(.prison-row),
+.mobile-player-detail-card.prisoner-selection-target .mobile-player-meeples > *:not(.prison-row) {
+    display: none;
+}
+.player-score-card.prisoner-selection-target .prison-row > *:not(.prisoner-selectable),
+.mobile-player-detail-card.prisoner-selection-target .mobile-player-meeples .prison-row > *:not(.prisoner-selectable) {
+    display: none;
+}
+
+/* Panel du joueur qui choisit (desktop uniquement) : reste visible et lisible mais recouvert
+   d'un calque sombre local, pour le distinguer clairement du panel cible sans le masquer. */
+.player-score-card.prisoner-selection-chooser {
+    position: relative;
+    z-index: 10;
+}
+.player-score-card.prisoner-selection-chooser::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    border-radius: 8px;
+    pointer-events: none;
+}

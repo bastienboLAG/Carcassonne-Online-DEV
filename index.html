@@ -433,7 +433,9 @@
     </div>
 
     <!-- ✨ NOUVEAU : Voile gris de sélection de prisonnier (Extension Tour) -->
-    <div id="prisoner-selection-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 900;"></div>
+    <!-- ✅ FIX : opacité montée de 0.7 à 0.9 — le plateau restait trop visible derrière le voile
+         pendant un choix d'échange automatique de prisonniers. -->
+    <div id="prisoner-selection-overlay" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 900;"></div>
 
     <!-- ✨ NOUVEAU : Modale de confirmation de rachat de prisonnier (Extension Tour) -->
     <div id="prisoner-buyback-modal" class="modal" style="display: none;">
