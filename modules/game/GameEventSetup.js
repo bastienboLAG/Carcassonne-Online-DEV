@@ -391,7 +391,12 @@ export class GameEventSetup {
                 playerMeeples:  gameState.players.map(p => ({
                     id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot,
                     hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder, hasPig: p.hasPig,
-                    towerPieces: p.towerPieces // ✨ NOUVEAU
+                    towerPieces: p.towerPieces, // ✨ NOUVEAU
+                    // ✅ FIX : rachat de prisonnier — transmettre aux invités le score et le
+                    // détail "Rachats" DÉJÀ restaurés par undoManager.undo() ci-dessus (même
+                    // raison que turnBuybackUsed juste en dessous), sinon les points gagnés/
+                    // perdus par le rachat annulé restaient acquis côté invités.
+                    score: p.score, buybacks: p.scoreDetail?.buybacks ?? 0
                 })),
                 fairyState:     JSON.parse(JSON.stringify(gameState.fairyState ?? { ownerId: null, meepleKey: null })),
                 dragonPos:      JSON.parse(JSON.stringify(gameState.dragonPos ?? null)),

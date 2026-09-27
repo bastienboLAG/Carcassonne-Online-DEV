@@ -308,7 +308,12 @@ export class GameSyncCallbacks {
                 playerMeeples:  this.gameState.players.map(p => ({
                     id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot,
                     hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder, hasPig: p.hasPig,
-                    towerPieces: p.towerPieces // ✨ NOUVEAU
+                    towerPieces: p.towerPieces, // ✨ NOUVEAU
+                    // ✅ FIX : rachat de prisonnier — même raison que turnBuybackUsed juste en
+                    // dessous : transmettre à l'invité le score et le détail "Rachats" déjà
+                    // restaurés par um.undo() ci-dessus, sinon les points gagnés/perdus par le
+                    // rachat annulé restaient acquis chez l'invité qui a demandé l'annulation.
+                    score: p.score, buybacks: p.scoreDetail?.buybacks ?? 0
                 })),
                 fairyState:     JSON.parse(JSON.stringify(this.gameState.fairyState ?? { ownerId: null, meepleKey: null })),
                 dragonPos:      JSON.parse(JSON.stringify(this.gameState.dragonPos ?? null)),

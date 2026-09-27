@@ -62,7 +62,16 @@ export class UndoManager {
                 hasLargeMeeple: p.hasLargeMeeple,
                 hasBuilder: p.hasBuilder,
                 hasPig:     p.hasPig,
-                towerPieces: p.towerPieces // ✨ NOUVEAU
+                towerPieces: p.towerPieces, // ✨ NOUVEAU
+                // ✅ FIX : rachat de prisonnier — le score (payé par l'acheteur, encaissé par le
+                // capturant) est la seule mutation de score qui se produit DANS la fenêtre
+                // d'annulation d'un tour (toutes les autres, ex: score de zones fermées, ont
+                // déjà lieu après undoManager.reset(), donc jamais annulables). Sans ces deux
+                // champs, annuler une action postérieure à un rachat rétablissait bien le
+                // prisonnier et le compteur "une rançon par tour", mais laissait les points
+                // gagnés/perdus définitivement acquis.
+                score: p.score,
+                buybacks: p.scoreDetail?.buybacks ?? 0
             })),
             lastPlacedTile: this.lastPlacedTileBeforeTurn, // épingle avant ce tour
             fairyState: this.deepCopy(this.gameState.fairyState ?? { ownerId: null, meepleKey: null }),
@@ -120,7 +129,10 @@ export class UndoManager {
                 hasLargeMeeple: p.hasLargeMeeple,
                 hasBuilder: p.hasBuilder,
                 hasPig:     p.hasPig,
-                towerPieces: p.towerPieces // ✨ NOUVEAU
+                towerPieces: p.towerPieces, // ✨ NOUVEAU
+                // ✅ FIX : voir saveTurnStart — même raison (rachat de prisonnier annulable)
+                score: p.score,
+                buybacks: p.scoreDetail?.buybacks ?? 0
             })),
             fairyState: this.deepCopy(this.gameState.fairyState ?? { ownerId: null, meepleKey: null }),
             pendingPortalTile: this.gameState._pendingPortalTile
@@ -172,7 +184,10 @@ export class UndoManager {
                 id: p.id, meeples: p.meeples, hasAbbot: p.hasAbbot,
                 hasLargeMeeple: p.hasLargeMeeple, hasBuilder: p.hasBuilder,
                 hasPig: p.hasPig, hasFairy: p.hasFairy,
-                towerPieces: p.towerPieces // ✨ NOUVEAU
+                towerPieces: p.towerPieces, // ✨ NOUVEAU
+                // ✅ FIX : voir saveTurnStart — même raison (rachat de prisonnier annulable)
+                score: p.score,
+                buybacks: p.scoreDetail?.buybacks ?? 0
             }))
         };
         this.dragonMovePlacedThisTurn = true;
@@ -204,9 +219,19 @@ export class UndoManager {
         this.gameState._turnBuybackUsed = snap.turnBuybackUsed ?? false;
 
         // Restaurer les meeples des joueurs
+        // ✅ FIX : `buybacks` (score.scoreDetail.buybacks) est un champ séparé, pas une
+        // propriété directe du joueur — on l'extrait avant Object.assign pour éviter de
+        // créer un p.buybacks parasite à côté de p.scoreDetail.buybacks. `score` en revanche
+        // est bien une propriété directe et peut passer par Object.assign normalement.
         snap.playerMeeples.forEach(pm => {
             const p = this.gameState.players.find(pl => pl.id === pm.id);
-            if (p) Object.assign(p, pm);
+            if (!p) return;
+            const { buybacks, ...rest } = pm;
+            Object.assign(p, rest);
+            if (buybacks !== undefined) {
+                p.scoreDetail = p.scoreDetail || {};
+                p.scoreDetail.buybacks = buybacks;
+            }
         });
 
         this.dragonMoveSnapshot = null;
@@ -415,6 +440,15 @@ export class UndoManager {
                 if (saved.hasBuilder     !== undefined) player.hasBuilder     = saved.hasBuilder;
                 if (saved.hasPig         !== undefined) player.hasPig         = saved.hasPig;
                 if (saved.towerPieces    !== undefined) player.towerPieces    = saved.towerPieces; // ✨ NOUVEAU
+                // ✅ FIX : rachat de prisonnier — restaurer le score et le détail "Rachats"
+                // (payé par l'acheteur, encaissé par le capturant) exactement comme n'importe
+                // quel autre champ de ce snapshot, sinon les points restent définitivement
+                // acquis/perdus après une annulation qui porte sur une action postérieure.
+                if (saved.score !== undefined) player.score = saved.score;
+                if (saved.buybacks !== undefined) {
+                    player.scoreDetail = player.scoreDetail || {};
+                    player.scoreDetail.buybacks = saved.buybacks;
+                }
             }
         });
     }
@@ -673,6 +707,13 @@ export class UndoManager {
                     player.hasBuilder     = saved.hasBuilder;
                     player.hasPig         = saved.hasPig;
                     if (saved.towerPieces !== undefined) player.towerPieces = saved.towerPieces; // ✨ NOUVEAU
+                    // ✅ FIX : rachat de prisonnier — voir UndoManager.restoreSnapshot, même
+                    // raison, côté invité cette fois (état reçu de l'hôte via postUndoState).
+                    if (saved.score !== undefined) player.score = saved.score;
+                    if (saved.buybacks !== undefined) {
+                        player.scoreDetail = player.scoreDetail || {};
+                        player.scoreDetail.buybacks = saved.buybacks;
+                    }
                 }
             });
             // ✨ NOUVEAU : restaurer extraState (towers/prisoners, générique) et les champs
