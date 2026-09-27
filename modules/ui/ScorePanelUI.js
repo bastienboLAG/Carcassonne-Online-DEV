@@ -17,6 +17,16 @@ import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
  * Utilisé aujourd'hui par l'échange automatique de prisonniers (extension Tour, cf.
  * TowerUI.js), et prévu pour être réutilisé plus tard par le rachat de prisonnier.
  *
+ * ✅ FIX : pendant une sélection, les panels reçoivent désormais un rôle explicite
+ * (classes CSS posées ici, comportement défini dans style.css) :
+ *   - panel du joueur qui DÉTIENT les prisonniers proposés (playerId / cible) → entièrement
+ *     visible au-dessus du voile, mais son contenu est masqué par exception (tout caché sauf
+ *     la ligne des prisonniers, et dans cette ligne tout sauf les prisonniers sélectionnables) ;
+ *   - panel du joueur qui CHOISIT (chooserId, desktop uniquement) → visible mais recouvert
+ *     d'un calque sombre local, pour le distinguer du panel cible ;
+ *   - tous les autres panels → masqués entièrement pendant la sélection (desktop et mobile,
+ *     y compris les cartes fermées de la barre du haut sur mobile).
+ *
  * ✨ NOUVEAU : gameState.prisoners a été déplacé sous gameState.extraState.prisoners
  * (conteneur générique partagé par toutes les extensions à état persistant — voir
  * GameState.js et ARCHITECTURE.md). Seule la lecture dans _buildMeeplesDisplay() ci-dessous
@@ -48,8 +58,11 @@ export class ScorePanelUI {
         // être réutilisé plus tard par le rachat de prisonnier (sans modale ni voile gris dans
         // ce futur cas d'usage — la gestion de ces éléments reste toujours à la charge de
         // l'appelant, ce mécanisme ne fait que rendre des entrées cliquables).
-        // Forme : { playerId, isSelectable(entry), onSelect(entry) } où entry = { type, ownerId },
-        // ou null si aucune sélection en cours.
+        // Forme : { playerId, chooserId, isSelectable(entry), onSelect(entry) } où
+        // entry = { type, ownerId }, ou null si aucune sélection en cours.
+        // ✅ FIX : `chooserId` ajouté — permet à ce fichier de distinguer le panel du joueur qui
+        // choisit (mis en avant mais assombri) de celui de tous les autres joueurs non concernés
+        // (masqués), en plus du panel cible (`playerId`, entièrement visible).
         this._prisonerSelection = null;
 
         // ✨ NOUVEAU : gestionnaire de rachat de prisonnier — PERMANENT (contrairement à
@@ -117,13 +130,21 @@ export class ScorePanelUI {
             if (isActive) card.classList.add(isDragonTurn ? 'active-dragon' : isBonusTurn ? 'active-bonus' : 'active');
             if (isGhost)  card.style.opacity = '0.45';
 
-            // ✨ NOUVEAU : pendant une sélection de prisonnier forcée sur ce joueur, le panel
-            // reste ouvert et ne peut pas être refermé par un clic sur l'en-tête (sinon on
-            // perdrait la possibilité de cliquer les prisonniers sélectionnables affichés dedans).
-            const forcedOpen = this._prisonerSelection?.playerId === player.id;
+            // ✅ FIX : rôle du panel pendant une sélection de prisonnier — cible (détient les
+            // prisonniers proposés), choisisseur (décide lequel récupérer, desktop uniquement),
+            // ou aucun des deux (masqué entièrement). Remplace l'ancien `forcedOpen` qui ne
+            // couvrait que le panel cible.
+            const selection = this._prisonerSelection;
+            const isSelectionTarget  = !!(selection && selection.playerId  === player.id);
+            const isSelectionChooser = !!(selection && selection.chooserId === player.id);
+            const forcedOpen = isSelectionTarget || isSelectionChooser;
+
             // ✨ NOUVEAU : état d'ouverture indépendant par joueur (plusieurs cartes peuvent rester ouvertes)
             const isOpen = forcedOpen || this._desktopOpenPlayerIds.has(player.id);
             if (isOpen) card.classList.add('open');
+            if (isSelectionTarget)  card.classList.add('prisoner-selection-target');
+            if (isSelectionChooser) card.classList.add('prisoner-selection-chooser');
+            if (selection && !isSelectionTarget && !isSelectionChooser) card.classList.add('prisoner-selection-hidden');
             if (!forcedOpen) {
                 card.onclick = () => {
                     if (isOpen) this._desktopOpenPlayerIds.delete(player.id);
@@ -216,10 +237,12 @@ export class ScorePanelUI {
                 : currentPlayer && player.id === currentPlayer.id;
             const isGhost  = player.disconnected || player.kicked;
 
-            // ✨ NOUVEAU : forcedOpen — même logique que desktop, empêche la fermeture pendant
-            // une sélection de prisonnier forcée sur ce joueur. On synchronise aussi
-            // _mobileOpenPlayerId pour que _renderMobileDetail() affiche bien ce joueur.
-            const forcedOpen = this._prisonerSelection?.playerId === player.id;
+            // ✨ NOUVEAU : forcedOpen — sur mobile un seul panel peut être affiché à la fois,
+            // donc seul le panel CIBLE (celui qui détient les prisonniers) est forcé ouvert ;
+            // il n'y a pas de rôle "choisisseur" distinct côté mobile (cf. discussion produit).
+            const selection = this._prisonerSelection;
+            const isSelectionTarget = !!(selection && selection.playerId === player.id);
+            const forcedOpen = isSelectionTarget;
             if (forcedOpen && this._mobileOpenPlayerId !== player.id) this._mobileOpenPlayerId = player.id;
             const isOpen = forcedOpen || this._mobileOpenPlayerId === player.id;
 
@@ -228,6 +251,11 @@ export class ScorePanelUI {
             card.className = 'mobile-player-card' + (isActive ? activeClass : '') + (isOpen ? ' open' : ''); // ✨ NOUVEAU : classe open
             if (isGhost) card.style.opacity = '0.45';
             card.dataset.playerId = player.id;
+
+            // ✅ FIX : pendant une sélection, toutes les cartes de la barre du haut sauf celle
+            // du joueur cible sont masquées (demande explicite : sur mobile un seul panel
+            // possible, donc on cache aussi les cartes fermées des autres joueurs).
+            if (selection && !isSelectionTarget) card.classList.add('prisoner-selection-hidden');
 
             const name = document.createElement('div');
             name.className = 'mobile-player-name';
@@ -291,6 +319,13 @@ export class ScorePanelUI {
 
         const card = document.createElement('div');
         card.className = 'mobile-player-detail-card';
+
+        // ✅ FIX : pendant une sélection de prisonnier ciblant ce joueur, le contenu du détail
+        // doit être masqué par exception (tout caché sauf la ligne des prisonniers, et dans
+        // cette ligne tout sauf les prisonniers sélectionnables) — voir style.css.
+        if (this._prisonerSelection?.playerId === player.id) {
+            card.classList.add('prisoner-selection-target');
+        }
 
         // ✨ NOUVEAU : plus d'en-tête pseudo/pastille ici — déjà visible dans la carte fermée juste au-dessus,
         // la couleur des meeples affichés suffit à identifier de qui il s'agit.
@@ -530,12 +565,21 @@ export class ScorePanelUI {
     // ─────────────────────────────────────────────────────────────
 
     /**
-     * Active la sélection sur le panel du joueur `playerId` : les entrées de sa ligne
-     * "prisonniers" qui satisfont `isSelectable(entry)` (entry = { type, ownerId }) deviennent
-     * cliquables et appellent `onSelect(entry)` au clic.
+     * Active la sélection sur le panel du joueur `playerId` (celui qui DÉTIENT les
+     * prisonniers proposés) : les entrées de sa ligne "prisonniers" qui satisfont
+     * `isSelectable(entry)` (entry = { type, ownerId }) deviennent cliquables et appellent
+     * `onSelect(entry)` au clic.
+     *
+     * @param {string}   params.playerId    — joueur détenteur des prisonniers (panel "cible")
+     * @param {string}   [params.chooserId] — ✅ FIX NOUVEAU : joueur qui choisit (panel mis en
+     *        avant mais assombri sur desktop ; ignoré sur mobile où un seul panel est visible).
+     *        Optionnel pour compatibilité — sans lui, seul le panel cible est mis en avant et
+     *        tous les autres panels (y compris celui du choisisseur) sont masqués.
+     * @param {Function} params.isSelectable
+     * @param {Function} params.onSelect
      */
-    enablePrisonerSelection({ playerId, isSelectable, onSelect }) {
-        this._prisonerSelection = { playerId, isSelectable, onSelect };
+    enablePrisonerSelection({ playerId, chooserId = null, isSelectable, onSelect }) {
+        this._prisonerSelection = { playerId, chooserId, isSelectable, onSelect };
         document.body.classList.add('prisoner-selection-mode');
         this.update(this._isBonusTurn, this._isDragonTurn);
     }

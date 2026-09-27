@@ -1098,6 +1098,12 @@ function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenT
  * ✨ Échange automatique de prisonniers
  * Ouvre le voile gris + force l'ouverture du panel du joueur adverse concerné, en rendant
  * sélectionnables uniquement ses prisonniers appartenant au joueur qui doit choisir.
+ *
+ * ✅ FIX : transmet désormais `chooserId` à ScorePanelUI.enablePrisonerSelection(), en plus
+ * de `playerId` (le détenteur/cible, opponentId). ScorePanelUI utilise ce second identifiant
+ * pour donner au panel du choisisseur un rôle visuel distinct (mis en avant au-dessus du
+ * voile mais assombri par un calque local, sur desktop) plutôt que de le traiter comme un
+ * panel non concerné (qui serait alors masqué comme tous les autres joueurs).
  * @private
  */
 function _openPrisonerSelectionUI(opponentId, chooserId, availableTypes) {
@@ -1110,6 +1116,7 @@ function _openPrisonerSelectionUI(opponentId, chooserId, availableTypes) {
     scorePanelUI.forceOpenPlayerPanel(opponentId);
     scorePanelUI.enablePrisonerSelection({
         playerId: opponentId,
+        chooserId, // ✅ FIX : NOUVEAU — voir commentaire de fonction ci-dessus
         isSelectable: (entry) => entry.ownerId === chooserId && availableTypes.includes(entry.type),
         onSelect: (entry) => handlePrisonerChoiceConfirm(entry.type),
     });
