@@ -1746,7 +1746,7 @@ body.prisoner-selection-mode #mobile-player-detail {
     content: '';
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.9);
+    background: rgba(0, 0, 0, 0.5);
     border-radius: 8px;
     pointer-events: none;
     z-index: 5;
