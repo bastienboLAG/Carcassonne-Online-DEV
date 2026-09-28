@@ -1729,24 +1729,35 @@ body.prisoner-selection-mode #mobile-player-detail {
     display: none !important;
 }
 
-/* Panel cible : entièrement visible au-dessus du voile, mais son contenu est masqué par
-   EXCEPTION plutôt que par énumération — tout est caché sauf la ligne des prisonniers
-   (.prison-row), et dans cette ligne tout sauf les prisonniers proposés au choix
-   (.prisoner-selectable). Toute ligne ajoutée par une future extension (marchandises,
-   pièces de tour, ou une ligne encore inconnue) est donc automatiquement masquée sans
-   qu'il faille revenir modifier cette règle. */
+/* Panel cible : garde sa mise en page et son contenu STRICTEMENT identiques (rien n'est masqué
+   ni déplacé). Un calque sombre (0.9, comme le voile plein écran) recouvre tout le panel —
+   nom, score, meeples, prisonniers non concernés — et seuls les prisonniers proposés au choix
+   (.prisoner-selectable) sont remontés au-dessus de ce calque, donc nets et cliquables : c'est
+   le "trou" dans le calque. Toute future ligne ajoutée au panel est automatiquement recouverte. */
 .player-score-card.prisoner-selection-target,
+.mobile-player-card.prisoner-selection-target,
 .mobile-player-detail-card.prisoner-selection-target {
     position: relative;
     z-index: 10;
 }
-.player-score-card.prisoner-selection-target .player-meeples-display > *:not(.prison-row),
-.mobile-player-detail-card.prisoner-selection-target .mobile-player-meeples > *:not(.prison-row) {
-    display: none;
+.player-score-card.prisoner-selection-target::after,
+.mobile-player-card.prisoner-selection-target::after,
+.mobile-player-detail-card.prisoner-selection-target::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.9);
+    border-radius: 8px;
+    pointer-events: none;
+    z-index: 5;
 }
-.player-score-card.prisoner-selection-target .prison-row > *:not(.prisoner-selectable),
-.mobile-player-detail-card.prisoner-selection-target .mobile-player-meeples .prison-row > *:not(.prisoner-selectable) {
-    display: none;
+.mobile-player-detail-card.prisoner-selection-target::after {
+    border-radius: 10px;
+}
+.player-score-card.prisoner-selection-target .prisoner-selectable,
+.mobile-player-detail-card.prisoner-selection-target .prisoner-selectable {
+    position: relative;
+    z-index: 10;
 }
 
 /* Panel du joueur qui choisit (desktop uniquement) : reste visible et lisible mais recouvert

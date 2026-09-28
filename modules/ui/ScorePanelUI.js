@@ -19,9 +19,9 @@ import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
  *
  * ✅ FIX : pendant une sélection, les panels reçoivent désormais un rôle explicite
  * (classes CSS posées ici, comportement défini dans style.css) :
- *   - panel du joueur qui DÉTIENT les prisonniers proposés (playerId / cible) → entièrement
- *     visible au-dessus du voile, mais son contenu est masqué par exception (tout caché sauf
- *     la ligne des prisonniers, et dans cette ligne tout sauf les prisonniers sélectionnables) ;
+ *   - panel du joueur qui DÉTIENT les prisonniers proposés (playerId / cible) → visible
+ *     au-dessus du voile, mise en page intacte, recouvert d'un calque sombre local (0.9) SAUF
+ *     les prisonniers sélectionnables qui restent au-dessus du calque (cliquables) ;
  *   - panel du joueur qui CHOISIT (chooserId, desktop uniquement) → visible mais recouvert
  *     d'un calque sombre local, pour le distinguer du panel cible ;
  *   - tous les autres panels → masqués entièrement pendant la sélection (desktop et mobile,
@@ -256,6 +256,8 @@ export class ScorePanelUI {
             // du joueur cible sont masquées (demande explicite : sur mobile un seul panel
             // possible, donc on cache aussi les cartes fermées des autres joueurs).
             if (selection && !isSelectionTarget) card.classList.add('prisoner-selection-hidden');
+            // ✅ FIX : la carte fermée du joueur cible (nom + score) est elle aussi recouverte par le calque sombre
+            if (isSelectionTarget) card.classList.add('prisoner-selection-target');
 
             const name = document.createElement('div');
             name.className = 'mobile-player-name';
@@ -320,9 +322,8 @@ export class ScorePanelUI {
         const card = document.createElement('div');
         card.className = 'mobile-player-detail-card';
 
-        // ✅ FIX : pendant une sélection de prisonnier ciblant ce joueur, le contenu du détail
-        // doit être masqué par exception (tout caché sauf la ligne des prisonniers, et dans
-        // cette ligne tout sauf les prisonniers sélectionnables) — voir style.css.
+        // ✅ FIX : pendant une sélection ciblant ce joueur, le détail reçoit le calque sombre local
+        // (prisonniers sélectionnables laissés au-dessus) — voir style.css.
         if (this._prisonerSelection?.playerId === player.id) {
             card.classList.add('prisoner-selection-target');
         }

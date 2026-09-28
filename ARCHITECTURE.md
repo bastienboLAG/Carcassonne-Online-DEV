@@ -195,7 +195,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
   `forceOpenPlayerPanel()` (voir "Sélection de prisonniers" dans le tableau
   `modules/ui/` plus bas) plutôt que d'inventer un nouveau mécanisme — le
   masquage/mise en avant des panels (voile assombri, panel cible entièrement
-  visible avec masquage par exception, panel du choisisseur assombri
+  visible sous calque sombre sauf prisonniers sélectionnables, panel du choisisseur assombri
   localement sur desktop, autres panels masqués) est déjà générique et ne
   demande aucune modification pour une nouvelle ligne de contenu dans le
   panel (cf. règles CSS `.prisoner-selection-target`/`.prisoner-selection-chooser`/
@@ -318,7 +318,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | `MeepleDisplayUI.js` | 91 | Affichage visuel des meeples posés |
 | `MeepleSelectorUI.js` | 333 | Sélecteur de type de meeple |
 | `ModalUI.js` | 528 | Utilitaires génériques de modales |
-| `ScorePanelUI.js` | ~530 | Panneau des scores (desktop + mobile). Lit `gameState.extraState.prisoners[player.id]`. **Sélection de prisonniers** (mécanisme générique `enablePrisonerSelection`/`forceOpenPlayerPanel`/`setBuybackHandler`) — les conditions d'éligibilité effectives (propre tour, une fois par tour, etc.) sont posées par le gestionnaire enregistré depuis `TowerUI.setupPrisonerBuyback`/`_openPrisonerSelectionUI`, pas par ce fichier. **✅ FIX** : `enablePrisonerSelection({ playerId, chooserId, isSelectable, onSelect })` accepte désormais un `chooserId` optionnel en plus de `playerId` (le détenteur/cible). Pendant une sélection active, chaque panel reçoit une classe CSS selon son rôle — posée par `_updateDesktop`/`_updateMobile`, comportement défini dans `style.css` : `.prisoner-selection-target` (panel de `playerId`, entièrement visible au-dessus du voile, contenu masqué par exception — tout caché sauf `.prison-row`, et dans cette ligne tout sauf `.prisoner-selectable` — pour que toute future ligne ajoutée par une extension soit automatiquement masquée sans modification de ce fichier), `.prisoner-selection-chooser` (panel de `chooserId`, desktop uniquement, visible mais assombri par un calque local), `.prisoner-selection-hidden` (tous les autres panels, desktop ET mobile — y compris les cartes fermées de la barre du haut sur mobile). Sur mobile, un seul panel étant affichable à la fois, seul le rôle "cible" s'applique (pas de rôle "choisisseur" distinct) |
+| `ScorePanelUI.js` | ~530 | Panneau des scores (desktop + mobile). Lit `gameState.extraState.prisoners[player.id]`. **Sélection de prisonniers** (mécanisme générique `enablePrisonerSelection`/`forceOpenPlayerPanel`/`setBuybackHandler`) — les conditions d'éligibilité effectives (propre tour, une fois par tour, etc.) sont posées par le gestionnaire enregistré depuis `TowerUI.setupPrisonerBuyback`/`_openPrisonerSelectionUI`, pas par ce fichier. **✅ FIX** : `enablePrisonerSelection({ playerId, chooserId, isSelectable, onSelect })` accepte désormais un `chooserId` optionnel en plus de `playerId` (le détenteur/cible). Pendant une sélection active, chaque panel reçoit une classe CSS selon son rôle — posée par `_updateDesktop`/`_updateMobile`, comportement défini dans `style.css` : `.prisoner-selection-target` (panel de `playerId`, mise en page intacte, recouvert intégralement d'un calque sombre `::after` à 0.9 — nom, score, meeples, prisonniers non concernés — SAUF les `.prisoner-selectable` remontés au-dessus du calque (z-index) ; toute future ligne ajoutée par une extension est automatiquement recouverte sans modification. Sur mobile, la carte fermée de la barre du haut et le détail reçoivent tous deux ce calque), `.prisoner-selection-chooser` (panel de `chooserId`, desktop uniquement, visible mais assombri par un calque local), `.prisoner-selection-hidden` (tous les autres panels, desktop ET mobile — y compris les cartes fermées de la barre du haut sur mobile). Sur mobile, un seul panel étant affichable à la fois, seul le rôle "cible" s'applique (pas de rôle "choisisseur" distinct) |
 | `SlotsUI.js` | 234 | Slots de placement de tuile |
 | `TilePreviewUI.js` | 65 | Aperçu de la tuile en main |
 | `TurnUI.js` | 293 | Affichage tour courant, boutons mobile, messages/toasts |
@@ -485,9 +485,9 @@ Cas particuliers notables dans `Deck.js` :
     proposés). `ScorePanelUI` donne alors à chaque panel un rôle visuel
     explicite pendant la sélection (voir `modules/ui/ScorePanelUI.js` et
     `style.css`) : le panel du détenteur est entièrement visible au-dessus
-    du voile (assombri à `rgba(0,0,0,0.9)`, anciennement 0.7) avec son
-    contenu masqué par exception (tout caché sauf ses prisonniers
-    sélectionnables) ; le panel du choisisseur reste visible mais assombri
+    du voile (assombri à `rgba(0,0,0,0.9)`, anciennement 0.7) avec sa
+    mise en page intacte, recouvert d'un calque sombre local sauf ses prisonniers
+    sélectionnables ; le panel du choisisseur reste visible mais assombri
     localement (desktop uniquement) ; tous les autres panels sont masqués
     (desktop et mobile, y compris les cartes fermées de la barre du haut sur
     mobile). Auparavant, tous les panels des joueurs passaient au-dessus du
