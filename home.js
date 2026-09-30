@@ -30,6 +30,12 @@ import {
 import {
     initTowerUI, clearTowerCursors, checkPendingReciprocalExchange,
     renderAllTowersFromState, // ✨ NOUVEAU — redessine towers/gardes après undo ou reconnexion
+    // ✅ FIX NOUVEAU — blocage de l'échange automatique de prisonniers pendant qu'un choix
+    // est en attente : résolution automatique à l'exclusion, remap d'identité à la
+    // reconnexion, réaffichage de la modale après un reload de page.
+    resolvePendingPrisonerExchangeForPlayer,
+    remapPendingPrisonerExchangeAndPrisoners,
+    restorePendingPrisonerExchangeUI,
 } from './modules/game/TowerUI.js';
 import { TowerRules } from './modules/rules/TowerRules.js'; // ✨ NOUVEAU (import direct non utilisé ici mais gardé pour clarté — l'instanciation réelle se fait dans GameModuleInitializer)
 import {
@@ -1306,6 +1312,9 @@ function _makeStarter() {
             afficherToast,
             onGameSyncInit:          () => { if (gameSync) gameSync.init(); },
             onReturnToInitialLobby:  () => returnToInitialLobby(),
+            // ✅ FIX NOUVEAU — résout automatiquement (prisonnier le plus ancien) un échange
+            // de prisonniers en attente si le joueur exclu est celui qui devait choisir.
+            resolvePendingPrisonerExchange: (peerId) => resolvePendingPrisonerExchangeForPlayer(peerId),
         }),
         // deps pour reconnectionManager.initStateHandlers
         getStateHandlerDeps: () => ({
@@ -1335,6 +1344,9 @@ function _makeStarter() {
             startGameTimerFrom,
             updateTurnDisplay,
             renderAllTowersFromState, // ✨ NOUVEAU — corrige le rendu des tours manquant à la reconnexion
+            // ✅ FIX NOUVEAU — réaffiche la modale d'échange de prisonnier après un
+            // full-state-sync si un choix était en attente au moment du rechargement.
+            restorePendingPrisonerExchangeUI,
         }),
         // deps pour reconnectionManager.initInGameNetworkHandler
         getInGameNetworkDeps: () => ({
@@ -1360,6 +1372,9 @@ function _makeStarter() {
             startHeartbeat:             (cb) => _startHeartbeat(cb),
             startAutoReconnect:          () => _startAutoReconnect(),
             excludeDisconnectedPlayer:   (name) => _excludeDisconnectedPlayer(name),
+            // ✅ FIX NOUVEAU — remap de l'identité réseau (CAS 3 : même joueur qui
+            // reprend son identité) dans l'état de l'échange automatique de prisonniers.
+            remapPendingPrisonerExchange: (oldId, newId) => remapPendingPrisonerExchangeAndPrisoners(oldId, newId),
         }),
     });
 }

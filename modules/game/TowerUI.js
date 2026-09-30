@@ -886,6 +886,21 @@ export function applyCaptureExecuted(meepleKey, capturingPlayerId, selfCapture, 
 // que la capture qui déclenche potentiellement l'échange n'est plus annulable au moment
 // où gameState.extraState.prisoners est muté pour les DEUX joueurs (voir
 // executeTowerCaptureHost pour le détail du raisonnement).
+//
+// ✅ FIX — Blocage tant que le choix n'est pas fait : comme la vérification n'a lieu
+// qu'après la fin du tour du capturant, le tour suivant démarre AVANT que le joueur
+// concerné (X) n'ait choisi lequel de ses meeples récupérer, si plusieurs types sont
+// possibles (applyPrisonerExchangePending). Sans blocage, le joueur suivant pouvait jouer
+// (et même déclencher une nouvelle capture/réciprocité) pendant que le premier échange
+// restait en suspens, menant à un état incohérent. La modale d'échange
+// (showPrisonerExchangeModal) est donc désormais non-fermable pour tout le monde SAUF le
+// choisisseur tant qu'aucun chosenType n'est fourni — elle bloque de fait toute l'UI de
+// jeu (via le voile #prisoner-selection-overlay pour le panel adverse, et simplement en
+// empêchant de fermer la modale pour tous). Deux angles morts restent gérés séparément :
+//   - vraie déconnexion/exclusion du choisisseur → resolvePendingPrisonerExchangeForPlayer
+//     résout automatiquement avec le prisonnier le plus ancien (voir plus bas) ;
+//   - reload de page (perte de l'état JS local) → restorePendingPrisonerExchangeUI, réaffiché
+//     après un full-state-sync qui transporte désormais _pendingPrisonerExchange.
 
 /**
  * ✨ [HÔTE] Point d'entrée appelé à la fin du tour du capturant (au même point que
@@ -983,8 +998,8 @@ export function applyPrisonerExchangeResolved(opponentId, chooserId, chosenType,
  * ✨ Échange automatique de prisonniers
  * Affiche l'état "en attente de choix" de façon identique côté hôte ET invités : pose
  * gameState._pendingPrisonerExchange (transitoire, non sérialisé) et ouvre la modale
- * adaptée au rôle du joueur local (bouton "Choisir" pour le joueur concerné, "Fermer"
- * pour tous les autres).
+ * adaptée au rôle du joueur local (bouton "Choisir" pour le joueur concerné, aucun bouton
+ * — modale non fermable — pour tous les autres, cf. showPrisonerExchangeModal).
  * @param {string} [freshlyCapturedType] — conservé dans _pendingPrisonerExchange
  *        pour être retransmis à applyPrisonerExchangeResolved une fois le choix fait
  *        (cf. executePrisonerChoiceHost).
@@ -1008,6 +1023,76 @@ export function executePrisonerChoiceHost(chosenType, playerId) {
 
     applyPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType, pending.freshlyCapturedType);
     if (sync()) sync().syncPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType, pending.freshlyCapturedType);
+}
+
+/**
+ * ✅ FIX — Blocage pendant l'échange automatique : si le joueur qui doit choisir se
+ * déconnecte réellement (exclusion via ReconnectionManager.excludeDisconnectedPlayer,
+ * PAS une simple pause en attente de reconnexion), résout l'échange à sa place en
+ * récupérant automatiquement son prisonnier le plus ancien. `availableTypes[0]`
+ * correspond déjà à ce prisonnier : TowerRules.checkReciprocalCapture construit ce
+ * tableau par filter()+Set() sur un tableau alimenté par .push() au fil des captures
+ * (cf. applyCaptureExecuted), donc l'ordre chronologique (le plus ancien en premier) est
+ * préservé sans tri supplémentaire à ajouter ici.
+ * Ne fait rien si aucun échange n'est en attente, ou si le joueur exclu n'est pas celui
+ * qui doit choisir (il peut être exclu pendant que quelqu'un d'autre choisit, sans lien
+ * avec cet échange).
+ */
+export function resolvePendingPrisonerExchangeForPlayer(disconnectedPlayerId) {
+    const gameState = gs();
+    const pending = gameState._pendingPrisonerExchange;
+    if (!pending || pending.chooserId !== disconnectedPlayerId) return;
+
+    const chosenType = pending.availableTypes[0];
+    applyPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType, pending.freshlyCapturedType);
+    if (sync()) sync().syncPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType, pending.freshlyCapturedType);
+}
+
+/**
+ * ✅ FIX — Reconnexion (CAS 3, même joueur qui reprend son identité avec un nouveau
+ * playerId réseau) : remappe toutes les références à l'ancien id dans l'état de l'échange
+ * automatique de prisonniers, exactement comme placedMeeples[].playerId est déjà remappé
+ * par ailleurs (cf. ReconnectionManager.initInGameNetworkHandler, CAS 3). Sans ce remap,
+ * un choisisseur qui recharge sa page (nouveau playerId) pendant que son choix est en
+ * attente ne se reconnaîtrait plus comme "le choisisseur" (chooserId pointant vers son
+ * ancien id) et resterait bloqué sans bouton, comme tous les autres — l'échange ne
+ * pourrait alors plus jamais être résolu.
+ * Ne touche volontairement PAS extraState.towers.lockedBy (même catégorie de problème
+ * mais périmètre plus large, hors de cette demande — cf. ARCHITECTURE.md, limite connue).
+ */
+export function remapPendingPrisonerExchangeAndPrisoners(oldPeerId, newPeerId) {
+    const gameState = gs();
+
+    // extraState.prisoners : clé = détenteur (capturant), entry.ownerId = capturé (propriétaire d'origine)
+    if (gameState.extraState.prisoners[oldPeerId]) {
+        gameState.extraState.prisoners[newPeerId] = gameState.extraState.prisoners[oldPeerId];
+        delete gameState.extraState.prisoners[oldPeerId];
+    }
+    Object.values(gameState.extraState.prisoners).forEach(list => {
+        list.forEach(entry => { if (entry.ownerId === oldPeerId) entry.ownerId = newPeerId; });
+    });
+
+    // Échange en attente de choix
+    if (gameState._pendingPrisonerExchange) {
+        const p = gameState._pendingPrisonerExchange;
+        if (p.chooserId  === oldPeerId) p.chooserId  = newPeerId;
+        if (p.opponentId === oldPeerId) p.opponentId = newPeerId;
+    }
+
+    // Vérification de réciprocité pas encore résolue (entre la capture et la fin du tour)
+    if (gameState._pendingReciprocalCheck) {
+        const c = gameState._pendingReciprocalCheck;
+        if (c.capturingPlayerId === oldPeerId) c.capturingPlayerId = newPeerId;
+        if (c.capturedOwnerId   === oldPeerId) c.capturedOwnerId   = newPeerId;
+    }
+
+    // Captures du tour en cours pas encore validées (bloquent temporairement le rachat)
+    if (gameState._freshCaptures) {
+        gameState._freshCaptures.forEach(c => {
+            if (c.holderId === oldPeerId) c.holderId = newPeerId;
+            if (c.ownerId  === oldPeerId) c.ownerId  = newPeerId;
+        });
+    }
 }
 
 /**
@@ -1054,7 +1139,13 @@ function _meepleLabel(type) {
  *   - chosenType fourni : échange déjà résolu, message informatif, bouton "Fermer" pour tous.
  *   - needsChoice=true (uniquement chez le joueur qui doit choisir) : bouton "Choisir".
  *   - needsChoice=false sans chosenType (les autres joueurs pendant que quelqu'un choisit) :
- *     bouton "Fermer".
+ *     AUCUN bouton — modale non fermable.
+ * ✅ FIX : auparavant, les joueurs non concernés avaient un bouton "Fermer" alors que
+ * l'échange n'était pas encore résolu, ce qui leur permettait de fermer la modale et de
+ * continuer à jouer (le tour suivant démarre bien avant la résolution, cf. section plus
+ * haut) — l'échange restait alors en suspens indéfiniment côté jeu. Le bouton "Fermer"
+ * n'apparaît désormais que lorsque chosenType est fourni (échange réellement résolu, auto
+ * ou après un choix).
  * ✅ FIX : le texte ne décrivait jusqu'ici qu'un seul sens de l'échange (X récupère chez Y),
  * jamais le retour symétrique et systématique du meeple que X vient tout juste de capturer
  * chez Y (freshlyCapturedType) — pourtant bien appliqué (cf. applyPrisonerExchangeResolved).
@@ -1079,11 +1170,12 @@ function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenT
     if (chosenType) {
         text.textContent = `Échange de prisonniers : ${chooserName} récupère son ${_meepleLabel(chosenType)} auprès de ${opponentName}${freshPart}.`;
     } else {
-        text.textContent = `Échange de prisonniers : ${chooserName} doit choisir lequel de ses meeples récupérer auprès de ${opponentName}${freshPart}.`;
+        text.textContent = `Échange de prisonniers : ${chooserName} doit choisir lequel de ses meeples récupérer auprès de ${opponentName}${freshPart}. La partie reprendra une fois son choix fait.`;
     }
 
+    // ✅ FIX : voir commentaire de fonction — "Fermer" uniquement une fois l'échange résolu
     chooseBtn.style.display = needsChoice ? '' : 'none';
-    closeBtn.style.display  = needsChoice ? 'none' : '';
+    closeBtn.style.display  = chosenType ? '' : 'none';
 
     chooseBtn.onclick = () => {
         modal.style.display = 'none';
@@ -1092,6 +1184,28 @@ function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenT
     closeBtn.onclick = () => { modal.style.display = 'none'; };
 
     modal.style.display = 'flex';
+}
+
+/**
+ * ✅ FIX — Reconnexion après un rechargement de page pendant qu'un échange est en attente :
+ * gameState._pendingPrisonerExchange est transitoire (non sérialisé par GameState.serialize),
+ * donc perdu localement par un client qui recharge sa page. GameSync.syncFullState le
+ * retransmet désormais explicitement ; cette fonction réaffiche la modale dans le bon rôle
+ * une fois l'état restauré par ReconnectionManager.applyFullStateSync. Ne fait rien si
+ * aucun échange n'est en attente au moment de la resynchronisation (déjà résolu ou exclu
+ * entre-temps par l'hôte).
+ */
+export function restorePendingPrisonerExchangeUI() {
+    const pending = gs()._pendingPrisonerExchange;
+    if (!pending) return;
+    const isChooser = pending.chooserId === mp().playerId;
+    showPrisonerExchangeModal({
+        needsChoice: isChooser,
+        chooserId: pending.chooserId,
+        opponentId: pending.opponentId,
+        availableTypes: pending.availableTypes,
+        freshlyCapturedType: pending.freshlyCapturedType,
+    });
 }
 
 /**

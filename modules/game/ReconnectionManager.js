@@ -24,6 +24,9 @@ export class ReconnectionManager {
      * @param {Function} deps.buildPlayersForBroadcast — () => players[]
      * @param {Function} deps.afficherToast      — (msg, type?) => void
      * @param {Function} deps.onGameSyncInit     — () => void  (rebrancher gameSync après reconnexion)
+     * @param {Function} [deps.resolvePendingPrisonerExchange] — ✅ FIX NOUVEAU — (peerId) => void,
+     *        résout automatiquement un échange de prisonniers en attente si le joueur exclu
+     *        est celui qui devait choisir (cf. TowerUI.resolvePendingPrisonerExchangeForPlayer).
      */
     constructor(deps) {
         this.multiplayer             = deps.multiplayer;
@@ -41,6 +44,8 @@ export class ReconnectionManager {
         this._afficherToast          = deps.afficherToast;
         this._onGameSyncInit         = deps.onGameSyncInit;
         this._onReturnToInitialLobby = deps.onReturnToInitialLobby ?? null;
+        // ✅ FIX NOUVEAU — voir doc du constructeur ci-dessus
+        this._resolvePendingPrisonerExchange = deps.resolvePendingPrisonerExchange ?? null;
 
         this.gamePaused         = false;
         this.pauseTimerInterval = null;
@@ -85,6 +90,14 @@ export class ReconnectionManager {
                 const wasCurrentPlayer  = (idx === gameState.currentPlayerIndex);
                 const peerId            = gameState.players[idx].id;
                 const isSpectatorPlayer = gameState.players[idx]?.color === 'spectator';
+
+                // ✅ FIX NOUVEAU : si le joueur exclu est celui qui devait choisir un
+                // prisonnier à récupérer (échange automatique en attente), résoudre
+                // l'échange à sa place AVANT toute mutation de gameState.players ci-dessous
+                // — sinon plus personne n'aurait de moyen de débloquer cet échange une fois
+                // ce joueur retiré de la partie (cf. TowerUI.resolvePendingPrisonerExchangeForPlayer,
+                // qui applique le prisonnier le plus ancien automatiquement).
+                this._resolvePendingPrisonerExchange?.(peerId);
 
                 if (isSpectatorPlayer) {
                     gameState.players.splice(idx, 1);
@@ -351,6 +364,12 @@ export class ReconnectionManager {
 
         gameState.deserialize(data.gameState);
 
+        // ✅ FIX NOUVEAU : gameState._pendingPrisonerExchange est transitoire, absent de
+        // gameState.deserialize() (non sérialisé, cf. GameState.js). Un client qui recharge
+        // sa page pendant qu'un choix d'échange automatique est en attente perdait cet état
+        // localement ; GameSync.syncFullState le retransmet désormais explicitement.
+        gameState._pendingPrisonerExchange = data.pendingPrisonerExchange ?? null;
+
         deck.tiles        = data.deck.tiles;
         deck.currentIndex = data.deck.currentIndex;
         deck.totalTiles   = data.deck.totalTiles;
@@ -457,6 +476,12 @@ export class ReconnectionManager {
             });
         }
         d.updateTurnDisplay();
+
+        // ✅ FIX NOUVEAU : réafficher la modale d'échange de prisonnier si un choix était en
+        // attente au moment où ce client a rechargé sa page — gameState._pendingPrisonerExchange
+        // vient d'être restauré juste au-dessus depuis data.pendingPrisonerExchange. Ne fait
+        // rien si aucun échange n'est en attente (résolu ou joueur exclu entre-temps).
+        d.restorePendingPrisonerExchangeUI?.();
     }
     /**
      * Installer les handlers réseau en cours de partie :
@@ -597,6 +622,12 @@ export class ReconnectionManager {
                         if (gsp2) d.getPlayers().push({ id: from, name: gsp2.name, color: gsp2.color, isHost: false });
                     }
                     Object.values(d.getPlacedMeeples()).forEach(m => { if (m.playerId === oldPeerId) m.playerId = from; });
+                    // ✅ FIX NOUVEAU : même remap que pour placedMeeples ci-dessus, mais pour
+                    // l'état de l'échange automatique de prisonniers (extraState.prisoners,
+                    // _pendingPrisonerExchange, etc.) — sans lui, un choisisseur qui recharge
+                    // sa page en plein choix ne se reconnaîtrait plus comme tel après
+                    // reconnexion (nouveau playerId réseau attribué par PeerJS).
+                    d.remapPendingPrisonerExchange?.(oldPeerId, from);
                     const hm = d.getHeartbeatManager();
                     if (hm) { hm._connectedPeers = multiplayer._connectedPeers; hm._lastPong[from] = Date.now(); hm._timedOut.delete(oldPeerId); delete hm._lastPong[oldPeerId]; }
                     this.sendFullStateTo(from);

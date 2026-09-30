@@ -415,7 +415,14 @@ export class GameSync {
             tuileEnMain:  tuileEnMain ? { id: tuileEnMain.id, rotation: tuileEnMain.rotation } : null,
             tuilePosee:   tuilePosee ?? false,
             gameConfig,
-            timerElapsed: timerElapsed ?? 0
+            timerElapsed: timerElapsed ?? 0,
+            // ✅ FIX : gameState._pendingPrisonerExchange est transitoire, donc absent de
+            // gameState.serialize() — un client qui recharge sa page pendant qu'un choix
+            // d'échange automatique est en attente perdait cet état localement. Sans le
+            // retransmettre ici, il ne saurait plus qu'un choix est en attente (cf.
+            // TowerUI.restorePendingPrisonerExchangeUI, qui consomme ce champ après un
+            // full-state-sync).
+            pendingPrisonerExchange: gameState._pendingPrisonerExchange ?? null
         });
     }
 
