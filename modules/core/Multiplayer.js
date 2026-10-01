@@ -1,5 +1,18 @@
 import Peer from 'https://esm.sh/peerjs@1.5.2';
 
+// ✨ NOUVEAU : options PeerJS factorisées (auparavant dupliquées dans createGame/joinGame)
+function _peerOptions() {
+    return {
+        config: {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+            ]
+        }
+    };
+}
+
 export class Multiplayer {
     constructor() {
         this.peer = null;
@@ -15,7 +28,95 @@ export class Multiplayer {
         this.onHeartbeatPing = null; // Callback quand on reçoit un ping
         this.onHeartbeatPong = null; // Callback quand on reçoit un pong
         this.onHostDisconnected = null; // Callback quand l'hôte se déconnecte (côté invité)
+
+        // ✨ NOUVEAU : id réseau de l'hôte auquel cet invité est (ou tente d'être) connecté.
+        // Sert à ne déclencher onHostDisconnected que pour la fermeture de CETTE connexion
+        // (et pas pour celle d'une ancienne connexion périmée après un changement d'hôte).
+        this.hostPeerId = null;
+        this._listening = false; // ✨ NOUVEAU : l'écoute des connexions entrantes est-elle active ?
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // Helpers PeerJS
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * ✨ NOUVEAU : code à 6 chiffres (même format que le code de partie de l'hôte).
+     * Les invités s'enregistrent eux aussi sous un code à 6 chiffres : si l'un d'eux devient
+     * hôte après une perte de l'hôte, son id réseau EST directement le nouveau code de partie.
+     */
+    _randomCode() {
+        return String(Math.floor(100000 + Math.random() * 900000));
+    }
+
+    /**
+     * ✨ NOUVEAU : ouvre un Peer avec l'id donné (ou aléatoire PeerJS si null).
+     * Résout avec le peer ouvert, rejette (et détruit le peer) en cas d'erreur avant ouverture.
+     */
+    _openPeer(id) {
+        return new Promise((resolve, reject) => {
+            const peer = id ? new Peer(id, _peerOptions()) : new Peer(undefined, _peerOptions());
+            const onOpen = () => { peer.off('error', onError); resolve(peer); };
+            const onError = (err) => {
+                peer.off('open', onOpen);
+                try { peer.destroy(); } catch (e) {}
+                reject(err);
+            };
+            peer.once('open', onOpen);
+            peer.once('error', onError);
+        });
+    }
+
+    /**
+     * ✨ NOUVEAU : ouvre un peer invité avec un code à 6 chiffres, en réessayant avec un autre
+     * code si celui-ci est déjà pris. `preferredId` (optionnel) est tenté en premier, pour
+     * qu'un invité qui se reconnecte conserve le même id réseau.
+     */
+    async _openGuestPeer(preferredId = null) {
+        let lastErr;
+        for (let i = 0; i < 8; i++) {
+            const id = (i === 0 && preferredId) ? preferredId : this._randomCode();
+            try {
+                return await this._openPeer(id);
+            } catch (err) {
+                lastErr = err;
+                if (err?.type !== 'unavailable-id') throw err;
+            }
+        }
+        throw lastErr;
+    }
+
+    /**
+     * ✨ NOUVEAU : écoute les connexions entrantes (hôte). Idempotent.
+     * Une nouvelle connexion du même pair est ignorée si elle arrive dans les 3 s suivant
+     * l'ouverture de la précédente (double déclenchement PeerJS connu) ; sinon elle REMPLACE
+     * l'ancienne (reconnexion d'un invité qui garde le même id réseau, l'ancienne connexion
+     * n'ayant pas encore été détectée comme morte).
+     */
+    _listenIncoming() {
+        if (this._listening || !this.peer) return;
+        this._listening = true;
+        this.peer.on('connection', (conn) => {
+            const existing = this.connections.find(c => c.peer === conn.peer);
+            if (existing || (conn.peer && this._connectedPeers.has(conn.peer))) {
+                const recent = existing && (Date.now() - (existing._openedAt || 0) < 3000);
+                if (recent || !existing) {
+                    console.warn(`⚠️ [HOST] Connexion entrante ignorée (pair déjà connu): ${conn.peer}`);
+                    return;
+                }
+                console.warn(`🔁 [HOST] Connexion entrante remplace l'ancienne pour: ${conn.peer}`);
+                existing._replaced = true;
+                this.connections = this.connections.filter(c => c !== existing);
+                this._connectedPeers.delete(conn.peer);
+                try { existing.close(); } catch (e) {}
+            }
+            this._handleConnection(conn);
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Création / jonction
+    // ─────────────────────────────────────────────────────────────
 
     /**
      * Créer une partie (devenir l'hôte)
@@ -24,35 +125,18 @@ export class Multiplayer {
     async createGame() {
         return new Promise((resolve, reject) => {
             // Générer un code à 6 chiffres et créer le peer avec cet ID
-            const code = String(Math.floor(100000 + Math.random() * 900000));
+            const code = this._randomCode();
 
-        const peerConfig = {
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' },
-                ]
-            }
-        };
-            this.peer = new Peer(code, peerConfig);
+            this.peer = new Peer(code, _peerOptions());
             this.isHost = true;
+            this._listening = false;
 
             this.peer.on('open', (id) => {
                 this.playerId = id;
                 console.log('🎮 Partie créée ! Code:', id);
-                
+
                 // Écouter les connexions entrantes
-                this.peer.on('connection', (conn) => {
-                    // PeerJS peut déclencher 'connection' deux fois pour le même pair
-                    // (connexion entrante + connexion retour automatique)
-                    // On bloque immédiatement si le pair est déjà connu
-                    if (conn.peer && this._connectedPeers.has(conn.peer)) {
-                        console.warn(`⚠️ [HOST] Connexion entrante ignorée (pair déjà connu): ${conn.peer}`);
-                        return;
-                    }
-                    this._handleConnection(conn);
-                });
+                this._listenIncoming();
 
                 resolve(id);
             });
@@ -67,45 +151,27 @@ export class Multiplayer {
     /**
      * Rejoindre une partie existante
      * @param {string} hostId - L'ID de l'hôte
+     * @param {string|null} preferredId - ✨ NOUVEAU : id réseau à réutiliser si possible
      * @returns {Promise<void>}
      */
-    async joinGame(hostId) {
+    async joinGame(hostId, preferredId = null) {
+        this.hostPeerId = hostId;
+        // ✨ NOUVEAU : l'invité s'enregistre sous un code à 6 chiffres (réessai si collision)
+        const peer = await this._openGuestPeer(preferredId);
+        this.peer = peer;
+        this.isHost = false;
+        this._listening = false;
+        this.playerId = peer.id;
+
         return new Promise((resolve, reject) => {
-
-        const peerConfig = {
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'stun:stun2.l.google.com:19302' },
-                ]
-            }
-        };
-            this.peer = new Peer(undefined, peerConfig);
-            this.isHost = false;
-
             let _joinResolved = false;
 
-            this.peer.on('open', (id) => {
-                this.playerId = id;
-                console.log('🔌 Connexion à la partie:', hostId);
-
-                // Se connecter à l'hôte
-                const conn = this.peer.connect(hostId);
-                // resolve() dans le conn.on('open') de _handleConnection
-                conn.once('open', () => {
-                    console.log('✅ Connecté à l\'hôte !');
-                    _joinResolved = true;
-                    resolve();
-                });
-                this._handleConnection(conn);
-            });
-
-            this.peer.on('error', (err) => {
+            peer.on('error', (err) => {
                 console.error('❌ Erreur de connexion:', err);
                 if (_joinResolved) {
                     // Connexion déjà établie : erreur réseau → déconnexion hôte
-                    if (err.type === 'network' || err.type === 'disconnected' || err.type === 'server-error') {
+                    // (✨ ignoré si ce pair est devenu hôte entre-temps)
+                    if (!this.isHost && (err.type === 'network' || err.type === 'disconnected' || err.type === 'server-error')) {
                         if (this.onHostDisconnected) {
                             this.onHostDisconnected();
                         }
@@ -115,7 +181,108 @@ export class Multiplayer {
                     reject(err);
                 }
             });
+
+            console.log('🔌 Connexion à la partie:', hostId);
+
+            // Se connecter à l'hôte
+            const conn = peer.connect(hostId);
+            // resolve() dans le conn.on('open') de _handleConnection
+            conn.once('open', () => {
+                console.log('✅ Connecté à l\'hôte !');
+                _joinResolved = true;
+                resolve();
+            });
+            this._handleConnection(conn);
         });
+    }
+
+    /**
+     * ✨ NOUVEAU : s'assure que le peer local est utilisable (ouvert, connecté au serveur de
+     * signalisation) SANS changer d'id réseau. Utilisé pendant le délai de grâce qui suit la
+     * perte de l'hôte, et avant une promotion en hôte : l'id de cet invité est celui annoncé
+     * aux autres joueurs dans le snapshot, il ne doit donc pas changer.
+     */
+    async ensurePeerReady() {
+        if (!this.peer || this.peer.destroyed) {
+            this.peer = await this._openGuestPeer(this.playerId);
+            this.playerId = this.peer.id;
+            this._listening = false;
+            this.peer.on('error', (err) => console.error('❌ Erreur PeerJS (peer recréé):', err));
+            return;
+        }
+        if (this.peer.disconnected) {
+            try { this.peer.reconnect(); } catch (e) {}
+            await new Promise((res) => {
+                const t = setTimeout(res, 5000);
+                this.peer.once('open', () => { clearTimeout(t); res(); });
+            });
+        }
+        if (this.peer.disconnected || this.peer.destroyed) {
+            throw new Error('Peer indisponible');
+        }
+    }
+
+    /**
+     * ✨ NOUVEAU : tente une (re)connexion à `hostId` en conservant le même peer / id réseau.
+     * Résout à l'ouverture de la connexion, rejette sur échec (peer introuvable, timeout).
+     * Les anciennes connexions sont abandonnées (marquées `_replaced` pour que leur éventuel
+     * événement `close` tardif soit ignoré).
+     */
+    async reconnectTo(hostId, timeoutMs = 4000) {
+        await this.ensurePeerReady();
+        this.hostPeerId = hostId;
+
+        this.connections.forEach(c => { c._replaced = true; try { c.close(); } catch (e) {} });
+        this.connections = [];
+        this._connectedPeers.clear();
+
+        return new Promise((resolve, reject) => {
+            const conn = this.peer.connect(hostId);
+            const onErr = (err) => {
+                if (err?.type === 'peer-unavailable') {
+                    clearTimeout(timer);
+                    this.peer.off('error', onErr);
+                    reject(err);
+                }
+            };
+            const timer = setTimeout(() => {
+                this.peer.off('error', onErr);
+                conn._replaced = true;
+                try { conn.close(); } catch (e) {}
+                reject(new Error('timeout'));
+            }, timeoutMs);
+            conn.once('open', () => {
+                clearTimeout(timer);
+                this.peer.off('error', onErr);
+                resolve();
+            });
+            this.peer.on('error', onErr);
+            this._handleConnection(conn);
+        });
+    }
+
+    /**
+     * ✨ NOUVEAU : bascule ce peer (jusque-là invité) en hôte — étape 1, à appeler une fois
+     * que tout est prêt côté jeu. Abandonne les connexions vers l'ancien hôte.
+     * Son id réseau (6 chiffres) devient le code de partie.
+     */
+    prepareHostTakeover() {
+        this.connections.forEach(c => { c._replaced = true; try { c.close(); } catch (e) {} });
+        this.connections = [];
+        this._connectedPeers.clear();
+        this.isHost = true;
+        this.hostPeerId = null;
+        this.onHostDisconnected = null;
+    }
+
+    /**
+     * ✨ NOUVEAU : bascule en hôte — étape 2 : commence à accepter les connexions entrantes.
+     * À appeler EN DERNIER, une fois les handlers hôte installés, pour ne jamais recevoir un
+     * message d'invité avant que l'hôte sache le traiter.
+     */
+    startAccepting() {
+        this._listening = false;
+        this._listenIncoming();
     }
 
     /**
@@ -137,6 +304,7 @@ export class Multiplayer {
                 return;
             }
             this._connectedPeers.add(peerId);
+            conn._openedAt = Date.now(); // ✨ NOUVEAU : voir _listenIncoming
 
             this.connections.push(conn);
             console.log('👤 Nouveau joueur connecté:', peerId);
@@ -181,6 +349,9 @@ export class Multiplayer {
         };
 
         const onClose = () => {
+            // ✨ NOUVEAU : connexion remplacée / abandonnée volontairement → événement ignoré
+            if (conn._replaced) return;
+
             const peerId = conn.peer;
             console.log('👋 Joueur déconnecté:', peerId);
             this.connections = this.connections.filter(c => c !== conn);
@@ -189,7 +360,8 @@ export class Multiplayer {
                 this.onPlayerLeft(peerId);
             }
             // Si on est invité et que c'est l'hôte qui déco → callback dédié
-            if (!this.isHost && this.onHostDisconnected) {
+            // ✨ NOUVEAU : uniquement pour l'hôte COURANT (hostPeerId), pas pour une ancienne connexion
+            if (!this.isHost && this.onHostDisconnected && conn.peer === this.hostPeerId) {
                 this.onHostDisconnected();
             }
         };

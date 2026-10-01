@@ -33,6 +33,10 @@ export class LobbyJoin {
                             return;
                         }
                     }
+                    // ✨ NOUVEAU : en partie (reconnexion, changement d'hôte), le welcome du (nouvel)
+                    // hôte ne doit ni remettre l'ancien code saisi ni remplacer le heartbeat de
+                    // jeu par celui du lobby (qui renverrait au lobby en cas de silence).
+                    if (d.getTurnManager()) return;
                     d.setGameCode(code);
                     document.getElementById('game-code-container').style.display = 'block';
                     document.getElementById('game-code-text').textContent = `Code: ${code}`;

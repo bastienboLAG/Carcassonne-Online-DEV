@@ -78,6 +78,7 @@ import { GameEventSetup }         from './modules/game/GameEventSetup.js';
 import { UnplaceableTileManager } from './modules/game/UnplaceableTileManager.js';
 import { HeartbeatManager }       from './modules/core/HeartbeatManager.js';
 import { FinalScoresManager }     from './modules/game/FinalScoresManager.js';
+import { HostMigration }          from './modules/game/HostMigration.js'; // ✨ NOUVEAU — changement d'hôte
 
 import { ScorePanelUI }    from './modules/ui/ScorePanelUI.js';
 import { SlotsUI }         from './modules/ui/SlotsUI.js';
@@ -172,6 +173,41 @@ const PAUSE_TIMEOUT_MS = 60_000;  // 1 min (tests) → 3 min (prod)
 let reconnectionManager = null;
 let gameSyncCallbacks   = null;   // instance GameSyncCallbacks, expose hostDrawAndSend()
 const _voluntaryLeaves = new Set(); // peerIds ayant quitté volontairement (leave-game)
+
+// ✨ NOUVEAU — Changement d'hôte en cours de partie (snapshot, élection, promotion)
+let hostMigration = null;
+function _getHostMigration() {
+    if (!hostMigration) {
+        hostMigration = new HostMigration({
+            getMultiplayer:         () => multiplayer,
+            getGameSync:            () => gameSync,
+            getGameState:           () => gameState,
+            getReconnectionManager: () => reconnectionManager,
+            getTurnManager:         () => turnManager,
+            getUndoManager:         () => undoManager,
+            getDeck:                () => deck,
+            getPlayers:             () => players,
+            setPlayers:             (v) => { players = v; },
+            getIsHost:              () => isHost,
+            setIsHost:              (v) => { isHost = v; },
+            setGameCode:            (v) => { gameCode = v; },
+            getVoluntaryLeaves:     () => _voluntaryLeaves,
+            setCurrentTileForPlayer:(v) => { currentTileForPlayer = v; },
+            attachGameSyncCallbacks: () => attachGameSyncCallbacks(),
+            getInGameNetworkDeps:   () => _buildInGameNetworkDeps(),
+            refreshGameMenu: () => initGameMenu({
+                getGameConfig:  () => gameConfig,
+                getIsHost:      () => isHost,
+                getGameCode:    () => gameCode,
+                getIsSpectator: () => _isSpectator(),
+            }),
+            updateTurnDisplay,
+            afficherToast,
+            returnToInitialLobby:   (msg) => returnToInitialLobby(msg),
+        });
+    }
+    return hostMigration;
+}
 
 function _isSpectator() {
     if (!gameState || !multiplayer) return false;
@@ -996,6 +1032,7 @@ function attachGameSyncCallbacks() {
         isHost,
     });
     gameSyncCallbacks.attach(isHost);
+    _getHostMigration().install(); // ✨ NOUVEAU : snapshot (hôte) / réception du snapshot (invités)
 }
 
 function _hostDrawAndSend() { return gameSyncCallbacks?.hostDrawAndSend() ?? null; }
@@ -1315,6 +1352,8 @@ function _makeStarter() {
             // ✅ FIX NOUVEAU — résout automatiquement (prisonnier le plus ancien) un échange
             // de prisonniers en attente si le joueur exclu est celui qui devait choisir.
             resolvePendingPrisonerExchange: (peerId) => resolvePendingPrisonerExchangeForPlayer(peerId),
+            // ✨ NOUVEAU — perte de l'hôte côté invité → changement d'hôte (HostMigration)
+            onHostLost: () => _getHostMigration().onHostLost(),
         }),
         // deps pour reconnectionManager.initStateHandlers
         getStateHandlerDeps: () => ({
@@ -1349,34 +1388,40 @@ function _makeStarter() {
             restorePendingPrisonerExchangeUI,
         }),
         // deps pour reconnectionManager.initInGameNetworkHandler
-        getInGameNetworkDeps: () => ({
-            getGameState:           () => gameState,
-            getGameSync:            () => gameSync,
-            getGameConfig:          () => gameConfig,
-            getEventBus:            () => eventBus,
-            getPlayers:             () => players,
-            setPlayers:             (v) => { players = v; },
-            getPlacedMeeples:       () => placedMeeples,
-            getScorePanelUI:        () => scorePanelUI,
-            getTurnManager:         () => turnManager,
-            getTuileEnMain:         () => tuileEnMain,
-            getHeartbeatManager:    () => heartbeatManager,
-            getVoluntaryLeaves:     () => _voluntaryLeaves,
-            getPlayerName:          () => playerName,
-            getPlayerColorVar:      () => playerColor,
-            buildPlayersForBroadcast,
-            afficherToast,
-            updateTurnDisplay,
-            pauseGame,
-            resumeGame,
-            startHeartbeat:             (cb) => _startHeartbeat(cb),
-            startAutoReconnect:          () => _startAutoReconnect(),
-            excludeDisconnectedPlayer:   (name) => _excludeDisconnectedPlayer(name),
-            // ✅ FIX NOUVEAU — remap de l'identité réseau (CAS 3 : même joueur qui
-            // reprend son identité) dans l'état de l'échange automatique de prisonniers.
-            remapPendingPrisonerExchange: (oldId, newId) => remapPendingPrisonerExchangeAndPrisoners(oldId, newId),
-        }),
+        getInGameNetworkDeps: () => _buildInGameNetworkDeps(),
     });
+}
+
+// ✨ NOUVEAU : deps du handler réseau en cours de partie, extraites de _makeStarter() pour
+// pouvoir être réutilisées par HostMigration lors de la promotion d'un invité en hôte.
+function _buildInGameNetworkDeps() {
+    return {
+        getGameState:           () => gameState,
+        getGameSync:            () => gameSync,
+        getGameConfig:          () => gameConfig,
+        getEventBus:            () => eventBus,
+        getPlayers:             () => players,
+        setPlayers:             (v) => { players = v; },
+        getPlacedMeeples:       () => placedMeeples,
+        getScorePanelUI:        () => scorePanelUI,
+        getTurnManager:         () => turnManager,
+        getTuileEnMain:         () => tuileEnMain,
+        getHeartbeatManager:    () => heartbeatManager,
+        getVoluntaryLeaves:     () => _voluntaryLeaves,
+        getPlayerName:          () => playerName,
+        getPlayerColorVar:      () => playerColor,
+        buildPlayersForBroadcast,
+        afficherToast,
+        updateTurnDisplay,
+        pauseGame,
+        resumeGame,
+        startHeartbeat:             (cb) => _startHeartbeat(cb),
+        startAutoReconnect:          () => _startAutoReconnect(),
+        excludeDisconnectedPlayer:   (name) => _excludeDisconnectedPlayer(name),
+        // ✅ FIX NOUVEAU — remap de l'identité réseau (CAS 3 : même joueur qui
+        // reprend son identité) dans l'état de l'échange automatique de prisonniers.
+        remapPendingPrisonerExchange: (oldId, newId) => remapPendingPrisonerExchangeAndPrisoners(oldId, newId),
+    };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1496,6 +1541,7 @@ function _makeLobbyNavigator() {
             unplaceableManager = null; finalScoresManager = null;
             waitingToRedraw = false; pendingAbbePoints = null;
             towerRules = null; // ✨ NOUVEAU
+            hostMigration?.reset(); // ✨ NOUVEAU : snapshot/élection propres à la partie terminée
             ruleRegistry.disable('base'); ruleRegistry.disable('abbot');
             ruleRegistry.disable('inns'); ruleRegistry.disable('builders');
         },

@@ -46,6 +46,10 @@ export class ReconnectionManager {
         this._onReturnToInitialLobby = deps.onReturnToInitialLobby ?? null;
         // ✅ FIX NOUVEAU — voir doc du constructeur ci-dessus
         this._resolvePendingPrisonerExchange = deps.resolvePendingPrisonerExchange ?? null;
+        // ✨ NOUVEAU : appelé quand la connexion à l'hôte est perdue (invité). Route vers
+        // HostMigration (changement d'hôte) ; sans ce callback, ancien comportement (reconnexion
+        // en boucle vers le même code).
+        this._onHostLost = deps.onHostLost ?? null;
 
         this.gamePaused         = false;
         this.pauseTimerInterval = null;
@@ -143,6 +147,14 @@ export class ReconnectionManager {
 
     // ── Auto-reconnexion ─────────────────────────────────────────────────────
 
+    /**
+     * ✨ NOUVEAU : point d'entrée unique pour « l'hôte est injoignable » côté invité.
+     */
+    _notifyHostLost() {
+        if (this._onHostLost) this._onHostLost();
+        else this.startAutoReconnect();
+    }
+
     startAutoReconnect() {
         this.stopAutoReconnect();
         window._isAutoReconnecting = true;
@@ -184,7 +196,7 @@ export class ReconnectionManager {
             this.multiplayer.onHostDisconnected = () => {
                 if (!this._gameState) return;
                 console.log('🔌 Connexion hôte perdue — nouvelle tentative...');
-                this.startAutoReconnect();
+                this._notifyHostLost(); // ✨ NOUVEAU : routé vers HostMigration si disponible
             };
 
         } catch (err) {
@@ -315,19 +327,20 @@ export class ReconnectionManager {
     }
 
     /**
-     * Envoyer l'état complet de la partie à un pair (hôte → invité/reconnecté).
+     * ✨ NOUVEAU : rassemble les arguments du paquet d'état complet (factorisé depuis
+     * sendFullStateTo pour être partagé avec le snapshot de changement d'hôte —
+     * HostMigration.broadcastSnapshot). Le paquet lui-même est construit par
+     * GameSync.buildFullStateMessage.
      */
-    sendFullStateTo(targetPeerId) {
+    collectFullStateArgs() {
         const d = this._sd;
-        if (!this._isHost || !this.gameSync) return;
         const gameState = this._getGameState();
         const _cp = gameState.getCurrentPlayer();
         const _isHostTurn = _cp?.id === this.multiplayer.playerId;
         const _tuilePayload = _isHostTurn
             ? (d.getTuileEnMain() ?? (gameState.currentTilePlaced ? null : d.getCurrentTileForPlayer()))
             : (gameState.currentTilePlaced ? null : d.getCurrentTileForPlayer());
-        console.log('📤 [SYNC] sendFullStateTo', targetPeerId, '— currentPlayer:', _cp?.name, '— tuileEnMain envoyée:', _tuilePayload?.id ?? null, '— currentTilePlaced:', gameState.currentTilePlaced);
-        this.gameSync.syncFullState(targetPeerId, {
+        return {
             gameState,
             deck:          d.getDeck(),
             plateau:       d.getPlateau(),
@@ -338,7 +351,31 @@ export class ReconnectionManager {
             tuilePosee:    gameState.currentTilePlaced,
             gameConfig:    d.getGameConfig(),
             timerElapsed:  d.getElapsedSeconds()
-        });
+        };
+    }
+
+    /**
+     * Envoyer l'état complet de la partie à un pair (hôte → invité/reconnecté).
+     */
+    sendFullStateTo(targetPeerId) {
+        if (!this._isHost || !this.gameSync) return;
+        const args = this.collectFullStateArgs();
+        console.log('📤 [SYNC] sendFullStateTo', targetPeerId, '— currentPlayer:', args.gameState.getCurrentPlayer()?.name, '— tuileEnMain envoyée:', args.tuileEnMain?.id ?? null, '— currentTilePlaced:', args.gameState.currentTilePlaced);
+        this.gameSync.syncFullState(targetPeerId, args);
+    }
+
+    /**
+     * ✨ NOUVEAU : retire du DOM tout ce qu'applyFullStateSync va redessiner (meeples, tours,
+     * dragon, fée, slots, curseurs). Nécessaire quand l'état est appliqué sur une page déjà
+     * en jeu (reconnexion sans rechargement, changement d'hôte) : sans cela, les éléments
+     * existants seraient dupliqués.
+     */
+    _clearBoardDom() {
+        document.querySelectorAll(
+            '.meeple-container, .slot, .meeple-cursors-container, .meeple-action-overlay, ' +
+            '.tower-floor-cursor-overlay, .tower-capture-cursor-overlay, .dragon-move-cursor-overlay, ' +
+            '.dragon-visited-overlay, .abbe-recall-overlay'
+        ).forEach(el => el.remove());
     }
 
     /**
@@ -363,6 +400,7 @@ export class ReconnectionManager {
         d.setTuilePosee(false);
 
         gameState.deserialize(data.gameState);
+        this._clearBoardDom(); // ✨ NOUVEAU : évite les doublons si la page était déjà en jeu
 
         // ✅ FIX NOUVEAU : gameState._pendingPrisonerExchange est transitoire, absent de
         // gameState.deserialize() (non sérialisé, cf. GameState.js). Un client qui recharge
@@ -539,13 +577,21 @@ export class ReconnectionManager {
         };
 
         multiplayer.onPlayerLeft = handleDisconnect;
-        d.startHeartbeat(handleDisconnect);
+        // ✅ FIX : côté invité, le heartbeat était un no-op en partie (handleDisconnect ignore
+        // les invités) — un hôte gelé sans fermeture de connexion n'était jamais détecté.
+        d.startHeartbeat((peerId) => {
+            if (isHost) { handleDisconnect(peerId); return; }
+            if (peerId === multiplayer.hostPeerId) {
+                console.warn('💔 Heartbeat : l\'hôte ne répond plus');
+                this._notifyHostLost();
+            }
+        });
 
         if (!isHost) {
             multiplayer.onHostDisconnected = () => {
                 if (!this._getGameState()) return;
-                console.log('🔌 Connexion hôte perdue — reconnexion automatique...');
-                d.startAutoReconnect();
+                console.log('🔌 Connexion hôte perdue…');
+                this._notifyHostLost(); // ✨ NOUVEAU : changement d'hôte si un snapshot existe
             };
         }
 
@@ -560,6 +606,29 @@ export class ReconnectionManager {
                 const gameState = this._getGameState(); if (!gameState) return;
                 const name = data.name;
                 const allPlayerColors = ['black','red','pink','green','blue','yellow'];
+                // ✨ NOUVEAU — CAS 5 : joueur qui revient avec le MÊME id réseau (reconnexion
+                // conservant le peer — ex. rejoindre un nouvel hôte après un changement d'hôte).
+                // Aucun remap d'identité nécessaire : on réactive l'entrée existante.
+                const sameIdEntry = gameState.players.find(p => p.id === from && p.name === name);
+                if (sameIdEntry) {
+                    sameIdEntry.disconnected = false;
+                    sameIdEntry.kicked = false;
+                    delete gameState.disconnectedPlayers[from];
+                    if (!d.getPlayers().find(p => p.id === from)) {
+                        d.getPlayers().push({ id: from, name, color: sameIdEntry.color, isHost: false });
+                    }
+                    const hmSame = d.getHeartbeatManager();
+                    if (hmSame) { hmSame._connectedPeers = multiplayer._connectedPeers; hmSame._lastPong[from] = Date.now(); hmSame._timedOut.delete(from); }
+                    this.sendFullStateTo(from);
+                    if (this.gamePaused) d.resumeGame('reconnected');
+                    d.afficherToast(`✅ ${name} s'est reconnecté !`);
+                    multiplayer.broadcast({ type: 'players-update', players: d.buildPlayersForBroadcast() });
+                    d.getEventBus().emit('score-updated');
+                    const spSame = d.getScorePanelUI(); if (spSame) { spSame.update(); spSame.updateMobile(); }
+                    d.updateTurnDisplay();
+                    console.log(`🔄 Reconnexion joueur (même id): ${name} (${from})`);
+                    return;
+                }
                 const disconnectedEntry = gameState.findDisconnectedByName(name);
                 const kickedEntry = !disconnectedEntry ? gameState.players.find(p => p.name === name && p.kicked && p.color !== 'spectator') : null;
                 const activeEntry = !disconnectedEntry && !kickedEntry ? gameState.players.find(p => p.name === name && p.id !== from) : null;

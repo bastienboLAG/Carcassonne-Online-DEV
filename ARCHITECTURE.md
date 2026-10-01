@@ -80,6 +80,80 @@ dépendance par-partie n'y est nécessaire.
 
 ---
 
+## ⚠️ Changement d'hôte en cours de partie (`HostMigration`)
+
+> **Lot 1 livré : partie en cours.** Le lobby (hôte qui quitte le salon) est prévu au lot 2 —
+> tant qu'il n'est pas fait, le comportement lobby reste l'ancien (salon fermé).
+
+### Principe
+
+- L'ID PeerJS d'un joueur = son code à 6 chiffres. L'hôte l'a toujours eu ; **les invités aussi
+  désormais** (`Multiplayer._openGuestPeer`, réessai si collision). L'id d'un invité promu
+  devient donc directement le **nouveau code de partie**. On ne tente **jamais** de récupérer
+  l'ancien code (un seul numéro à la fois, aucune course avec le serveur PeerJS).
+- **Snapshot** : à chaque `GameSync.syncTurnEnd` (la tuile suivante est déjà piochée), l'hôte
+  diffuse `host-snapshot` = paquet identique à `full-state-sync` (construit par
+  `GameSync.buildFullStateMessage`, arguments via `ReconnectionManager.collectFullStateArgs`)
+  + `hostId` + `candidates` (successeurs possibles, dans l'ordre de `gameState.players`,
+  hors spectateurs/déconnectés/exclus). Les invités gardent le dernier en mémoire.
+- **Détection** (invité) : fermeture de la connexion hôte (`Multiplayer.onHostDisconnected`,
+  uniquement pour `hostPeerId`), erreur réseau PeerJS, ou heartbeat muet (le heartbeat
+  invité était un no-op en partie, corrigé). Tout passe par `ReconnectionManager._notifyHostLost`
+  → `HostMigration.onHostLost`. Sans snapshot (début de partie) : ancien comportement
+  (`startAutoReconnect`).
+- **Élection déterministe, sans communication** : chaque invité parcourt `[hostId, ...candidates]` ;
+  pour chaque cible il tente de la rejoindre pendant `HOST_GRACE_MS` (même peer, même id réseau,
+  `Multiplayer.reconnectTo`) ; quand il arrive à **son propre id** dans la liste, il se promeut.
+  Un succès exige aussi la confirmation `game-in-progress` de la cible (sinon canal ouvert vers
+  un pair qui n'écoute pas encore). Fenêtre totale pour le k-ième successeur : (k+1) × grâce.
+- **Promotion** (`HostMigration._promote`, bloc synchrone) : adapte le snapshot (ancien hôte
+  marqué `disconnected`+`kicked`, son tour sauté si c'était lui — la tuile déjà piochée passe
+  au joueur suivant), `isHost=true` partout (`home.js`, `gameSync.isHost`, `turnManager.isHost`,
+  `Multiplayer.prepareHostTakeover`), `applyFullStateSync(snapshot)`, puis réinstalle ce qu'un
+  hôte doit avoir : `attachGameSyncCallbacks()` (callbacks hôte, dont tous les handlers
+  invité→hôte d'`_attachHostCallbacks`), `initInGameNetworkHandler` (heartbeat hôte, `player-info`),
+  menu, et **en dernier** `Multiplayer.startAccepting()`. Snapshot de rattrapage 5 s plus tard.
+- **Retour des autres invités** : ils gardent leur id réseau → le nouvel hôte les traite en
+  **CAS 5** de `initInGameNetworkHandler` (même id : réactivation + `sendFullStateTo`, sans remap).
+  L'ancien hôte, s'il revient avec le même pseudo et le **nouveau code**, passe par le CAS 3.
+- **État restauré = début du tour en cours** (le dernier snapshot). Tout ce qui s'est passé
+  depuis (tuile posée, meeple, etc.) est perdu ; l'annulation du tour repart de zéro.
+
+### Constantes / tests
+
+- `HOST_GRACE_MS` (`HostMigration.js`) : **5000 en phase de test, à passer à 20000 ensuite.**
+- Logs horodatés préfixés `[MIGRATION]` (récupérables via le bouton 📥) pour mesurer les délais réels.
+
+### Limites connues
+
+- Après une promotion, le **retour lobby du nouvel hôte** n'est pas géré (le handler lobby hôte
+  `_hostLobbyHandler` est défini dans le clic « Créer une partie » de `home.js`) — lot 2.
+- Une phase dragon en cours n'est pas snapshotée (seuls les `syncTurnEnd` le sont) : restauration
+  à la fin du dernier tour complet.
+- Si l'id réseau d'un successeur change à la promotion (id déjà pris, très rare), les autres
+  invités le cherchent sous l'ancien id.
+- `extraState.towers.lockedBy`, `prisoners`, `fairyState.ownerId` référençant l'ancien hôte
+  restent pointés vers lui (joueur `kicked`) tant qu'il ne revient pas (CAS 3 remappe alors
+  prisonniers/échange en attente, comme pour toute reconnexion).
+- Pas de persistance : si **tous** les joueurs quittent, la partie est perdue.
+
+### Check-list à chaque nouvelle extension
+
+1. **État transitoire à faire survivre** : le snapshot = paquet de reconnexion. Tout champ
+   ajouté au full-state (`GameSync.buildFullStateMessage`, `ReconnectionManager.collectFullStateArgs`/
+   `applyFullStateSync`) est automatiquement couvert **à la fois** par la reconnexion et par le
+   changement d'hôte. Ce qui est dans `gameState.serialize()` (dont `extraState`) l'est déjà.
+2. **Nouveau message invité → hôte** : à gérer dans `GameSyncCallbacks._attachHostCallbacks` (ou le
+   `switch` de `GameSync`) — repris sans travail en plus, car la promotion rappelle `attachGameSyncCallbacks()`.
+3. **Variables « hôte » vivant dans `home.js` hors `gameState`** (comme `currentTileForPlayer`) :
+   si l'hôte en dépend, les réaffecter dans `HostMigration._promote`.
+4. **Id de joueur mémorisé hors de `players`** : les invités gardent leur id ; seul l'id de
+   l'ancien hôte « disparaît » (joueur `kicked`). Vérifier qu'aucun traitement n'attend que cet id soit actif.
+5. **Tout nouveau `Multiplayer.onXxx` ou `peer.on(...)`** doit rester cohérent avec `isHost` qui peut
+   passer à `true` en cours de vie du peer (voir la garde `!this.isHost` dans `joinGame`).
+
+---
+
 ## ⚠️ `gameState.extraState` — conteneur générique pour l'état persistant des extensions
 
 **Lire cette section avant de commencer toute nouvelle extension qui ajoute
@@ -277,7 +351,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 |---|---|---|
 | `index.html` | 494 | Structure DOM complète (lobby, plateau, modales, badge dragon, sélecteurs, section extension Tour, modale + voile gris d'échange automatique de prisonniers, modale de confirmation de rachat de prisonnier). Le voile de sélection de prisonnier (`#prisoner-selection-overlay`) est à `rgba(0,0,0,0.9)` (assombri, anciennement 0.7) |
 | `style.css` | ~1620 | Tous les styles, dont le masquage/mise en avant des panels pendant une sélection de prisonnier (`.prisoner-selection-target`/`.prisoner-selection-chooser`/`.prisoner-selection-hidden`, voir plus bas) |
-| `home.js` | ~1500 | Chef d'orchestre : état global, listeners `eventBus` (singleton — voir section "Piège récurrent" ci-dessus), init lobby, `startGame`/`startGameForInvite`. Le handler `network-dragon-state-update` retire désormais aussi le pion `.tower-lock-meeple` d'un garde de tour mangé par le dragon (auparavant seul l'hôte le faisait — cf. section "Interaction Dragon ↔ garde de tour"), et re-synchronise le rendu visuel de la fée depuis `gameState.fairyState` reçu de l'hôte. Le listener `'turn-changed'` réinitialise désormais aussi `gameState._turnBuybackUsed` (rachat de prisonnier — une seule rançon par tour), mais uniquement lorsque le tour qui commence n'est PAS un tour bonus (`turnManager.isBonusTurn === false`). Injecte désormais trois nouvelles dépendances liées au blocage de l'échange automatique de prisonniers (voir section Tour) : `resolvePendingPrisonerExchange` (vers `ReconnectionManager`), `restorePendingPrisonerExchangeUI` (vers `ReconnectionManager.initStateHandlers`), `remapPendingPrisonerExchange` (vers `ReconnectionManager.initInGameNetworkHandler`) |
+| `home.js` | ~1540 | **✨ Changement d'hôte** : instancie `HostMigration` (`_getHostMigration`), l'`install()` dans `attachGameSyncCallbacks`, le `reset()` dans `destroyGameModules`, route `onHostLost` vers `ReconnectionManager`, et expose `_buildInGameNetworkDeps()` (deps in-game extraites de `_makeStarter` pour être réutilisées par la promotion). Chef d'orchestre : état global, listeners `eventBus` (singleton — voir section "Piège récurrent" ci-dessus), init lobby, `startGame`/`startGameForInvite`. Le handler `network-dragon-state-update` retire désormais aussi le pion `.tower-lock-meeple` d'un garde de tour mangé par le dragon (auparavant seul l'hôte le faisait — cf. section "Interaction Dragon ↔ garde de tour"), et re-synchronise le rendu visuel de la fée depuis `gameState.fairyState` reçu de l'hôte. Le listener `'turn-changed'` réinitialise désormais aussi `gameState._turnBuybackUsed` (rachat de prisonnier — une seule rançon par tour), mais uniquement lorsque le tour qui commence n'est PAS un tour bonus (`turnManager.isBonusTurn === false`). Injecte désormais trois nouvelles dépendances liées au blocage de l'échange automatique de prisonniers (voir section Tour) : `resolvePendingPrisonerExchange` (vers `ReconnectionManager`), `restorePendingPrisonerExchangeUI` (vers `ReconnectionManager.initStateHandlers`), `remapPendingPrisonerExchange` (vers `ReconnectionManager.initInGameNetworkHandler`) |
 | `version.js` | — | Constante `APP_VERSION` |
 
 ---
@@ -299,9 +373,9 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | Fichier | Lignes | Rôle |
 |---|---|---|
 | `EventBus.js` | 117 | Bus d'événements interne (`on`/`off`/`emit`). **Singleton créé une fois dans `home.js`, jamais recréé** — voir la section "Piège récurrent" en tête de ce document avant d'y ajouter un `eventBus.on(...)` dans une fonction rappelée à chaque partie |
-| `GameSync.js` | ~710 | Sérialisation/synchronisation réseau hôte↔invités, y compris les messages `tower-floor-placed`, `tower-capture-executed`, `tower-lock-executed`, `prisoner-exchange-resolved`/`prisoner-exchange-pending` (échange automatique de prisonniers, avec le champ `freshlyCapturedType`) et `prisoner-buyback-executed` (rachat de prisonnier, hôte → tous). `syncFullState`/le message `turn-undo` transportent `gameState.serialize()`/`postUndoState`, qui incluent tous deux `extraState` sans logique dédiée dans ce fichier (transport générique, cf. section extraState). **✅ FIX NOUVEAU** : `syncFullState` transporte désormais explicitement `pendingPrisonerExchange: gameState._pendingPrisonerExchange ?? null` en plus des champs sérialisés — ce champ étant transitoire (non couvert par `gameState.serialize()`), un client qui recharge sa page pendant qu'un choix d'échange automatique de prisonniers est en attente perdait cet état localement (voir section Tour, "Blocage tant que le choix n'est pas fait") |
+| `GameSync.js` | ~810 | **✨ Changement d'hôte** : message `host-snapshot` (`syncHostSnapshot`, callback `onHostSnapshot`), hook `onTurnEndSynced` appelé à la fin de `syncTurnEnd`, `buildFullStateMessage(args)` (paquet d'état complet partagé entre `syncFullState` et le snapshot). Sérialisation/synchronisation réseau hôte↔invités, y compris les messages `tower-floor-placed`, `tower-capture-executed`, `tower-lock-executed`, `prisoner-exchange-resolved`/`prisoner-exchange-pending` (échange automatique de prisonniers, avec le champ `freshlyCapturedType`) et `prisoner-buyback-executed` (rachat de prisonnier, hôte → tous). `syncFullState`/le message `turn-undo` transportent `gameState.serialize()`/`postUndoState`, qui incluent tous deux `extraState` sans logique dédiée dans ce fichier (transport générique, cf. section extraState). **✅ FIX NOUVEAU** : `syncFullState` transporte désormais explicitement `pendingPrisonerExchange: gameState._pendingPrisonerExchange ?? null` en plus des champs sérialisés — ce champ étant transitoire (non couvert par `gameState.serialize()`), un client qui recharge sa page pendant qu'un choix d'échange automatique de prisonniers est en attente perdait cet état localement (voir section Tour, "Blocage tant que le choix n'est pas fait") |
 | `HeartbeatManager.js` | 63 | Détection de déconnexion (ping/pong) |
-| `Multiplayer.js` | 247 | Connexion P2P, broadcast, sendTo |
+| `Multiplayer.js` | ~340 | Connexion P2P, broadcast, sendTo. **✨ Changement d'hôte** : les invités s'enregistrent sous un code à 6 chiffres (`_openGuestPeer`, réessai si `unavailable-id`) ; `reconnectTo(hostId)` (même peer/même id), `ensurePeerReady()`, `prepareHostTakeover()` + `startAccepting()` (promotion en hôte), `hostPeerId` (`onHostDisconnected` ne se déclenche que pour l'hôte courant), connexions abandonnées marquées `_replaced` (événement `close` ignoré), `_listenIncoming` : une connexion entrante du même pair remplace l'ancienne si elle date de plus de 3 s |
 | `RuleRegistry.js` | 165 | Active/désactive les règles d'extension |
 
 ## `modules/rules/` — Règles de score/placement par extension
@@ -326,11 +400,12 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | `GameEventSetup.js` | ~510 | Installe tous les listeners DOM du jeu. Point de fin de tour (`_installEndTurn`) : appelle désormais `d.checkPendingReciprocalExchange?.()` juste après `undoManager.reset()` (échange automatique de prisonniers différé — voir plus bas) ; `_installUndo` inclut `extraState` et `towerPieces` dans le `postUndoState` envoyé aux invités. Utilise déjà le pattern de garde contre la double installation (flag `_installed`) |
 | `GameModuleInitializer.js` | ~185 | Instancie les modules UI de jeu, dont `TowerRules` si `tileGroups.tower && extensions.tower`. Relaie `renderAllTowersFromState` (via `d`) dans `undoManager.initVisualHandlers({...})`, pour que l'undo puisse redessiner l'état Tour après restauration |
 | `GameStarter.js` | 200 | Démarrage de partie hôte/invité ; attribue `towerPieces` à chaque joueur actif selon `getTowerPiecesForPlayerCount()` ; appelle `initTowerUI()` en `postStartSetup()` |
+| `HostMigration.js` | ~250 | **✨ NOUVEAU** — Changement d'hôte en cours de partie : snapshot (hôte), détection/grâce/élection (invités), promotion. Voir la section dédiée en tête de ce document. `HOST_GRACE_MS` = 5000 en test (20000 ensuite) |
 | `GameSyncCallbacks.js` | ~490 | Callbacks réseau réactifs. `onTurnEndRequest` (hôte, pour un invité qui termine son tour) appelle `checkPendingReciprocalExchange()` juste après `undoManager.reset()` — même point que côté hôte-joueur dans `GameEventSetup`. `onUndoRequest` (hôte, pour un invité qui annule) inclut `extraState` et `towerPieces` dans le `postUndoState` envoyé. Relais des requêtes invité→hôte `tower-floor-request`/`tower-capture-request`/`tower-lock-request`/`prisoner-exchange-choice-request`/`prisoner-buyback-request` |
 | `GameTimer.js` | 59 | Chronomètre de partie |
 | `MeeplePlacement.js` | 253 | Logique de pose de meeple |
 | `NavigationManager.js` | 161 | Zoom et déplacement (pan) sur le plateau |
-| `ReconnectionManager.js` | ~700 | Pause/reprise de partie, resynchronisation complète. `applyFullStateSync` : appelle `d.renderAllTowersFromState?.()` (si `tileGroups.tower`) juste après le rendu Dragon/Fée. **✅ FIX NOUVEAU** : `applyFullStateSync` restaure aussi désormais `gameState._pendingPrisonerExchange` depuis `data.pendingPrisonerExchange` (transitoire, transmis par `GameSync.syncFullState`), puis appelle `d.restorePendingPrisonerExchangeUI?.()` en toute fin de fonction pour réafficher la modale d'échange dans le bon rôle si un choix était en attente au moment d'un reload de page. `excludeDisconnectedPlayer` appelle désormais `this._resolvePendingPrisonerExchange?.(peerId)` (nouvelle dépendance constructeur) avant toute mutation de `gameState.players`, pour résoudre automatiquement un échange de prisonniers en attente si le joueur exclu est celui qui devait choisir. `initInGameNetworkHandler`, CAS 3 (reconnexion du même joueur, nouveau `playerId` réseau) appelle désormais `d.remapPendingPrisonerExchange?.(oldPeerId, from)` juste après le remap déjà existant de `placedMeeples[].playerId`, pour remapper l'identité dans l'état de l'échange automatique de prisonniers |
+| `ReconnectionManager.js` | ~790 | **✨ Changement d'hôte** : `collectFullStateArgs()` (extrait de `sendFullStateTo`), `_notifyHostLost()` (route vers `HostMigration`, dep constructeur `onHostLost`), `_clearBoardDom()` appelé par `applyFullStateSync` (évite les doublons d'éléments quand l'état est appliqué sur une page déjà en jeu), heartbeat invité désormais actif (hôte muet → `_notifyHostLost`), **CAS 5** de `initInGameNetworkHandler` (joueur qui revient avec le même id réseau). Pause/reprise de partie, resynchronisation complète. `applyFullStateSync` : appelle `d.renderAllTowersFromState?.()` (si `tileGroups.tower`) juste après le rendu Dragon/Fée. **✅ FIX NOUVEAU** : `applyFullStateSync` restaure aussi désormais `gameState._pendingPrisonerExchange` depuis `data.pendingPrisonerExchange` (transitoire, transmis par `GameSync.syncFullState`), puis appelle `d.restorePendingPrisonerExchangeUI?.()` en toute fin de fonction pour réafficher la modale d'échange dans le bon rôle si un choix était en attente au moment d'un reload de page. `excludeDisconnectedPlayer` appelle désormais `this._resolvePendingPrisonerExchange?.(peerId)` (nouvelle dépendance constructeur) avant toute mutation de `gameState.players`, pour résoudre automatiquement un échange de prisonniers en attente si le joueur exclu est celui qui devait choisir. `initInGameNetworkHandler`, CAS 3 (reconnexion du même joueur, nouveau `playerId` réseau) appelle désormais `d.remapPendingPrisonerExchange?.(oldPeerId, from)` juste après le remap déjà existant de `placedMeeples[].playerId`, pour remapper l'identité dans l'état de l'échange automatique de prisonniers |
 | `Scoring.js` | 380 | Calcul des points. `applyAndGetFinalScores` inclut `buybacks` dans les scores détaillés |
 | `TilePlacement.js` | 283 | Logique de pose de tuile |
 | `TowerUI.js` | ~1050 | UI et orchestration de l'extension Tour, entièrement migrée vers `gameState.extraState.towers`/`gameState.extraState.prisoners` (voir section extraState en tête de document). Curseurs de pose d'étage/capture, sélecteurs de confirmation, pose d'étage/verrouillage/capture hôte. **✅ FIX** : `_getTowerLockMeepleAnchor` renommée et **exportée** en `getTowerLockMeepleAnchor(x, y)` — anciennement privée, réutilisée par `MeepleActionsUI.js` (positionnement du curseur fée sur un garde de tour) et `DragonUI.js` (rendu du pion fée sur un garde de tour), en plus de l'usage interne déjà existant (`showTowerCaptureCursors`). **✅ FIX** : `applyLockExecuted` appelle désormais `_deps.hideAllCursors?.()` pour le joueur local, exactement comme `applyFloorPlaced` le fait déjà — sans cet appel, des curseurs déjà affichés (notamment le curseur fée) restaient visibles et cliquables après un verrouillage, alors que la phase meeple venait d'être consommée par `markMeeplePlaced(x, y, -1, null)` (cf. section "Interaction Dragon ↔ garde de tour" pour le détail du bug). **✅ FIX** : `applyCaptureExecuted` détache désormais la fée (`ownerId = null`, `meepleKey` conservé) au lieu de la retirer complètement du plateau si elle était attachée au meeple/garde capturé — la fée ne disparaît jamais une fois posée, même règle que pour une fermeture de zone classique. `showTowerCursors`/`_openTowerFloorSelector` masquent l'option de verrouillage sur la tuile où se trouve le dragon (cohérent avec `TowerRules.lockTower`). `renderAllTowersFromState()` — (re)dessine l'intégralité des tours et gardes depuis `gameState.extraState.towers`, utilisée par `UndoManager.applyLocally` et par `ReconnectionManager.applyFullStateSync`. **Échange automatique de prisonniers différé** : `executeTowerCaptureHost` ne déclenche plus `_checkAndHandleReciprocalExchange` immédiatement — elle note l'info dans `gameState._pendingReciprocalCheck`, consommée uniquement par la nouvelle fonction exportée `checkPendingReciprocalExchange()`, appelée en fin de tour du capturant. **✅ FIX — Rachat de prisonnier** : `setupPrisonerBuyback` (`isSelectable`) et `executePrisonerBuybackHost` (revalidation hôte, seule source de vérité) n'autorisent désormais le rachat que durant le propre tour du joueur (`_deps.getIsMyTurn()` côté client, `gameState.getCurrentPlayer()?.id === buyerId` côté hôte) et une seule fois par tour de jeu, un tour bonus comptant comme la suite du tour précédent (`gameState._turnBuybackUsed`, posé à `true` dans `applyPrisonerBuybackExecuted`, remis à `false` uniquement à l'entrée d'un véritable nouveau tour dans `home.js`) — auparavant possible à tout moment de la partie et sans limite. **✅ FIX — masquage des panels pendant l'échange automatique** : `_openPrisonerSelectionUI(opponentId, chooserId, availableTypes)` transmet désormais `chooserId` en plus de `playerId` à `ScorePanelUI.enablePrisonerSelection()`, pour que le panel du joueur qui choisit reçoive un rôle visuel distinct (mis en avant mais assombri sur desktop) de celui des autres joueurs (masqués) — voir `ScorePanelUI.js` et `style.css`. **✅ FIX NOUVEAU — Blocage tant que le choix n'est pas fait** : `showPrisonerExchangeModal` n'affiche désormais AUCUN bouton (modale non fermable) pour tout le monde sauf le choisisseur tant que `chosenType` n'est pas fourni (échange non résolu) — auparavant tous les joueurs non concernés disposaient d'un bouton "Fermer" leur permettant de jouer pendant que l'échange restait en suspens, alors que le tour suivant démarre avant la résolution (la vérification de réciprocité n'a lieu qu'à la fin du tour du capturant, cf. paragraphe précédent). Trois nouvelles fonctions exportées couvrent les angles morts réseau : `resolvePendingPrisonerExchangeForPlayer(disconnectedPlayerId)` (résout automatiquement avec le prisonnier le plus ancien — `availableTypes[0]`, ordre garanti par `TowerRules.checkReciprocalCapture` — si le joueur exclu est le choisisseur en attente ; appelée depuis `ReconnectionManager.excludeDisconnectedPlayer`), `restorePendingPrisonerExchangeUI()` (réaffiche la modale dans le bon rôle après un `full-state-sync`, pour un client qui a rechargé sa page ; appelée depuis `ReconnectionManager.applyFullStateSync`), `remapPendingPrisonerExchangeAndPrisoners(oldPeerId, newPeerId)` (remappe `extraState.prisoners`, `_pendingPrisonerExchange`, `_pendingReciprocalCheck`, `_freshCaptures` vers le nouveau `playerId` réseau d'un joueur qui se reconnecte sous la même identité ; appelée depuis `ReconnectionManager.initInGameNetworkHandler`, CAS 3). **Limite connue, volontairement non traitée** : ce remap ne touche pas `extraState.towers.lockedBy` — un joueur qui verrouille une tour puis se reconnecte sous un nouveau `playerId` verra `TowerRules.isLocked` continuer de pointer vers son ancien id (impact mineur identifié, pas de blocage fonctionnel constaté à ce jour ; à traiter comme un chantier à part si un bug concret est rapporté) |
@@ -346,7 +421,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | Fichier | Lignes | Rôle |
 |---|---|---|
 | `GameMenuUI.js` | 49 | Menu en jeu |
-| `LobbyJoin.js` | 168 | Logique de connexion en tant qu'invité |
+| `LobbyJoin.js` | ~172 | Logique de connexion en tant qu'invité. Le message `welcome` est ignoré en partie (`getTurnManager()` non nul) : il ne doit remettre ni l'ancien code de partie ni le heartbeat du lobby après une reconnexion / un changement d'hôte |
 | `LobbyNavigator.js` | ~185 | Retour au lobby / lobby initial ; réinitialise `towerRules` au retour lobby |
 | `LobbyUI.js` | 356 | Interface du lobby |
 | `MeepleActionsUI.js` | ~670 | Actions meeples : rappel abbé, portail, éjection princesse, placement fée ; orchestre l'extension Tour via les imports de `TowerUI.js`. **✅ FIX** : `showMeepleActionCursors` résout désormais une cible fée dont la clé est `"tower-lock:x,y"` (garde verrouillant une tour) en lisant `gameState.extraState.towers`, et positionne son curseur via `TowerUI.getTowerLockMeepleAnchor(x, y)` au lieu du calcul en grille 5×5 utilisé pour un meeple classique — sans ce cas, la cible calculée par `DragonRules.getFairyTargets` n'avait aucun curseur affiché (`placedMeeples[key]` étant `undefined` pour ce format de clé). `initNetworkMeepleListeners(eventBus)` protégée par flag module-level (`_networkListenersInstalled`) contre la double installation — voir "Piège récurrent" |
@@ -667,6 +742,7 @@ aussi la section `gameState.extraState` en tête de ce document.
 | Un événement réseau semble appliqué plusieurs fois (état dupliqué), surtout après un retour lobby + nouvelle partie, et seulement côté invité | Section "⚠️ Piège récurrent — `eventBus` singleton" en tête de ce document |
 | Désynchronisation réseau hôte/invité | `modules/core/GameSync.js`, `modules/game/GameSyncCallbacks.js`, `home.js` |
 | Déconnexion/reconnexion/pause | `modules/game/ReconnectionManager.js`, `modules/core/HeartbeatManager.js` |
+| L'hôte disparaît : la partie ne continue pas / mauvais successeur / deux hôtes / invités bloqués sur « Connexion perdue » | `modules/game/HostMigration.js` (logs `[MIGRATION]`), `modules/core/Multiplayer.js` (`reconnectTo`, `startAccepting`, `hostPeerId`), `modules/game/ReconnectionManager.js` (CAS 5, `_notifyHostLost`), `modules/core/GameSync.js` (`host-snapshot`, `onTurnEndSynced`), section « Changement d'hôte » en tête de ce document |
 | Score incorrect | `modules/game/Scoring.js`, `modules/game/ZoneMerger.js`, `modules/game/ZoneRegistry.js`, `modules/MeepleUtils.js` |
 | Annulation d'action (undo) qui se comporte mal, hors extension Tour | `modules/game/UndoManager.js` |
 | Je démarre une nouvelle extension avec un pion/compteur/structure persistant | Lire d'abord la section "⚠️ `gameState.extraState`" en tête de ce document, puis "Extensions à venir" pour les pièges déjà identifiés sur cette extension précise. Si cette mécanique peut bloquer le jeu tant qu'un choix n'est pas fait par un joueur, lire aussi le sous-point "Blocage tant qu'un choix n'est pas fait" de la même section, et s'inspirer directement de l'implémentation de l'échange automatique de prisonniers (section Tour) |
