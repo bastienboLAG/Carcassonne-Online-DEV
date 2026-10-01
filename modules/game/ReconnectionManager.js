@@ -597,6 +597,12 @@ export class ReconnectionManager {
 
         multiplayer.onPlayerJoined = (playerId) => {
             console.log('👤 Nouveau joueur en cours de partie:', playerId);
+            // ✅ FIX : seul l'hôte COURANT envoie game-in-progress. Auparavant les invités
+            // l'envoyaient aussi (à l'hôte, qui l'ignorait). Depuis le changement d'hôte, le
+            // handler lobby invité (LobbyJoin) reste au bas de la chaîne du nouvel hôte : il
+            // recevait ce message d'un invité et affichait la modale « Comment rejoindre ? ».
+            // Relu dynamiquement : le rôle peut changer en cours de partie.
+            if (!this._isHost) return;
             multiplayer.sendTo(playerId, { type: 'game-in-progress' });
         };
 

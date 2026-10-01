@@ -128,6 +128,12 @@ dépendance par-partie n'y est nécessaire.
 
 - Après une promotion, le **retour lobby du nouvel hôte** n'est pas géré (le handler lobby hôte
   `_hostLobbyHandler` est défini dans le clic « Créer une partie » de `home.js`) — lot 2.
+- **Ancien hôte isolé (non géré, décision en attente)** : si c'est l'hôte qui perd sa connexion
+  internet, il voit chaque invité « se déconnecter » (`handleDisconnect` → `pauseGame` : modale
+  « Partie en pause — Continuer sans … » avec l'ancien code) alors que c'est lui qui est isolé.
+  Son peer n'est de plus jamais reconnecté au serveur de signalisation (aucun handler
+  `disconnected` sur le peer hôte), donc même une coupure plus courte que le délai de grâce
+  ne lui permet pas de récupérer ses invités. Il n'apprend pas non plus le nouveau code.
 - Une phase dragon en cours n'est pas snapshotée (seuls les `syncTurnEnd` le sont) : restauration
   à la fin du dernier tour complet.
 - Si l'id réseau d'un successeur change à la promotion (id déjà pris, très rare), les autres
@@ -143,13 +149,18 @@ dépendance par-partie n'y est nécessaire.
    ajouté au full-state (`GameSync.buildFullStateMessage`, `ReconnectionManager.collectFullStateArgs`/
    `applyFullStateSync`) est automatiquement couvert **à la fois** par la reconnexion et par le
    changement d'hôte. Ce qui est dans `gameState.serialize()` (dont `extraState`) l'est déjà.
-2. **Nouveau message invité → hôte** : à gérer dans `GameSyncCallbacks._attachHostCallbacks` (ou le
+2. **Handlers lobby invité au bas de la chaîne réseau** : un invité promu hôte conserve
+   `LobbyJoin.lobbyHandler` (via `GameSync.originalHandler`) sous ses handlers hôte. Tout message
+   que ce handler traite doit être inoffensif pour un hôte (voir la garde `isHost` sur
+   `game-in-progress`, et celle sur `welcome` en partie), et seul l'hôte courant doit envoyer
+   `game-in-progress` (`ReconnectionManager`, `onPlayerJoined`).
+3. **Nouveau message invité → hôte** : à gérer dans `GameSyncCallbacks._attachHostCallbacks` (ou le
    `switch` de `GameSync`) — repris sans travail en plus, car la promotion rappelle `attachGameSyncCallbacks()`.
-3. **Variables « hôte » vivant dans `home.js` hors `gameState`** (comme `currentTileForPlayer`) :
+4. **Variables « hôte » vivant dans `home.js` hors `gameState`** (comme `currentTileForPlayer`) :
    si l'hôte en dépend, les réaffecter dans `HostMigration._promote`.
-4. **Id de joueur mémorisé hors de `players`** : les invités gardent leur id ; seul l'id de
+5. **Id de joueur mémorisé hors de `players`** : les invités gardent leur id ; seul l'id de
    l'ancien hôte « disparaît » (joueur `kicked`). Vérifier qu'aucun traitement n'attend que cet id soit actif.
-5. **Tout nouveau `Multiplayer.onXxx` ou `peer.on(...)`** doit rester cohérent avec `isHost` qui peut
+6. **Tout nouveau `Multiplayer.onXxx` ou `peer.on(...)`** doit rester cohérent avec `isHost` qui peut
    passer à `true` en cours de vie du peer (voir la garde `!this.isHost` dans `joinGame`).
 
 ---

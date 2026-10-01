@@ -44,6 +44,9 @@ export class LobbyJoin {
                 }
 
                 if (data.type === 'game-in-progress') {
+                    // ✅ FIX : un invité promu hôte garde ce handler au bas de sa chaîne réseau —
+                    // il ne doit jamais réagir à un message destiné aux invités (défense en profondeur)
+                    if (d.getMultiplayer().isHost) return;
                     clearTimeout(window._pendingPlayerInfoTimer);
                     if (window._isAutoReconnecting) {
                         window._isAutoReconnecting = false;
