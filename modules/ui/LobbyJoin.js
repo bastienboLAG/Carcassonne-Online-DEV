@@ -51,7 +51,10 @@ export class LobbyJoin {
                     clearTimeout(window._pendingPlayerInfoTimer);
                     if (window._isAutoReconnecting) {
                         window._isAutoReconnecting = false;
-                        d.getMultiplayer().broadcast({ type: 'player-info', name: d.getPlayerName(), color: d.getPlayerColor(), isSpectator: false, version: d.getAppVersion?.(), origin: d.getAppOrigin?.() });
+                        // ✅ FIX : auparavant isSpectator était toujours false ici — un spectateur qui se
+                        // reconnectait était traité comme un NOUVEAU JOUEUR (« Partie complète » → refus)
+                        // et restait bloqué sur la modale de reconnexion.
+                        d.getMultiplayer().broadcast({ type: 'player-info', name: d.getPlayerName(), color: d.getPlayerColor(), isSpectator: d.getPlayerColor() === 'spectator', version: d.getAppVersion?.(), origin: d.getAppOrigin?.() });
                     } else {
                         window._waitingForRoleChoice = true;
                         d.showRoleChoiceModal((chosenIsSpectator) => {

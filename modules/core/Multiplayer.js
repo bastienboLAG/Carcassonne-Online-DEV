@@ -34,6 +34,15 @@ export class Multiplayer {
         // (et pas pour celle d'une ancienne connexion périmée après un changement d'hôte).
         this.hostPeerId = null;
         this._listening = false; // ✨ NOUVEAU : l'écoute des connexions entrantes est-elle active ?
+
+        // ✨ NOUVEAU : dernier instant où CET appareil a changé d'état réseau (événements
+        // offline/online du navigateur, signalisation PeerJS perdue/rétablie). Permet à l'hôte de
+        // distinguer « mes invités sont partis » de « c'est moi qui ai été coupé ».
+        this.lastSelfOutageAt = 0;
+        if (typeof window !== 'undefined') {
+            window.addEventListener('offline', () => { this.lastSelfOutageAt = Date.now(); });
+            window.addEventListener('online',  () => { this.lastSelfOutageAt = Date.now(); });
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -304,7 +313,11 @@ export class Multiplayer {
     _installHostKeepAlive(peer) {
         if (!peer || peer._keepAliveInstalled) return;
         peer._keepAliveInstalled = true;
+        // signalisation rétablie après une perte (pas à l'ouverture initiale du peer)
+        peer.on('open', () => { if (peer._wasDisconnected) this.lastSelfOutageAt = Date.now(); });
         peer.on('disconnected', () => {
+            peer._wasDisconnected = true;
+            this.lastSelfOutageAt = Date.now();
             if (!this.isHost || this.peer !== peer) return;
             console.warn('📡 [HOST] Serveur de signalisation perdu — tentatives de reconnexion');
             const retry = () => {

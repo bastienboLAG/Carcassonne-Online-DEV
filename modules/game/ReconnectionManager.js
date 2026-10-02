@@ -159,8 +159,12 @@ export class ReconnectionManager {
      */
     _isHostIsolated() {
         const peer = this.multiplayer.peer;
+        // Fenêtre de 45 s après une coupure de l'hôte lui-même (signalisation perdue/rétablie,
+        // événements offline/online) : le heartbeat peut encore « timeout » des invités à cause
+        // de MA coupure, juste après le retour du réseau (timeout 30 s).
+        const recentOutage = Date.now() - (this.multiplayer.lastSelfOutageAt || 0) < 45000;
         return (typeof navigator !== 'undefined' && navigator.onLine === false)
-            || !!peer?.disconnected || !!peer?.destroyed;
+            || !!peer?.disconnected || !!peer?.destroyed || recentOutage;
     }
 
     _notifyHostLost() {
@@ -546,7 +550,8 @@ export class ReconnectionManager {
 
         if (!multiplayer?.peer) return;
 
-        const handleDisconnect = (peerId) => {
+        // `force` (balayage post-isolement, HostMigration) : ne pas ré-évaluer l'isolement de l'hôte
+        const handleDisconnect = (peerId, force = false) => {
             if (!isHost) return;
             const gameState = this._getGameState();
             if (!gameState) return;
@@ -558,7 +563,7 @@ export class ReconnectionManager {
 
             // ✨ NOUVEAU : si c'est l'hôte qui est isolé, ne marque personne « déconnecté » et
             // n'affiche pas « Partie en pause » : voir HostMigration.onSelfIsolated.
-            if (this._isHostIsolated()) {
+            if (!force && this._isHostIsolated()) {
                 console.warn('📵 [HOST] Invité perdu mais je suis moi-même isolé — mode isolement');
                 if (this._onHostIsolated) this._onHostIsolated();
                 return;
@@ -785,7 +790,12 @@ export class ReconnectionManager {
                                 if (gameConfig.extensions?.pig)             newP.hasPig         = true;
                             }
                         }
-                    } else if (p.kicked) { existingById.kicked = true; }
+                    } else {
+                        if (p.kicked) existingById.kicked = true;
+                        // ✅ FIX : appliquer aussi l'état « déconnecté » fourni par l'hôte (cf.
+                        // buildPlayersForBroadcast) — y compris pour le remettre à false (CAS 5)
+                        if (p.disconnected !== undefined) existingById.disconnected = !!p.disconnected;
+                    }
                 });
                 d.getEventBus().emit('score-updated');
                 const sp = d.getScorePanelUI(); if (sp) sp.updateMobile();

@@ -206,6 +206,7 @@ function _getHostMigration() {
             getGameSync:            () => gameSync,
             getGameState:           () => gameState,
             getReconnectionManager: () => reconnectionManager,
+            getHeartbeatManager:    () => heartbeatManager,
             getTurnManager:         () => turnManager,
             getUndoManager:         () => undoManager,
             getDeck:                () => deck,
@@ -1057,6 +1058,12 @@ function attachGameSyncCallbacks() {
     });
     gameSyncCallbacks.attach(isHost);
     _getHostMigration().install(); // ✨ NOUVEAU : snapshot (hôte) / réception du snapshot (invités)
+    // ✅ FIX : rejoin-rejected reçu en partie (ex. « Partie complète ») n'était géré par personne
+    // (GameSync l'intercepte avant le handler lobby) : la modale de reconnexion restait affichée.
+    gameSync.onRejoinRejected = (reason) => {
+        reconnectionManager?.hideReconnectOverlay();
+        returnToInitialLobby(reason || 'Impossible de rejoindre la partie.');
+    };
 }
 
 function _hostDrawAndSend() { return gameSyncCallbacks?.hostDrawAndSend() ?? null; }
@@ -1201,7 +1208,14 @@ eventBus.on('fairy-detached-show-targets', () => {
  */
 function buildPlayersForBroadcast() {
     if (!gameState) return players;
-    const enriched = [...players];
+    // ✅ FIX : joindre l'état `disconnected` de gameState à chaque joueur de la liste. Sans cela,
+    // un joueur qui revient avec le MÊME id (CAS 5) restait affiché « déconnecté » chez les invités
+    // reconnectés avant lui : leur full-state-sync le décrivait encore déconnecté et players-update
+    // ne remettait jamais ce drapeau à false (désynchronisation « qui voit qui en ligne »).
+    const enriched = players.map(p => {
+        const gp = gameState.players.find(x => x.id === p.id);
+        return gp ? { ...p, disconnected: !!gp.disconnected } : p;
+    });
     gameState.players.forEach(gp => {
         if (gp.kicked && gp.color !== 'spectator') {
             // Ajouter seulement s'il n'est pas déjà dans la liste

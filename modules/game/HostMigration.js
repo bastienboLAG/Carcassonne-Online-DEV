@@ -55,6 +55,7 @@ export class HostMigration {
         // rester marquées « ouvertes » plusieurs dizaines de secondes. Seule une connexion
         // NOUVELLE prouve qu'un joueur est réellement revenu.
         this._staleConns = new Set();
+        this._isolatedAt = 0;
         this._listenersInstalled = false;
     }
 
@@ -368,6 +369,7 @@ export class HostMigration {
 
         this._isolated = true;
         this._staleConns = new Set(mp.connections);
+        this._isolatedAt = Date.now();
         const runId = this._runId;
         console.warn('📵 [MIGRATION] Je suis isolé du réseau (hôte) — attente du retour de la connexion');
         if (rm.gamePaused) rm.resumeGame('reconnected'); // retire une éventuelle modale « Partie en pause »
@@ -376,6 +378,47 @@ export class HostMigration {
             console.error('❌ [MIGRATION] Erreur en mode isolement:', err);
             this._isolated = false;
         });
+    }
+
+    /**
+     * ✨ NOUVEAU : ce joueur est-il réellement joignable depuis cet hôte depuis le début de
+     * l'isolement ? Oui si une connexion NOUVELLE est ouverte, ou si une ancienne connexion a de
+     * nouveau reçu un pong de heartbeat (elle a survécu à la coupure). Une ancienne connexion
+     * morte mais encore marquée « ouverte » ne compte pas.
+     */
+    _guestAlive(playerId) {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        const hm = d.getHeartbeatManager?.();
+        return mp.connections.some(c => c.peer === playerId && c.open &&
+            (!this._staleConns.has(c) || (hm && (hm._lastPong[c.peer] || 0) > this._isolatedAt)));
+    }
+
+    _anyGuestAlive() {
+        const d = this._d;
+        const myId = d.getMultiplayer().playerId;
+        return (d.getGameState()?.players ?? []).some(p => p.id !== myId && this._guestAlive(p.id));
+    }
+
+    /**
+     * ✨ NOUVEAU : à la fin d'un isolement, les invités qui n'ont pas redonné signe de vie sont
+     * signalés déconnectés (comportement normal : pause / exclusion proposée). Pendant l'isolement
+     * leurs timeouts avaient été ignorés (ce n'était pas leur faute), donc plus rien ne les
+     * re-signalerait sans ce balayage différé (15 s : le temps qu'ils reviennent).
+     */
+    _scheduleSweep(runId) {
+        setTimeout(() => {
+            const d  = this._d;
+            const mp = d.getMultiplayer();
+            const gameState = d.getGameState();
+            if (runId !== this._runId || !d.getIsHost() || !gameState) return;
+            gameState.players.forEach(p => {
+                if (p.id === mp.playerId || p.disconnected || p.kicked) return;
+                if (this._guestAlive(p.id)) return;
+                console.warn(`🧹 [MIGRATION] ${p.name} n'est pas revenu après l'isolement — déconnexion signalée`);
+                mp.onPlayerLeft?.(p.id, true); // force : ne pas ré-évaluer l'isolement
+            });
+        }, 15000);
     }
 
     async _isolationLoop(runId) {
@@ -401,12 +444,13 @@ export class HostMigration {
             }
 
             if (restoredAt !== null) {
-                // Des invités sont revenus (leur délai de grâce n'était pas écoulé) : la partie continue ici
-                if (mp.connections.some(c => c.open && !this._staleConns.has(c))) {
-                    console.warn('✅ [MIGRATION] Invités de retour — fin de l\'isolement');
+                // Des invités sont revenus (ou n'ont jamais lâché) : la partie continue ici
+                if (this._anyGuestAlive()) {
+                    console.warn('✅ [MIGRATION] Invités joignables — fin de l\'isolement');
                     this._isolated = false;
                     d.getReconnectionManager()?.hideReconnectOverlay();
                     d.afficherToast('✅ Connexion rétablie.');
+                    this._scheduleSweep(runId);
                     return;
                 }
                 if (Date.now() - restoredAt > ISOLATION_RESTORED_WAIT_MS) {
@@ -431,7 +475,7 @@ export class HostMigration {
         if (!d.getIsHost() || !d.getGameState()) return;
         if (data.oldHostId !== mp.playerId || !data.newCode) return;
         // Si d'autres joueurs sont toujours connectés à moi, ce n'est pas moi qui ai été remplacé
-        if (mp.connections.some(c => c.open && c.peer !== from && !this._staleConns.has(c))) {
+        if ((d.getGameState()?.players ?? []).some(p => p.id !== mp.playerId && p.id !== from && this._guestAlive(p.id))) {
             console.warn('⚠️ [MIGRATION] host-moved ignoré : des joueurs sont encore connectés à moi');
             return;
         }
