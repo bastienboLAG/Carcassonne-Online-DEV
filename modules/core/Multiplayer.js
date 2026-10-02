@@ -130,6 +130,7 @@ export class Multiplayer {
             this.peer = new Peer(code, _peerOptions());
             this.isHost = true;
             this._listening = false;
+            this._installHostKeepAlive(this.peer); // ✨ NOUVEAU
 
             this.peer.on('open', (id) => {
                 this.playerId = id;
@@ -283,6 +284,67 @@ export class Multiplayer {
     startAccepting() {
         this._listening = false;
         this._listenIncoming();
+        this._installHostKeepAlive(this.peer);
+    }
+
+    /**
+     * ✨ NOUVEAU : reprend l'écoute des connexions entrantes sans doubler les listeners
+     * (idempotent). Utilisé par un hôte qui retrouve internet : son peer a pu être recréé.
+     */
+    resumeAccepting() {
+        this._listenIncoming();
+        this._installHostKeepAlive(this.peer);
+    }
+
+    /**
+     * ✨ NOUVEAU : un hôte qui perd le serveur de signalisation (coupure réseau, blip) doit
+     * s'y reconnecter : PeerJS ne le fait pas seul, et sans cela les invités qui retentent
+     * l'ancien code (délai de grâce) ne le retrouvent jamais, même si internet est revenu.
+     */
+    _installHostKeepAlive(peer) {
+        if (!peer || peer._keepAliveInstalled) return;
+        peer._keepAliveInstalled = true;
+        peer.on('disconnected', () => {
+            if (!this.isHost || this.peer !== peer) return;
+            console.warn('📡 [HOST] Serveur de signalisation perdu — tentatives de reconnexion');
+            const retry = () => {
+                if (!this.isHost || this.peer !== peer || peer.destroyed || !peer.disconnected) return;
+                try { peer.reconnect(); } catch (e) {}
+                setTimeout(retry, 3000);
+            };
+            setTimeout(retry, 1000);
+        });
+    }
+
+    /**
+     * ✨ NOUVEAU : envoie un message ponctuel à un pair (connexion brute, NON enregistrée dans
+     * this.connections), puis la referme. Résout après l'envoi, rejette si le pair est
+     * introuvable ou ne répond pas. Utilisé par le nouvel hôte pour prévenir l'ancien hôte.
+     */
+    notifyPeer(targetId, message, timeoutMs = 4000) {
+        return new Promise((resolve, reject) => {
+            if (!this.peer || this.peer.destroyed || this.peer.disconnected) {
+                reject(new Error('peer indisponible'));
+                return;
+            }
+            const conn = this.peer.connect(targetId);
+            const cleanup = () => { clearTimeout(timer); this.peer.off('error', onErr); };
+            const onErr = (err) => {
+                if (err?.type === 'peer-unavailable') { cleanup(); reject(err); }
+            };
+            const timer = setTimeout(() => {
+                cleanup();
+                try { conn.close(); } catch (e) {}
+                reject(new Error('timeout'));
+            }, timeoutMs);
+            conn.once('open', () => {
+                cleanup();
+                conn.send(message);
+                setTimeout(() => { try { conn.close(); } catch (e) {} }, 1500);
+                resolve();
+            });
+            this.peer.on('error', onErr);
+        });
     }
 
     /**

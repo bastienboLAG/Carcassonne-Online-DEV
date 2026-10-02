@@ -15,6 +15,10 @@ export class LobbyJoin {
         try {
             const lobbyHandler = (data, from) => {
                 console.log('📨 [INVITÉ] Reçu:', data);
+                // ✅ FIX : un invité promu hôte garde ce handler au bas de sa chaîne réseau — il
+                // ne doit réagir à AUCUN message destiné aux invités (game-in-progress → modale
+                // « Comment rejoindre ? », return-to-lobby → sortie de la partie, etc.)
+                if (d.getMultiplayer().isHost) return;
 
                 if (data.type === 'welcome') {
                     console.log('🎉', data.message);
@@ -44,9 +48,6 @@ export class LobbyJoin {
                 }
 
                 if (data.type === 'game-in-progress') {
-                    // ✅ FIX : un invité promu hôte garde ce handler au bas de sa chaîne réseau —
-                    // il ne doit jamais réagir à un message destiné aux invités (défense en profondeur)
-                    if (d.getMultiplayer().isHost) return;
                     clearTimeout(window._pendingPlayerInfoTimer);
                     if (window._isAutoReconnecting) {
                         window._isAutoReconnecting = false;

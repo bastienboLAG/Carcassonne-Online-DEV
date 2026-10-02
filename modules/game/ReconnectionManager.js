@@ -50,6 +50,9 @@ export class ReconnectionManager {
         // HostMigration (changement d'hôte) ; sans ce callback, ancien comportement (reconnexion
         // en boucle vers le même code).
         this._onHostLost = deps.onHostLost ?? null;
+        // ✨ NOUVEAU : appelé quand l'hôte constate que C'EST LUI qui est isolé (hors ligne /
+        // serveur de signalisation perdu) au moment où ses invités « se déconnectent ».
+        this._onHostIsolated = deps.onHostIsolated ?? null;
 
         this.gamePaused         = false;
         this.pauseTimerInterval = null;
@@ -150,6 +153,16 @@ export class ReconnectionManager {
     /**
      * ✨ NOUVEAU : point d'entrée unique pour « l'hôte est injoignable » côté invité.
      */
+    /**
+     * ✨ NOUVEAU : l'hôte lui-même est-il coupé du réseau ? (auquel cas la « déconnexion » de
+     * ses invités n'est qu'un effet de sa propre coupure, pas un départ de leur part)
+     */
+    _isHostIsolated() {
+        const peer = this.multiplayer.peer;
+        return (typeof navigator !== 'undefined' && navigator.onLine === false)
+            || !!peer?.disconnected || !!peer?.destroyed;
+    }
+
     _notifyHostLost() {
         if (this._onHostLost) this._onHostLost();
         else this.startAutoReconnect();
@@ -540,6 +553,14 @@ export class ReconnectionManager {
 
             if (d.getVoluntaryLeaves().has(peerId)) {
                 d.getVoluntaryLeaves().delete(peerId);
+                return;
+            }
+
+            // ✨ NOUVEAU : si c'est l'hôte qui est isolé, ne marque personne « déconnecté » et
+            // n'affiche pas « Partie en pause » : voir HostMigration.onSelfIsolated.
+            if (this._isHostIsolated()) {
+                console.warn('📵 [HOST] Invité perdu mais je suis moi-même isolé — mode isolement');
+                if (this._onHostIsolated) this._onHostIsolated();
                 return;
             }
 

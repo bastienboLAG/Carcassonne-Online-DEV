@@ -174,6 +174,29 @@ let reconnectionManager = null;
 let gameSyncCallbacks   = null;   // instance GameSyncCallbacks, expose hostDrawAndSend()
 const _voluntaryLeaves = new Set(); // peerIds ayant quitté volontairement (leave-game)
 
+// ✨ NOUVEAU : met à jour tous les affichages du code de partie (menu en jeu, lobby) — appelé
+// après un changement d'hôte. Auparavant ces textes n'étaient écrits qu'au démarrage de partie
+// (initGameMenu) / à la création ou la jonction du salon.
+function _refreshGameCodeDisplays() {
+    const menu = document.getElementById('menu-code-display');
+    if (menu) menu.textContent = `Code : ${gameCode || '—'}`;
+    const lobbyText = document.getElementById('game-code-text');
+    if (lobbyText) lobbyText.textContent = `Code: ${gameCode}`;
+    const lobbyBox = document.getElementById('game-code-container');
+    if (lobbyBox && gameCode) lobbyBox.style.display = 'block';
+}
+
+// ✨ NOUVEAU (option B) : l'ancien hôte, informé que la partie continue chez un nouvel hôte,
+// quitte son rôle et rejoint automatiquement avec le nouveau code (même pseudo → CAS 3).
+async function _rejoinAsGuest(code) {
+    returnToInitialLobby();
+    // returnToInitialLobby() détruit l'ancien peer après 100 ms : attendre avant de rejoindre
+    await new Promise(r => setTimeout(r, 900));
+    document.getElementById('join-code-input').value = code;
+    window._isAutoReconnecting = true; // réponse automatique player-info (pas de modale joueur/spectateur)
+    await _doJoin(false);
+}
+
 // ✨ NOUVEAU — Changement d'hôte en cours de partie (snapshot, élection, promotion)
 let hostMigration = null;
 function _getHostMigration() {
@@ -190,8 +213,9 @@ function _getHostMigration() {
             setPlayers:             (v) => { players = v; },
             getIsHost:              () => isHost,
             setIsHost:              (v) => { isHost = v; },
-            setGameCode:            (v) => { gameCode = v; },
+            setGameCode:            (v) => { gameCode = v; _refreshGameCodeDisplays(); },
             getVoluntaryLeaves:     () => _voluntaryLeaves,
+            rejoinAsGuest:          (code) => _rejoinAsGuest(code),
             setCurrentTileForPlayer:(v) => { currentTileForPlayer = v; },
             attachGameSyncCallbacks: () => attachGameSyncCallbacks(),
             getInGameNetworkDeps:   () => _buildInGameNetworkDeps(),
@@ -1354,6 +1378,8 @@ function _makeStarter() {
             resolvePendingPrisonerExchange: (peerId) => resolvePendingPrisonerExchangeForPlayer(peerId),
             // ✨ NOUVEAU — perte de l'hôte côté invité → changement d'hôte (HostMigration)
             onHostLost: () => _getHostMigration().onHostLost(),
+            // ✨ NOUVEAU — l'hôte constate qu'il est lui-même isolé du réseau
+            onHostIsolated: () => _getHostMigration().onSelfIsolated(),
         }),
         // deps pour reconnectionManager.initStateHandlers
         getStateHandlerDeps: () => ({

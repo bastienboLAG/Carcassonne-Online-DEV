@@ -13,6 +13,16 @@
  *  - L'état restauré est celui du DÉBUT du tour en cours (le dernier snapshot). Si l'ancien
  *    hôte jouait, son tour est sauté et la tuile déjà piochée passe au joueur suivant.
  *
+ * Ancien hôte (option B) :
+ *  - s'il est lui-même isolé (hors ligne / serveur de signalisation perdu), il le détecte
+ *    (ReconnectionManager._isHostIsolated) au lieu de croire que ses invités sont partis : mode
+ *    « isolement » (onSelfIsolated) — overlay de reconnexion, reconnexion au serveur de
+ *    signalisation sous le MÊME id, aucune pause ni exclusion de joueur ;
+ *  - s'il retrouve internet avant la fin du délai de grâce des invités, ceux-ci le rejoignent
+ *    (CAS 5) et la partie continue chez lui ;
+ *  - sinon le nouvel hôte le prévient (`host-moved`, sondage par son ancien id) : il quitte
+ *    son rôle d'hôte et rejoint automatiquement la partie avec le nouveau code et son pseudo.
+ *
  * Les invités gardent le même id réseau pendant toute la procédure (pas de destroy/recréation
  * du peer) : la liste des successeurs du snapshot reste valable, et le nouvel hôte les
  * retrouve via le CAS 5 de ReconnectionManager.initInGameNetworkHandler (même id).
@@ -24,6 +34,9 @@ export const HOST_GRACE_MS = 5000;
 const RETRY_DELAY_MS   = 1000;  // pause entre deux tentatives de connexion
 const HELLO_TIMEOUT_MS = 6000;  // attente de la confirmation du (nouvel) hôte après ouverture du canal
 const POST_PROMOTION_SNAPSHOT_MS = 5000; // snapshot de rattrapage après une promotion
+const PROBE_INTERVAL_MS = 3000;       // nouvel hôte : pause entre deux tentatives de prévenir l'ancien hôte
+const PROBE_MAX_MS      = 15 * 60000; // nouvel hôte : abandon du sondage de l'ancien hôte
+const ISOLATION_RESTORED_WAIT_MS = 90000; // ancien hôte reconnecté au réseau : attente max d'invités/notification
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const isInactive = (p) => p.color === 'spectator' || p.disconnected === true || p.kicked === true;
@@ -37,6 +50,12 @@ export class HostMigration {
         this._snapshot = null;   // dernier snapshot reçu (invités)
         this._state = 'idle';    // 'idle' | 'running'
         this._runId = 0;         // invalide une procédure en cours (reset / nouvelle partie)
+        this._isolated = false;  // ancien hôte : suis-je isolé du réseau ?
+        // Connexions existantes au moment où l'hôte devient isolé : elles sont mortes mais peuvent
+        // rester marquées « ouvertes » plusieurs dizaines de secondes. Seule une connexion
+        // NOUVELLE prouve qu'un joueur est réellement revenu.
+        this._staleConns = new Set();
+        this._listenersInstalled = false;
     }
 
     /** Remise à zéro (retour au lobby, nouvelle partie). */
@@ -44,6 +63,7 @@ export class HostMigration {
         this._runId++;
         this._snapshot = null;
         this._state = 'idle';
+        this._isolated = false;
     }
 
     /**
@@ -56,6 +76,19 @@ export class HostMigration {
         if (!gs) return;
         gs.onHostSnapshot  = (data) => { if (!d.getIsHost()) this._snapshot = data; };
         gs.onTurnEndSynced = () => { if (d.getIsHost()) this.broadcastSnapshot(); };
+        gs.onHostMoved     = (data, from) => this.onHostMoved(data, from);
+
+        // Hôte : perte de réseau de l'appareil = c'est MOI qui suis isolé (détection immédiate,
+        // avant que les invités ne « se déconnectent » un par un)
+        if (!this._listenersInstalled) {
+            this._listenersInstalled = true;
+            window.addEventListener('offline', () => {
+                setTimeout(() => {
+                    if (navigator.onLine === false && d.getIsHost() && d.getGameState()
+                        && d.getMultiplayer().connections.length > 0) this.onSelfIsolated();
+                }, 1500);
+            });
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -123,8 +156,14 @@ export class HostMigration {
     async _run(snap, runId) {
         const d    = this._d;
         const mp   = d.getMultiplayer();
-        const t0   = Date.now();
         const myId = mp.playerId;
+
+        // ✨ NOUVEAU : si c'est CET invité qui est hors ligne, rien à élire : on attend le retour
+        // du réseau (comme l'ancienne reconnexion automatique) puis on lance l'élection. Évite
+        // qu'un invité sans internet se promeuve hôte seul ou finisse au lobby.
+        await this._waitOnline(runId);
+        if (runId !== this._runId) return;
+        const t0 = Date.now();
 
         // 1) l'ancien hôte (peut-être une simple coupure), 2) les successeurs dans l'ordre
         const targets = [snap.hostId, ...snap.candidates];
@@ -172,6 +211,16 @@ export class HostMigration {
             await sleep(RETRY_DELAY_MS);
         }
         return false;
+    }
+
+    async _waitOnline(runId) {
+        const mp = this._d.getMultiplayer();
+        while (runId === this._runId) {
+            if (navigator.onLine !== false) {
+                try { await mp.ensurePeerReady(); return; } catch (e) { /* signalisation pas encore revenue */ }
+            }
+            await sleep(1000);
+        }
     }
 
     async _waitHello(runId) {
@@ -223,6 +272,7 @@ export class HostMigration {
             if (me) me.id = myId;
         }
         const oldIdx = gsd.players.findIndex(p => p.id === oldHostId);
+        const oldHostName = oldIdx !== -1 ? gsd.players[oldIdx].name : null;
         if (oldIdx !== -1) {
             gsd.players[oldIdx].disconnected = true;
             gsd.players[oldIdx].kicked = true; // il pourra revenir comme invité (CAS 3, même pseudo)
@@ -273,5 +323,130 @@ export class HostMigration {
 
         // Snapshot de rattrapage : les invités n'en ont qu'un ancien (hostId = ancien hôte)
         setTimeout(() => this.broadcastSnapshot(), POST_PROMOTION_SNAPSHOT_MS);
+
+        // ✨ NOUVEAU (option B) : prévenir l'ancien hôte dès qu'il redevient joignable
+        this._probeOldHost(oldHostId, oldHostName, myId, runId);
+    }
+
+    /**
+     * ✨ NOUVEAU : nouvel hôte — tente régulièrement de joindre l'ancien hôte par son ancien id
+     * (qui redevient joignable s'il retrouve internet) pour lui annoncer le nouveau code.
+     * S'arrête dès que : message livré, joueur de même pseudo de nouveau actif (il est revenu
+     * de lui-même), perte du rôle d'hôte, reset, ou délai maximal.
+     */
+    async _probeOldHost(oldHostId, oldHostName, newCode, runId) {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        const end = Date.now() + PROBE_MAX_MS;
+        while (Date.now() < end) {
+            if (runId !== this._runId || !d.getIsHost()) return;
+            const gameState = d.getGameState();
+            if (!gameState) return;
+            if (oldHostName && gameState.players.some(p => p.name === oldHostName && !p.kicked && !p.disconnected)) return;
+            try {
+                await mp.notifyPeer(oldHostId, { type: 'host-moved', oldHostId, newCode });
+                console.warn(`📨 [MIGRATION] Ancien hôte ${oldHostId} prévenu du nouveau code`);
+                return;
+            } catch (e) { /* encore hors ligne : on réessaie */ }
+            await sleep(PROBE_INTERVAL_MS);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Ancien hôte : isolé du réseau, puis informé du nouvel hôte
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * ✨ NOUVEAU : appelé quand CET hôte constate qu'il est coupé du réseau (événement
+     * « offline », ou perte d'invités alors que son propre peer est déconnecté). Idempotent.
+     */
+    onSelfIsolated() {
+        const d  = this._d;
+        const rm = d.getReconnectionManager();
+        const mp = d.getMultiplayer();
+        if (this._isolated || !d.getIsHost() || !d.getGameState() || !rm) return;
+
+        this._isolated = true;
+        this._staleConns = new Set(mp.connections);
+        const runId = this._runId;
+        console.warn('📵 [MIGRATION] Je suis isolé du réseau (hôte) — attente du retour de la connexion');
+        if (rm.gamePaused) rm.resumeGame('reconnected'); // retire une éventuelle modale « Partie en pause »
+        rm._showReconnectOverlay();
+        this._isolationLoop(runId).catch(err => {
+            console.error('❌ [MIGRATION] Erreur en mode isolement:', err);
+            this._isolated = false;
+        });
+    }
+
+    async _isolationLoop(runId) {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        let restoredAt = null;
+
+        while (this._isolated && runId === this._runId) {
+            const online = navigator.onLine !== false;
+            if (online) {
+                try {
+                    await mp.ensurePeerReady();   // se reconnecte au serveur de signalisation sous le même id
+                    mp.resumeAccepting();          // (le peer a pu être recréé)
+                    if (restoredAt === null) {
+                        restoredAt = Date.now();
+                        console.warn('📶 [MIGRATION] Réseau rétabli — en attente des invités ou du nouvel hôte');
+                    }
+                } catch (e) {
+                    restoredAt = null; // signalisation pas encore revenue
+                }
+            } else {
+                restoredAt = null;
+            }
+
+            if (restoredAt !== null) {
+                // Des invités sont revenus (leur délai de grâce n'était pas écoulé) : la partie continue ici
+                if (mp.connections.some(c => c.open && !this._staleConns.has(c))) {
+                    console.warn('✅ [MIGRATION] Invités de retour — fin de l\'isolement');
+                    this._isolated = false;
+                    d.getReconnectionManager()?.hideReconnectOverlay();
+                    d.afficherToast('✅ Connexion rétablie.');
+                    return;
+                }
+                if (Date.now() - restoredAt > ISOLATION_RESTORED_WAIT_MS) {
+                    console.error('❌ [MIGRATION] Personne n\'est revenu — retour au lobby');
+                    this._isolated = false;
+                    d.returnToInitialLobby('Connexion rétablie, mais la partie est introuvable. Demandez le code actuel aux autres joueurs.');
+                    return;
+                }
+            }
+            await sleep(1000);
+        }
+    }
+
+    /**
+     * ✨ NOUVEAU : message `host-moved` reçu par l'ANCIEN hôte (qui se croit encore hôte).
+     * Il rejoint alors la partie comme invité, avec le nouveau code et son pseudo (le nouvel
+     * hôte le reconnaît : CAS 3, joueur exclu de même pseudo).
+     */
+    onHostMoved(data, from) {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        if (!d.getIsHost() || !d.getGameState()) return;
+        if (data.oldHostId !== mp.playerId || !data.newCode) return;
+        // Si d'autres joueurs sont toujours connectés à moi, ce n'est pas moi qui ai été remplacé
+        if (mp.connections.some(c => c.open && c.peer !== from && !this._staleConns.has(c))) {
+            console.warn('⚠️ [MIGRATION] host-moved ignoré : des joueurs sont encore connectés à moi');
+            return;
+        }
+
+        console.warn(`➡️ [MIGRATION] La partie continue chez ${from} (code ${data.newCode}) — je la rejoins comme invité`);
+        this._isolated = false;
+        this._runId++;
+        d.getVoluntaryLeaves().add(from);
+        // Abandonner la connexion de notification AVANT de quitter la partie : sinon le
+        // `return-to-lobby` diffusé par returnToLobby() atteindrait le nouvel hôte.
+        mp.connections.filter(c => c.peer === from).forEach(c => { c._replaced = true; try { c.close(); } catch (e) {} });
+        mp.connections = mp.connections.filter(c => c.peer !== from);
+        mp._connectedPeers.delete(from);
+
+        d.afficherToast(`🔄 La partie continue avec un nouvel hôte (code ${data.newCode}) — reconnexion…`);
+        d.rejoinAsGuest(data.newCode);
     }
 }

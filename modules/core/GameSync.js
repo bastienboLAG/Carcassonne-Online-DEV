@@ -41,6 +41,7 @@ export class GameSync {
         // ✨ NOUVEAU — Changement d'hôte (voir modules/game/HostMigration.js)
         this.onHostSnapshot  = null; // invités : snapshot reçu de l'hôte
         this.onTurnEndSynced = null; // hôte : appelé après chaque syncTurnEnd (pour diffuser le snapshot)
+        this.onHostMoved     = null; // ancien hôte : le nouvel hôte lui annonce le nouveau code
     }
 
     /**
@@ -79,7 +80,8 @@ export class GameSync {
             'tower-floor-placed', 'tower-capture-executed', 'tower-lock-executed', // ✨ NOUVEAU
             'prisoner-exchange-resolved', 'prisoner-exchange-pending', // ✨ NOUVEAU — Échange auto de prisonniers
             'prisoner-buyback-executed', // ✨ NOUVEAU — Rachat de prisonnier
-            'host-snapshot' // ✨ NOUVEAU — Snapshot d'état diffusé par l'hôte (changement d'hôte)
+            'host-snapshot', // ✨ NOUVEAU — Snapshot d'état diffusé par l'hôte (changement d'hôte)
+            'host-moved'     // ✨ NOUVEAU — Le nouvel hôte prévient l'ancien (reconnecté) du nouveau code
             // NOTE: 'return-to-lobby', 'player-order-update' et 'game-starting' 
             //       sont gérés par le lobby handler
             // NOTE: 'tower-floor-request', 'tower-capture-request', 'tower-lock-request',
@@ -766,6 +768,11 @@ export class GameSync {
             // ✨ NOUVEAU — Changement d'hôte : snapshot reçu par les invités
             case 'host-snapshot':
                 if (!this.isHost && this.onHostSnapshot) this.onHostSnapshot(data);
+                break;
+
+            // ✨ NOUVEAU — Changement d'hôte : reçu par l'ANCIEN hôte (qui se croit encore hôte)
+            case 'host-moved':
+                if (this.isHost && this.onHostMoved) this.onHostMoved(data, from);
                 break;
             
             case 'game-paused':
