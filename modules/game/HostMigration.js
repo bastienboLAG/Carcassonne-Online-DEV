@@ -23,19 +23,26 @@
  *  - sinon le nouvel hôte le prévient (`host-moved`, sondage par son ancien id) : il quitte
  *    son rôle d'hôte et rejoint automatiquement la partie avec le nouveau code et son pseudo.
  *
+ * Lobby (lot 2) : même mécanique, sans snapshot — les invités connaissent déjà la liste des
+ *  joueurs. Hôte qui QUITTE le salon : il désigne un successeur (`lobby-host-transfer`, ordre de
+ *  la liste des joueurs) au lieu de fermer le salon. Hôte qui disparaît : élection identique à
+ *  celle de la partie (grâce, puis successeurs dans l'ordre de la liste).
+ *
  * Les invités gardent le même id réseau pendant toute la procédure (pas de destroy/recréation
  * du peer) : la liste des successeurs du snapshot reste valable, et le nouvel hôte les
  * retrouve via le CAS 5 de ReconnectionManager.initInGameNetworkHandler (même id).
  */
 
-// 🧪 Valeur de test. Passer à 20000 (20 s) une fois les tests terminés.
-export const HOST_GRACE_MS = 5000;
+// Délai de grâce : temps laissé à un hôte injoignable (puis à chaque successeur) pour revenir
+// avant de passer au suivant. S'ajoute au délai de détection du heartbeat (HeartbeatManager, 10 s).
+export const HOST_GRACE_MS = 20000;
 
 const RETRY_DELAY_MS   = 1000;  // pause entre deux tentatives de connexion
 const HELLO_TIMEOUT_MS = 6000;  // attente de la confirmation du (nouvel) hôte après ouverture du canal
 const POST_PROMOTION_SNAPSHOT_MS = 5000; // snapshot de rattrapage après une promotion
 const PROBE_INTERVAL_MS = 3000;       // nouvel hôte : pause entre deux tentatives de prévenir l'ancien hôte
 const PROBE_MAX_MS      = 15 * 60000; // nouvel hôte : abandon du sondage de l'ancien hôte
+const LOBBY_SWEEP_MS = 40000;  // nouvel hôte de lobby : retire de la liste les invités qui ne sont pas revenus
 const ISOLATION_RESTORED_WAIT_MS = 90000; // ancien hôte reconnecté au réseau : attente max d'invités/notification
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -56,6 +63,8 @@ export class HostMigration {
         // NOUVELLE prouve qu'un joueur est réellement revenu.
         this._staleConns = new Set();
         this._isolatedAt = 0;
+        this._mode = 'game';       // 'game' | 'lobby'
+        this._lobbyHello = false;  // lobby : le (nouvel) hôte a-t-il répondu à notre player-info ?
         this._listenersInstalled = false;
     }
 
@@ -143,6 +152,7 @@ export class HostMigration {
         }
 
         this._state = 'running';
+        this._mode = 'game';
         const runId = ++this._runId;
         console.warn(`🚨 [MIGRATION] Hôte perdu (${snap.hostId}) — délai de grâce ${HOST_GRACE_MS} ms, successeurs: ${snap.candidates.join(', ') || '(aucun)'}`);
 
@@ -152,6 +162,85 @@ export class HostMigration {
             console.error('❌ [MIGRATION] Erreur inattendue:', err);
             this._state = 'idle';
         });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Lobby : perte ou départ volontaire de l'hôte du salon
+    // ─────────────────────────────────────────────────────────────
+
+    /** Successeurs possibles au lobby : ordre de la liste des joueurs, hors hôte et spectateurs. */
+    _lobbyCandidates(hostId) {
+        return this._d.getPlayers()
+            .filter(p => p.id !== hostId && !p.isHost && p.color !== 'spectator')
+            .map(p => p.id);
+    }
+
+    /** Invité au lobby : l'hôte du salon est injoignable (fermeture, erreur réseau, heartbeat). */
+    onLobbyHostLost() {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        if (this._state !== 'idle' || d.getIsHost() || d.getGameState()) return;
+        const hostId = mp.hostPeerId;
+        if (!hostId) return;
+        console.warn(`🚨 [MIGRATION][LOBBY] Hôte du salon perdu (${hostId})`);
+        this._startLobbyRun({ hostId, candidates: this._lobbyCandidates(hostId), skipHost: false });
+    }
+
+    /** Invité au lobby : l'hôte annonce qu'il quitte le salon et désigne ses successeurs. */
+    onLobbyHostTransfer(data) {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        if (this._state !== 'idle' || d.getIsHost() || d.getGameState()) return;
+        if (!data?.oldHostId || data.oldHostId !== mp.hostPeerId) return; // uniquement de la part de MON hôte
+        console.warn(`🚪 [MIGRATION][LOBBY] L'hôte quitte le salon — successeurs: ${(data.candidates || []).join(', ')}`);
+        this._startLobbyRun({
+            hostId: data.oldHostId,
+            candidates: (data.candidates || []).filter(id => id !== data.oldHostId),
+            skipHost: true,      // il est parti volontairement : inutile de l'attendre
+            voluntary: true,
+        });
+    }
+
+    /** Hôte au lobby : un invité a répondu à notre player-info (voir LobbyJoin, players-update). */
+    onLobbyHostHello() {
+        if (this._state === 'running' && this._mode === 'lobby') this._lobbyHello = true;
+    }
+
+    _startLobbyRun(snap) {
+        const d = this._d;
+        this._state = 'running';
+        this._mode = 'lobby';
+        const runId = ++this._runId;
+        d.afficherToast(snap.voluntary
+            ? '🔄 L\'hôte quitte le salon — un nouvel hôte va être désigné…'
+            : '⚠️ L\'hôte du salon est injoignable — reprise en cours…');
+        this._run(snap, runId).catch(err => {
+            console.error('❌ [MIGRATION][LOBBY] Erreur inattendue:', err);
+            this._state = 'idle';
+        });
+    }
+
+    /**
+     * Hôte au lobby qui QUITTE le salon (✕ à côté de son nom, ou « Retour lobby » puis ✕) :
+     * au lieu de fermer le salon et d'exclure tout le monde, il passe la main au premier joueur
+     * non spectateur de la liste. S'il n'en reste aucun, ancien comportement.
+     */
+    leaveLobbyAsHost() {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        const myId = mp.playerId;
+        const guests = d.getPlayers().filter(p => !p.isHost && p.id !== myId);
+        const candidates = guests.filter(p => p.color !== 'spectator').map(p => p.id);
+
+        if (candidates.length === 0) {
+            if (guests.length > 0) mp.broadcast({ type: 'you-are-kicked' });
+            d.returnToInitialLobby();
+            return;
+        }
+        console.warn(`🚪 [MIGRATION][LOBBY] Je quitte le salon — successeurs: ${candidates.join(', ')}`);
+        mp.broadcast({ type: 'lobby-host-transfer', oldHostId: myId, candidates });
+        // Laisser le message partir avant de détruire le peer (returnToInitialLobby)
+        setTimeout(() => d.returnToInitialLobby(), 600);
     }
 
     async _run(snap, runId) {
@@ -167,13 +256,14 @@ export class HostMigration {
         const t0 = Date.now();
 
         // 1) l'ancien hôte (peut-être une simple coupure), 2) les successeurs dans l'ordre
-        const targets = [snap.hostId, ...snap.candidates];
+        const targets = snap.skipHost ? [...snap.candidates] : [snap.hostId, ...snap.candidates];
 
         for (const targetId of targets) {
             if (runId !== this._runId) return;
             if (targetId === myId) {
                 console.warn(`👑 [MIGRATION] À mon tour dans la liste (+${Date.now() - t0} ms) — promotion`);
-                await this._promote(snap, runId);
+                if (this._mode === 'lobby') await this._promoteLobby(snap, runId);
+                else await this._promote(snap, runId);
                 return;
             }
             const ok = await this._tryTarget(targetId, runId);
@@ -187,7 +277,9 @@ export class HostMigration {
 
         console.error('❌ [MIGRATION] Aucun hôte joignable — retour au lobby');
         this._state = 'idle';
-        d.returnToInitialLobby("Partie perdue : l'hôte n'est plus joignable.");
+        d.returnToInitialLobby(this._mode === 'lobby'
+            ? "L'hôte du salon n'est plus joignable."
+            : "Partie perdue : l'hôte n'est plus joignable.");
     }
 
     /**
@@ -201,10 +293,16 @@ export class HostMigration {
         const deadline = Date.now() + HOST_GRACE_MS;
         while (Date.now() < deadline) {
             if (runId !== this._runId) return false;
-            window._isAutoReconnecting = true; // LobbyJoin : répondre par player-info au game-in-progress
+            if (this._mode === 'game') window._isAutoReconnecting = true; // LobbyJoin : répondre par player-info au game-in-progress
             try {
                 await mp.reconnectTo(targetId);
-                if (await this._waitHello(runId)) return true;
+                if (this._mode === 'lobby') {
+                    // Au lobby, le (nouvel) hôte n'envoie pas de game-in-progress : on se
+                    // présente nous-mêmes (player-info) et la réponse (players-update) fait foi.
+                    this._lobbyHello = false;
+                    this._d.sendLobbyPlayerInfo();
+                    if (await this._waitLobbyHello(runId)) return true;
+                } else if (await this._waitHello(runId)) return true;
                 console.warn(`⚠️ [MIGRATION] ${targetId} : canal ouvert mais pas de confirmation`);
             } catch (err) {
                 console.log(`⏳ [MIGRATION] ${targetId} injoignable (${err?.type || err?.message})`);
@@ -222,6 +320,16 @@ export class HostMigration {
             }
             await sleep(1000);
         }
+    }
+
+    async _waitLobbyHello(runId) {
+        const end = Date.now() + HELLO_TIMEOUT_MS;
+        while (Date.now() < end) {
+            if (runId !== this._runId) return false;
+            if (this._lobbyHello) return true;
+            await sleep(200);
+        }
+        return false;
     }
 
     async _waitHello(runId) {
@@ -313,6 +421,9 @@ export class HostMigration {
         rm.initInGameNetworkHandler(d.getInGameNetworkDeps()); // heartbeat hôte, player-info (CAS 1-5), etc.
         d.refreshGameMenu();
         d.updateTurnDisplay();
+        // ✨ NOUVEAU (lot 2) : handler lobby hôte, synchro des options, callbacks du salon — pour
+        // que « Retour lobby » fonctionne chez ce nouvel hôte (non activés : la partie garde sa chaîne)
+        d.prepareHostLobby();
 
         // Enfin, accepter les connexions
         mp.startAccepting();
@@ -330,6 +441,66 @@ export class HostMigration {
     }
 
     /**
+     * ✨ NOUVEAU (lot 2) : promotion d'un invité en hôte AU LOBBY. Pas de snapshot : la liste des
+     * joueurs et les options sont déjà chez tous les invités. Les autres invités se présentent
+     * (player-info) comme après n'importe quelle jonction : le handler lobby hôte les (ré)inscrit
+     * et leur renvoie la liste (players-update) et les options (options-sync).
+     */
+    async _promoteLobby(snap, runId) {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        const oldHostId = snap.hostId;
+
+        try {
+            await mp.ensurePeerReady();
+        } catch (err) {
+            console.error('❌ [MIGRATION][LOBBY] Peer inutilisable, promotion impossible:', err);
+            this._state = 'idle';
+            d.returnToInitialLobby('Impossible de reprendre le salon en tant qu\'hôte.');
+            return;
+        }
+        if (runId !== this._runId) return;
+
+        // ── Bloc synchrone ──
+        const myId = mp.playerId;
+        const oldHostName = d.getPlayers().find(p => p.id === oldHostId)?.name ?? null;
+
+        d.setIsHost(true);
+        d.setGameCode(myId);
+        mp.prepareHostTakeover();
+        d.setPlayers(d.getPlayers()
+            .filter(p => p.id !== oldHostId)
+            .map(p => p.id === myId ? { ...p, isHost: true } : p));
+
+        d.prepareHostLobby();   // handler lobby hôte, options, kick / quitter
+        d.activateHostLobby();  // onDataReceived, onPlayerJoined/Left, heartbeat hôte
+        d.refreshLobby();       // liste des joueurs + accès aux options (désormais hôte)
+        mp.startAccepting();    // en dernier
+
+        this._state = 'idle';
+        console.warn(`👑 [MIGRATION][LOBBY] Je suis l'hôte du salon — code : ${myId}`);
+        d.afficherToast(`👑 Vous êtes maintenant l'hôte du salon. Nouveau code : ${myId}`);
+
+        // Les invités qui ne reviennent pas (partis, hors ligne) ne seraient jamais retirés de la
+        // liste : le heartbeat hôte ne surveille que les pairs connectés.
+        setTimeout(() => {
+            if (runId !== this._runId || !d.getIsHost() || d.getGameState()) return;
+            const alive = new Set(mp.connections.filter(c => c.open).map(c => c.peer));
+            const before = d.getPlayers();
+            const kept = before.filter(p => p.isHost || p.id === myId || alive.has(p.id));
+            if (kept.length !== before.length) {
+                console.warn(`🧹 [MIGRATION][LOBBY] ${before.length - kept.length} joueur(s) non revenu(s) retiré(s) du salon`);
+                d.setPlayers(kept);
+                d.refreshLobby();
+                mp.broadcast({ type: 'players-update', players: kept });
+            }
+        }, LOBBY_SWEEP_MS);
+
+        // Départ involontaire : prévenir l'ancien hôte s'il redevient joignable
+        if (!snap.voluntary) this._probeOldHost(oldHostId, oldHostName, myId, runId);
+    }
+
+    /**
      * ✨ NOUVEAU : nouvel hôte — tente régulièrement de joindre l'ancien hôte par son ancien id
      * (qui redevient joignable s'il retrouve internet) pour lui annoncer le nouveau code.
      * S'arrête dès que : message livré, joueur de même pseudo de nouveau actif (il est revenu
@@ -342,8 +513,11 @@ export class HostMigration {
         while (Date.now() < end) {
             if (runId !== this._runId || !d.getIsHost()) return;
             const gameState = d.getGameState();
-            if (!gameState) return;
-            if (oldHostName && gameState.players.some(p => p.name === oldHostName && !p.kicked && !p.disconnected)) return;
+            if (gameState) {
+                if (oldHostName && gameState.players.some(p => p.name === oldHostName && !p.kicked && !p.disconnected)) return;
+            } else if (oldHostName && d.getPlayers().some(p => p.name === oldHostName && p.id !== oldHostId)) {
+                return; // au lobby : il est déjà revenu de lui-même sous un autre id
+            }
             try {
                 await mp.notifyPeer(oldHostId, { type: 'host-moved', oldHostId, newCode });
                 console.warn(`📨 [MIGRATION] Ancien hôte ${oldHostId} prévenu du nouveau code`);
@@ -472,10 +646,16 @@ export class HostMigration {
     onHostMoved(data, from) {
         const d  = this._d;
         const mp = d.getMultiplayer();
-        if (!d.getIsHost() || !d.getGameState()) return;
+        if (!d.getIsHost()) return;
         if (data.oldHostId !== mp.playerId || !data.newCode) return;
+        const gs = d.getGameState();
         // Si d'autres joueurs sont toujours connectés à moi, ce n'est pas moi qui ai été remplacé
-        if ((d.getGameState()?.players ?? []).some(p => p.id !== mp.playerId && p.id !== from && this._guestAlive(p.id))) {
+        // (en partie : joueurs réellement joignables ; au lobby : joueurs encore listés — le
+        // heartbeat du salon retire ceux qui ne répondent plus)
+        const stillHaveGuests = gs
+            ? gs.players.some(p => p.id !== mp.playerId && p.id !== from && this._guestAlive(p.id))
+            : d.getPlayers().some(p => !p.isHost && p.id !== mp.playerId && p.id !== from);
+        if (stillHaveGuests) {
             console.warn('⚠️ [MIGRATION] host-moved ignoré : des joueurs sont encore connectés à moi');
             return;
         }
@@ -490,7 +670,7 @@ export class HostMigration {
         mp.connections = mp.connections.filter(c => c.peer !== from);
         mp._connectedPeers.delete(from);
 
-        d.afficherToast(`🔄 La partie continue avec un nouvel hôte (code ${data.newCode}) — reconnexion…`);
-        d.rejoinAsGuest(data.newCode);
+        d.afficherToast(`🔄 ${gs ? 'La partie continue' : 'Le salon continue'} avec un nouvel hôte (code ${data.newCode}) — reconnexion…`);
+        d.rejoinAsGuest(data.newCode, !!gs);
     }
 }

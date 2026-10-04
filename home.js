@@ -188,12 +188,14 @@ function _refreshGameCodeDisplays() {
 
 // ✨ NOUVEAU (option B) : l'ancien hôte, informé que la partie continue chez un nouvel hôte,
 // quitte son rôle et rejoint automatiquement avec le nouveau code (même pseudo → CAS 3).
-async function _rejoinAsGuest(code) {
+async function _rejoinAsGuest(code, inGame = true) {
     returnToInitialLobby();
     // returnToInitialLobby() détruit l'ancien peer après 100 ms : attendre avant de rejoindre
     await new Promise(r => setTimeout(r, 900));
     document.getElementById('join-code-input').value = code;
-    window._isAutoReconnecting = true; // réponse automatique player-info (pas de modale joueur/spectateur)
+    // En partie : réponse automatique player-info au game-in-progress (pas de modale
+    // joueur/spectateur). Au salon, la jonction normale suffit (pas de game-in-progress).
+    if (inGame) window._isAutoReconnecting = true;
     await _doJoin(false);
 }
 
@@ -216,7 +218,17 @@ function _getHostMigration() {
             setIsHost:              (v) => { isHost = v; },
             setGameCode:            (v) => { gameCode = v; _refreshGameCodeDisplays(); },
             getVoluntaryLeaves:     () => _voluntaryLeaves,
-            rejoinAsGuest:          (code) => _rejoinAsGuest(code),
+            rejoinAsGuest:          (code, inGame) => _rejoinAsGuest(code, inGame),
+            // ✨ NOUVEAU (lot 2) — hôte de lobby
+            prepareHostLobby:       () => _prepareHostLobby(),
+            activateHostLobby:      () => _activateHostLobby(),
+            refreshLobby:           () => { lobbyUI.setPlayers(players); updateLobbyUI(); },
+            sendLobbyPlayerInfo:    () => multiplayer.broadcast({
+                type: 'player-info', name: playerName, color: playerColor,
+                isSpectator: playerColor === 'spectator',
+                version: APP_VERSION,
+                origin: window.location.hostname + window.location.pathname.replace(/\/+$/, ''),
+            }),
             setCurrentTileForPlayer:(v) => { currentTileForPlayer = v; },
             attachGameSyncCallbacks: () => attachGameSyncCallbacks(),
             getInGameNetworkDeps:   () => _buildInGameNetworkDeps(),
@@ -599,6 +611,176 @@ colorOptions.forEach(option => {
 // ═══════════════════════════════════════════════════════
 // LOBBY — créer une partie
 // ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+// ✨ NOUVEAU — Installation d'un hôte de lobby
+// Factorisé depuis le clic « Créer une partie » pour être réutilisé quand un invité devient
+// hôte (changement d'hôte en partie ou au lobby — voir modules/game/HostMigration.js).
+// ═══════════════════════════════════════════════════════
+let _hostOptionSyncInstalled = false;
+
+function _installHostLobbyOptionSync() {
+    if (_hostOptionSyncInstalled) return; // listeners DOM : une seule installation (relisent `multiplayer` dynamiquement)
+    _hostOptionSyncInstalled = true;
+
+    // Sync temps réel de toutes les options vers les invités
+    ['base-fields', 'list-remaining', 'use-test-deck', 'enable-debug', 'ext-abbot', 'tiles-abbot', 'ext-large-meeple', 'ext-cathedrals', 'ext-inns', 'tiles-inns-cathedrals', 'tiles-traders-builders', 'ext-builder', 'ext-merchants', 'ext-pig', 'tiles-dragon', 'ext-dragon', 'ext-princess', 'ext-portal', 'ext-fairy-protection', 'ext-fairy-score-turn', 'ext-fairy-score-zone', 'tiles-tower', 'ext-tower'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', (e) => {
+            multiplayer.broadcast({ type: 'option-change', option: id, value: e.target.checked });
+        });
+    });
+    // Sync des radios (unplaceable + start)
+    document.querySelectorAll('input[name="unplaceable"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            if (e.target.checked) multiplayer.broadcast({ type: 'option-change', option: 'unplaceable', value: e.target.value });
+        });
+    });
+    document.querySelectorAll('input[name="start"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            if (e.target.checked) multiplayer.broadcast({ type: 'option-change', option: 'start', value: e.target.value });
+        });
+    });
+}
+
+function _lobbyHeartbeatTimeout(peerId) {
+    players = players.filter(p => p.id !== peerId);
+    lobbyUI.setPlayers(players);
+    multiplayer.broadcast({ type: 'players-update', players });
+    console.warn(`💔 Joueur ${peerId} retiré du lobby (timeout heartbeat)`);
+}
+
+function _buildHostLobbyHandler() {
+    return (data, from) => {
+        console.log('📨 [HÔTE] Reçu:', data);
+
+        if (data.type === 'player-info') {
+            // Vérifier compatibilité version + origine
+            const _compat = _checkCompatibility(data.version, data.origin);
+            if (!_compat.ok) {
+                multiplayer.sendTo(from, { type: 'rejoin-rejected', reason: _compat.reason });
+                return;
+            }
+            if (!players.find(p => p.id === from)) {
+                const taken    = players.map(p => p.color);
+                const assigned = taken.includes(data.color)
+                    ? (allColors.find(c => !taken.includes(c)) || 'blue')
+                    : data.color;
+                players.push({ id: from, name: data.name, color: assigned, isHost: false });
+                lobbyUI.setPlayers(players);
+            }
+            multiplayer.broadcast({ type: 'players-update', players });
+
+            // ✅ Envoyer l'état courant des options directement au nouvel invité
+            // (les broadcasts précédents ne l'avaient pas encore, il les a manqués)
+            const currentOptions = {
+                'base-fields':           document.getElementById('base-fields')?.checked           ?? true,
+                'list-remaining':        document.getElementById('list-remaining')?.checked        ?? true,
+                'use-test-deck':         document.getElementById('use-test-deck')?.checked         ?? false,
+                'enable-debug':          document.getElementById('enable-debug')?.checked          ?? false,
+                'unplaceable':           document.querySelector('input[name="unplaceable"]:checked')?.value ?? 'reshuffle',
+                'ext-abbot':             document.getElementById('ext-abbot')?.checked             ?? false,
+                'tiles-abbot':           document.getElementById('tiles-abbot')?.checked           ?? false,
+                'ext-large-meeple':      document.getElementById('ext-large-meeple')?.checked      ?? false,
+                'ext-cathedrals':        document.getElementById('ext-cathedrals')?.checked        ?? false,
+                'ext-inns':              document.getElementById('ext-inns')?.checked              ?? false,
+                'tiles-inns-cathedrals': document.getElementById('tiles-inns-cathedrals')?.checked ?? false,
+                'tiles-traders-builders':document.getElementById('tiles-traders-builders')?.checked ?? false,
+                'ext-builder':           document.getElementById('ext-builder')?.checked           ?? false,
+                'ext-merchants':         document.getElementById('ext-merchants')?.checked         ?? false,
+                'ext-pig':               document.getElementById('ext-pig')?.checked               ?? false,
+                'tiles-dragon':          document.getElementById('tiles-dragon')?.checked          ?? false,
+                'ext-dragon':            document.getElementById('ext-dragon')?.checked            ?? false,
+                'ext-princess':          document.getElementById('ext-princess')?.checked          ?? false,
+                'ext-portal':            document.getElementById('ext-portal')?.checked            ?? false,
+                'ext-fairy-protection':  document.getElementById('ext-fairy-protection')?.checked  ?? false,
+                'ext-fairy-score-turn':  document.getElementById('ext-fairy-score-turn')?.checked  ?? false,
+                'ext-fairy-score-zone':  document.getElementById('ext-fairy-score-zone')?.checked  ?? false,
+                'tiles-tower':           document.getElementById('tiles-tower')?.checked           ?? false, // ✨ NOUVEAU
+                'ext-tower':             document.getElementById('ext-tower')?.checked             ?? false, // ✨ NOUVEAU
+                'start':                 document.querySelector('input[name="start"]:checked')?.value ?? 'unique',
+            };
+            multiplayer.sendTo(from, { type: 'options-sync', options: currentOptions });
+        }
+
+        if (data.type === 'color-change') {
+            const player     = players.find(p => p.id === data.playerId);
+            const colorTaken = players.some(p => p.id !== data.playerId && p.color === data.color);
+            if (player && !colorTaken) {
+                player.color = data.color;
+                lobbyUI.updatePlayersList();
+                multiplayer.broadcast({ type: 'players-update', players });
+            }
+        }
+
+        if (data.type === 'player-order-update') {
+            players = data.players;
+            lobbyUI.setPlayers(players);
+        }
+
+        if (data.type === 'player-left') {
+            // Un invité quitte volontairement
+            players = players.filter(p => p.id !== from);
+            lobbyUI.setPlayers(players);
+            multiplayer.broadcast({ type: 'players-update', players });
+        }
+
+        // ✨ NOUVEAU : le nouvel hôte du salon prévient l'ancien hôte (revenu en ligne)
+        if (data.type === 'host-moved') {
+            _getHostMigration().onHostMoved(data, from);
+        }
+    };
+}
+
+/**
+ * Prépare un hôte de lobby : handler lobby hôte (rangé dans multiplayer._lobbyHostHandler, repris
+ * par LobbyNavigator.returnToLobby), synchro des options, callbacks du salon. N'active PAS le
+ * handler : voir _activateHostLobby (au lobby) — une partie en cours garde sa propre chaîne.
+ */
+function _prepareHostLobby() {
+    lobbyUI.setIsHost(true);
+    _installHostLobbyOptionSync();
+    multiplayer._lobbyHostHandler = _buildHostLobbyHandler();
+
+    // Hôte : kick un invité
+    lobbyUI.onKickPlayer = (playerId) => {
+        multiplayer.sendTo(playerId, { type: 'you-are-kicked' });
+        players = players.filter(p => p.id !== playerId);
+        lobbyUI.setPlayers(players);
+        multiplayer.broadcast({ type: 'players-update', players });
+    };
+
+    // Hôte : quitter le lobby — ✨ NOUVEAU : passe la main à un invité au lieu de fermer le salon
+    lobbyUI.onHostLeave = () => _getHostMigration().leaveLobbyAsHost();
+}
+
+/** Active l'écoute lobby d'un hôte (création de partie, ou invité promu hôte au lobby). */
+function _activateHostLobby() {
+    // Un invité promu a encore le heartbeat de son ancien rôle : le remplacer (au premier
+    // joueur connecté, onPlayerJoined démarre le heartbeat hôte comme à la création).
+    if (heartbeatManager) { heartbeatManager.stop(); heartbeatManager = null; }
+
+    multiplayer.onPlayerJoined = (playerId) => {
+        console.log('👤 Nouveau joueur connecté:', playerId);
+        if (heartbeatManager) {
+            // Heartbeat déjà actif : juste enregistrer le nouveau peer
+            heartbeatManager._lastPong[playerId] = Date.now();
+        } else {
+            // Premier joueur : démarrer le heartbeat
+            _startHeartbeat(_lobbyHeartbeatTimeout);
+        }
+    };
+
+    // ✅ Retrait immédiat si un invité déconnecte dans le lobby
+    multiplayer.onPlayerLeft = (peerId) => {
+        console.log('👋 [LOBBY] Joueur déconnecté:', peerId);
+        players = players.filter(p => p.id !== peerId);
+        lobbyUI.setPlayers(players);
+        multiplayer.broadcast({ type: 'players-update', players });
+    };
+
+    multiplayer.onDataReceived = multiplayer._lobbyHostHandler;
+}
+
 document.getElementById('create-game-btn').addEventListener('click', async () => {
     if (!playerName) { alert('Veuillez entrer un pseudo !'); return; }
 
@@ -615,143 +797,8 @@ document.getElementById('create-game-btn').addEventListener('click', async () =>
         lobbyUI.setIsHost(true);
         lobbyUI.setPlayers(players);
 
-        // Sync temps réel de toutes les options vers les invités
-        ['base-fields', 'list-remaining', 'use-test-deck', 'enable-debug', 'ext-abbot', 'tiles-abbot', 'ext-large-meeple', 'ext-cathedrals', 'ext-inns', 'tiles-inns-cathedrals', 'tiles-traders-builders', 'ext-builder', 'ext-merchants', 'ext-pig', 'tiles-dragon', 'ext-dragon', 'ext-princess', 'ext-portal', 'ext-fairy-protection', 'ext-fairy-score-turn', 'ext-fairy-score-zone', 'tiles-tower', 'ext-tower'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.addEventListener('change', (e) => {
-                multiplayer.broadcast({ type: 'option-change', option: id, value: e.target.checked });
-            });
-        });
-        // Sync des radios (unplaceable + start)
-        document.querySelectorAll('input[name="unplaceable"]').forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                if (e.target.checked) multiplayer.broadcast({ type: 'option-change', option: 'unplaceable', value: e.target.value });
-            });
-        });
-        document.querySelectorAll('input[name="start"]').forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                if (e.target.checked) multiplayer.broadcast({ type: 'option-change', option: 'start', value: e.target.value });
-            });
-        });
-
-        const _lobbyHeartbeatTimeout = (peerId) => {
-            players = players.filter(p => p.id !== peerId);
-            lobbyUI.setPlayers(players);
-            multiplayer.broadcast({ type: 'players-update', players });
-            console.warn(`💔 Joueur ${peerId} retiré du lobby (timeout heartbeat)`);
-        };
-
-        multiplayer.onPlayerJoined = (playerId) => {
-            console.log('👤 Nouveau joueur connecté:', playerId);
-            if (heartbeatManager) {
-                // Heartbeat déjà actif : juste enregistrer le nouveau peer
-                heartbeatManager._lastPong[playerId] = Date.now();
-            } else {
-                // Premier joueur : démarrer le heartbeat
-                _startHeartbeat(_lobbyHeartbeatTimeout);
-            }
-        };
-
-        // ✅ Retrait immédiat si un invité déconnecte dans le lobby
-        multiplayer.onPlayerLeft = (peerId) => {
-            console.log('👋 [LOBBY] Joueur déconnecté:', peerId);
-            players = players.filter(p => p.id !== peerId);
-            lobbyUI.setPlayers(players);
-            multiplayer.broadcast({ type: 'players-update', players });
-        };
-
-        multiplayer._lobbyHostHandler = null; // sera set après définition
-        const _hostLobbyHandler = (data, from) => {
-            console.log('📨 [HÔTE] Reçu:', data);
-
-            if (data.type === 'player-info') {
-                // Vérifier compatibilité version + origine
-                const _compat = _checkCompatibility(data.version, data.origin);
-                if (!_compat.ok) {
-                    multiplayer.sendTo(from, { type: 'rejoin-rejected', reason: _compat.reason });
-                    return;
-                }
-                if (!players.find(p => p.id === from)) {
-                    const taken    = players.map(p => p.color);
-                    const assigned = taken.includes(data.color)
-                        ? (allColors.find(c => !taken.includes(c)) || 'blue')
-                        : data.color;
-                    players.push({ id: from, name: data.name, color: assigned, isHost: false });
-                    lobbyUI.setPlayers(players);
-                }
-                multiplayer.broadcast({ type: 'players-update', players });
-
-                // ✅ Envoyer l'état courant des options directement au nouvel invité
-                // (les broadcasts précédents ne l'avaient pas encore, il les a manqués)
-                const currentOptions = {
-                    'base-fields':           document.getElementById('base-fields')?.checked           ?? true,
-                    'list-remaining':        document.getElementById('list-remaining')?.checked        ?? true,
-                    'use-test-deck':         document.getElementById('use-test-deck')?.checked         ?? false,
-                    'enable-debug':          document.getElementById('enable-debug')?.checked          ?? false,
-                    'unplaceable':           document.querySelector('input[name="unplaceable"]:checked')?.value ?? 'reshuffle',
-                    'ext-abbot':             document.getElementById('ext-abbot')?.checked             ?? false,
-                    'tiles-abbot':           document.getElementById('tiles-abbot')?.checked           ?? false,
-                    'ext-large-meeple':      document.getElementById('ext-large-meeple')?.checked      ?? false,
-                    'ext-cathedrals':        document.getElementById('ext-cathedrals')?.checked        ?? false,
-                    'ext-inns':              document.getElementById('ext-inns')?.checked              ?? false,
-                    'tiles-inns-cathedrals': document.getElementById('tiles-inns-cathedrals')?.checked ?? false,
-                    'tiles-traders-builders':document.getElementById('tiles-traders-builders')?.checked ?? false,
-                    'ext-builder':           document.getElementById('ext-builder')?.checked           ?? false,
-                    'ext-merchants':         document.getElementById('ext-merchants')?.checked         ?? false,
-                    'ext-pig':               document.getElementById('ext-pig')?.checked               ?? false,
-                    'tiles-dragon':          document.getElementById('tiles-dragon')?.checked          ?? false,
-                    'ext-dragon':            document.getElementById('ext-dragon')?.checked            ?? false,
-                    'ext-princess':          document.getElementById('ext-princess')?.checked          ?? false,
-                    'ext-portal':            document.getElementById('ext-portal')?.checked            ?? false,
-                    'ext-fairy-protection':  document.getElementById('ext-fairy-protection')?.checked  ?? false,
-                    'ext-fairy-score-turn':  document.getElementById('ext-fairy-score-turn')?.checked  ?? false,
-                    'ext-fairy-score-zone':  document.getElementById('ext-fairy-score-zone')?.checked  ?? false,
-                    'tiles-tower':           document.getElementById('tiles-tower')?.checked           ?? false, // ✨ NOUVEAU
-                    'ext-tower':             document.getElementById('ext-tower')?.checked             ?? false, // ✨ NOUVEAU
-                    'start':                 document.querySelector('input[name="start"]:checked')?.value ?? 'unique',
-                };
-                multiplayer.sendTo(from, { type: 'options-sync', options: currentOptions });
-            }
-
-            if (data.type === 'color-change') {
-                const player     = players.find(p => p.id === data.playerId);
-                const colorTaken = players.some(p => p.id !== data.playerId && p.color === data.color);
-                if (player && !colorTaken) {
-                    player.color = data.color;
-                    lobbyUI.updatePlayersList();
-                    multiplayer.broadcast({ type: 'players-update', players });
-                }
-            }
-
-            if (data.type === 'player-order-update') {
-                players = data.players;
-                lobbyUI.setPlayers(players);
-            }
-
-            if (data.type === 'player-left') {
-                // Un invité quitte volontairement
-                players = players.filter(p => p.id !== from);
-                lobbyUI.setPlayers(players);
-                multiplayer.broadcast({ type: 'players-update', players });
-            }
-        };
-        multiplayer.onDataReceived = _hostLobbyHandler;
-        multiplayer._lobbyHostHandler = _hostLobbyHandler;
-
-        // Hôte : kick un invité
-        lobbyUI.onKickPlayer = (playerId) => {
-            multiplayer.sendTo(playerId, { type: 'you-are-kicked' });
-            players = players.filter(p => p.id !== playerId);
-            lobbyUI.setPlayers(players);
-            multiplayer.broadcast({ type: 'players-update', players });
-        };
-
-        // Hôte : quitter le lobby (kick général + retour menu)
-        lobbyUI.onHostLeave = () => {
-            const invites = players.filter(p => !p.isHost);
-            if (invites.length > 0) multiplayer.broadcast({ type: 'you-are-kicked' });
-            returnToInitialLobby();
-        };
+        _prepareHostLobby();
+        _activateHostLobby();
 
     } catch (error) {
         console.error('❌ Erreur:', error);
@@ -819,6 +866,10 @@ function _makeJoiner() {
         returnToInitialLobby,
         startGameForInvite,
         updateLobbyUI,
+        // ✨ NOUVEAU — changement d'hôte au salon (HostMigration)
+        onLobbyHostLost:     () => _getHostMigration().onLobbyHostLost(),
+        onLobbyHostHello:    () => _getHostMigration().onLobbyHostHello(),
+        onLobbyHostTransfer: (data) => _getHostMigration().onLobbyHostTransfer(data),
         updateAllAvailability,
         updateOptionsAccess,
         updateMasterCheckboxes,
@@ -1560,6 +1611,9 @@ function _makeLobbyNavigator() {
         getHeartbeatManager:      () => heartbeatManager,
         getTurnManager:           () => turnManager,
         getPlayerColor:           () => playerColor,
+        // ✨ NOUVEAU — changement d'hôte au salon (HostMigration)
+        leaveLobbyAsHost:         () => _getHostMigration().leaveLobbyAsHost(),
+        onLobbyHostLost:          () => _getHostMigration().onLobbyHostLost(),
         setInLobby:               (v) => { inLobby = v; },
         setIsHost:                (v) => { isHost = v; },
         setGameCode:              (v) => { gameCode = v; },

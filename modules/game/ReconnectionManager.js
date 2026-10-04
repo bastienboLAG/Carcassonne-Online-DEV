@@ -159,10 +159,10 @@ export class ReconnectionManager {
      */
     _isHostIsolated() {
         const peer = this.multiplayer.peer;
-        // Fenêtre de 45 s après une coupure de l'hôte lui-même (signalisation perdue/rétablie,
+        // Fenêtre de 25 s après une coupure de l'hôte lui-même (signalisation perdue/rétablie,
         // événements offline/online) : le heartbeat peut encore « timeout » des invités à cause
-        // de MA coupure, juste après le retour du réseau (timeout 30 s).
-        const recentOutage = Date.now() - (this.multiplayer.lastSelfOutageAt || 0) < 45000;
+        // de MA coupure, juste après le retour du réseau (timeout 10 s + marge).
+        const recentOutage = Date.now() - (this.multiplayer.lastSelfOutageAt || 0) < 25000;
         return (typeof navigator !== 'undefined' && navigator.onLine === false)
             || !!peer?.disconnected || !!peer?.destroyed || recentOutage;
     }

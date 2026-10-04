@@ -82,8 +82,7 @@ dépendance par-partie n'y est nécessaire.
 
 ## ⚠️ Changement d'hôte en cours de partie (`HostMigration`)
 
-> **Lot 1 livré : partie en cours.** Le lobby (hôte qui quitte le salon) est prévu au lot 2 —
-> tant qu'il n'est pas fait, le comportement lobby reste l'ancien (salon fermé).
+> **Livré : partie en cours (lot 1) ET lobby (lot 2).** Voir la sous-section « Au lobby » plus bas.
 
 ### Principe
 
@@ -146,9 +145,43 @@ dépendance par-partie n'y est nécessaire.
 - **État restauré = début du tour en cours** (le dernier snapshot). Tout ce qui s'est passé
   depuis (tuile posée, meeple, etc.) est perdu ; l'annulation du tour repart de zéro.
 
+### Au lobby (lot 2)
+
+Même mécanique, **sans snapshot** : les invités connaissent déjà la liste des joueurs (`players-update`)
+et les options (`option-change`/`options-sync`).
+
+- **L'hôte quitte le salon** (✕ à côté de son nom, y compris après « Retour lobby ») :
+  `HostMigration.leaveLobbyAsHost()` diffuse `lobby-host-transfer` (`oldHostId` + successeurs dans
+  l'ordre de la liste, hors spectateurs) puis quitte 600 ms plus tard. Les invités
+  (`LobbyJoin` → `onLobbyHostTransfer`) ne tentent pas de l'attendre (`skipHost`). S'il ne reste aucun
+  successeur éligible : ancien comportement (salon fermé, `you-are-kicked`).
+- **L'hôte disparaît** : `onHostDisconnected` ou heartbeat muet → `onLobbyHostLost` : l'ancien hôte
+  d'abord (grâce), puis les successeurs dans l'ordre de la liste (`_lobbyCandidates`), comme en partie.
+  `LobbyNavigator.returnToLobby` ré-arme cette détection chez les invités au retour lobby (le callback
+  posé pendant la partie ne faisait plus rien : plus de `gameState`).
+- **Hello au lobby** : le nouvel hôte n'envoie pas de `game-in-progress` ; l'invité se présente
+  (`player-info`, `sendLobbyPlayerInfo`) et la réponse `players-update` fait foi
+  (`LobbyJoin` → `onLobbyHostHello`).
+- **Promotion** (`_promoteLobby`) : `isHost`, code de partie, liste des joueurs (ancien hôte retiré),
+  `prepareHostLobby()` + `activateHostLobby()` (home.js), `Multiplayer.prepareHostTakeover/startAccepting`.
+  Après `LOBBY_SWEEP_MS`, les joueurs qui ne sont pas revenus sont retirés de la liste (le heartbeat
+  hôte ne surveille que les pairs connectés).
+- **Ancien hôte revenu en ligne** : le nouvel hôte le sonde (`_probeOldHost`) et lui envoie `host-moved`
+  (traité par `_hostLobbyHandler` → `onHostMoved`) ; il rejoint le salon avec le nouveau code
+  (`_rejoinAsGuest(code, false)` : jonction normale, sans le drapeau de reconnexion de partie).
+- **Refactor `home.js`** : le contenu du clic « Créer une partie » est factorisé en
+  `_prepareHostLobby()` (handler lobby hôte rangé dans `multiplayer._lobbyHostHandler`, synchro des
+  options — installée UNE seule fois —, kick, quitter) et `_activateHostLobby()` (onDataReceived,
+  onPlayerJoined/Left, heartbeat). Une promotion EN PARTIE n'appelle que `_prepareHostLobby()` : la
+  chaîne réseau de la partie reste intacte, et « Retour lobby » fonctionne ensuite chez le nouvel hôte.
+- **Limite** : au lobby, l'isolement de l'hôte n'est pas géré (pas de mode isolement) ; un ancien hôte
+  coupé retrouve le salon uniquement via le sondage `host-moved`.
+
 ### Constantes / tests
 
-- `HOST_GRACE_MS` (`HostMigration.js`) : **5000 en phase de test, à passer à 20000 ensuite.**
+- `HOST_GRACE_MS` (`HostMigration.js`) : **20000** (20 s). Heartbeat : ping 3 s / timeout 10 s.
+- Fenêtre « hôte isolé après sa propre coupure » (`ReconnectionManager._isHostIsolated`) : 25 s
+  (timeout heartbeat 10 s + marge) ; `LOBBY_SWEEP_MS` (40 s) : nettoyage de la liste du salon.
 - `PROBE_INTERVAL_MS` (3 s) / `PROBE_MAX_MS` (15 min) : sondage de l'ancien hôte par le nouvel hôte ;
   `ISOLATION_RESTORED_WAIT_MS` (90 s) : attente maximale de l'ancien hôte après le retour du réseau.
 - L'affichage du code (menu en jeu, lobby) est rafraîchi par `home.js` `_refreshGameCodeDisplays()`
@@ -157,8 +190,6 @@ dépendance par-partie n'y est nécessaire.
 
 ### Limites connues
 
-- Après une promotion, le **retour lobby du nouvel hôte** n'est pas géré (le handler lobby hôte
-  `_hostLobbyHandler` est défini dans le clic « Créer une partie » de `home.js`) — lot 2.
 - **Rôle spectateur à la reconnexion** : `LobbyJoin` envoie désormais `isSpectator` selon la couleur
   du joueur (`'spectator'`) lors d'une reconnexion automatique. Auparavant toujours `false` : un
   spectateur retiré de `gameState` par l'hôte (timeout) revenait comme NOUVEAU JOUEUR → « Partie
@@ -173,9 +204,15 @@ dépendance par-partie n'y est nécessaire.
   voyaient « déconnecté » indéfiniment (leur `full-state-sync` le décrivait ainsi, et rien ne
   corrigeait ce drapeau ensuite).
 - **Délai de détection dominé par le heartbeat** : mesuré en test réel (coupure internet de
-  l'hôte), la fermeture du canal WebRTC n'est pas détectée ; c'est le heartbeat (`HeartbeatManager`,
-  timeout 30 s) qui déclenche la procédure, soit ≈ 30 s + `HOST_GRACE_MS` avant que le nouvel hôte
-  soit opérationnel. Réduire `_TIMEOUT` (partagé avec le lobby) raccourcirait ce délai.
+  l'hôte), la fermeture du canal WebRTC n'est pas détectée ; c'est le heartbeat (`HeartbeatManager`)
+  qui déclenche la procédure. Valeurs actuelles : ping toutes les 3 s, **timeout 10 s dans les deux
+  sens** (invité qui juge l'hôte perdu / hôte qui juge un invité parti), puis `HOST_GRACE_MS` =
+  **20 s** → ≈ 30 s avant que le nouvel hôte soit opérationnel (+ 20 s par successeur absent).
+  Le heartbeat est partagé avec le lobby.
+- **Heartbeat invité : garde `_timedOut`** — un pair déjà signalé n'était jamais re-signalé, même
+  après une reconnexion : un invité qui avait retrouvé l'hôte ne détectait pas sa SECONDE perte.
+  `HeartbeatManager.receivePong` retire désormais le pair de `_timedOut` (invités uniquement ; côté
+  hôte c'est le handshake CAS 3/5 qui réactive un joueur).
 - Un ancien hôte dont la **page est fermée/rechargée** n'est pas joignable par le sondage : il
   doit saisir lui-même le nouveau code (même pseudo → CAS 3).
 - **Horloges** : les logs de l'ancien et du nouvel hôte proviennent de deux appareils dont les
@@ -432,7 +469,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 |---|---|---|
 | `EventBus.js` | 117 | Bus d'événements interne (`on`/`off`/`emit`). **Singleton créé une fois dans `home.js`, jamais recréé** — voir la section "Piège récurrent" en tête de ce document avant d'y ajouter un `eventBus.on(...)` dans une fonction rappelée à chaque partie |
 | `GameSync.js` | ~810 | **✨ Changement d'hôte** : message `host-snapshot` (`syncHostSnapshot`, callback `onHostSnapshot`), hook `onTurnEndSynced` appelé à la fin de `syncTurnEnd`, message `host-moved` (`onHostMoved`, reçu par l'ancien hôte), `buildFullStateMessage(args)` (paquet d'état complet partagé entre `syncFullState` et le snapshot). Sérialisation/synchronisation réseau hôte↔invités, y compris les messages `tower-floor-placed`, `tower-capture-executed`, `tower-lock-executed`, `prisoner-exchange-resolved`/`prisoner-exchange-pending` (échange automatique de prisonniers, avec le champ `freshlyCapturedType`) et `prisoner-buyback-executed` (rachat de prisonnier, hôte → tous). `syncFullState`/le message `turn-undo` transportent `gameState.serialize()`/`postUndoState`, qui incluent tous deux `extraState` sans logique dédiée dans ce fichier (transport générique, cf. section extraState). **✅ FIX NOUVEAU** : `syncFullState` transporte désormais explicitement `pendingPrisonerExchange: gameState._pendingPrisonerExchange ?? null` en plus des champs sérialisés — ce champ étant transitoire (non couvert par `gameState.serialize()`), un client qui recharge sa page pendant qu'un choix d'échange automatique de prisonniers est en attente perdait cet état localement (voir section Tour, "Blocage tant que le choix n'est pas fait") |
-| `HeartbeatManager.js` | 63 | Détection de déconnexion (ping/pong) |
+| `HeartbeatManager.js` | ~75 | Détection de déconnexion (ping 3 s / timeout 10 s). `receivePong` retire le pair de `_timedOut` côté invité (sinon une seconde perte du même hôte n'était jamais détectée) |
 | `Multiplayer.js` | ~340 | Connexion P2P, broadcast, sendTo. **✨ Changement d'hôte** : les invités s'enregistrent sous un code à 6 chiffres (`_openGuestPeer`, réessai si `unavailable-id`) ; `reconnectTo(hostId)` (même peer/même id), `ensurePeerReady()`, `prepareHostTakeover()` + `startAccepting()` (promotion en hôte), `hostPeerId` (`onHostDisconnected` ne se déclenche que pour l'hôte courant), `_installHostKeepAlive` (l'hôte se reconnecte à la signalisation), `resumeAccepting()`, `notifyPeer(id, msg)` (message ponctuel par connexion brute non enregistrée), connexions abandonnées marquées `_replaced` (événement `close` ignoré), `_listenIncoming` : une connexion entrante du même pair remplace l'ancienne si elle date de plus de 3 s |
 | `RuleRegistry.js` | 165 | Active/désactive les règles d'extension |
 
@@ -458,7 +495,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 | `GameEventSetup.js` | ~510 | Installe tous les listeners DOM du jeu. Point de fin de tour (`_installEndTurn`) : appelle désormais `d.checkPendingReciprocalExchange?.()` juste après `undoManager.reset()` (échange automatique de prisonniers différé — voir plus bas) ; `_installUndo` inclut `extraState` et `towerPieces` dans le `postUndoState` envoyé aux invités. Utilise déjà le pattern de garde contre la double installation (flag `_installed`) |
 | `GameModuleInitializer.js` | ~185 | Instancie les modules UI de jeu, dont `TowerRules` si `tileGroups.tower && extensions.tower`. Relaie `renderAllTowersFromState` (via `d`) dans `undoManager.initVisualHandlers({...})`, pour que l'undo puisse redessiner l'état Tour après restauration |
 | `GameStarter.js` | 200 | Démarrage de partie hôte/invité ; attribue `towerPieces` à chaque joueur actif selon `getTowerPiecesForPlayerCount()` ; appelle `initTowerUI()` en `postStartSetup()` |
-| `HostMigration.js` | ~420 | **✨ NOUVEAU** — Changement d'hôte en cours de partie : snapshot (hôte), détection/grâce/élection (invités), promotion, sondage de l'ancien hôte (`_probeOldHost`), mode isolement de l'ancien hôte (`onSelfIsolated`) et son retour (`onHostMoved`). Voir la section dédiée en tête de ce document. `HOST_GRACE_MS` = 5000 en test (20000 ensuite) |
+| `HostMigration.js` | ~620 | **✨ NOUVEAU** — Changement d'hôte en partie ET au lobby (`onLobbyHostLost`, `onLobbyHostTransfer`, `leaveLobbyAsHost`, `_promoteLobby`) : snapshot (hôte), détection/grâce/élection (invités), promotion, sondage de l'ancien hôte (`_probeOldHost`), mode isolement de l'ancien hôte (`onSelfIsolated`) et son retour (`onHostMoved`). Voir la section dédiée en tête de ce document. `HOST_GRACE_MS` = 5000 en test (20000 ensuite) |
 | `GameSyncCallbacks.js` | ~490 | Callbacks réseau réactifs. `onTurnEndRequest` (hôte, pour un invité qui termine son tour) appelle `checkPendingReciprocalExchange()` juste après `undoManager.reset()` — même point que côté hôte-joueur dans `GameEventSetup`. `onUndoRequest` (hôte, pour un invité qui annule) inclut `extraState` et `towerPieces` dans le `postUndoState` envoyé. Relais des requêtes invité→hôte `tower-floor-request`/`tower-capture-request`/`tower-lock-request`/`prisoner-exchange-choice-request`/`prisoner-buyback-request` |
 | `GameTimer.js` | 59 | Chronomètre de partie |
 | `MeeplePlacement.js` | 253 | Logique de pose de meeple |
@@ -480,7 +517,7 @@ nouvelle extension reste à écrire, comme pour la Tour :
 |---|---|---|
 | `GameMenuUI.js` | 49 | Menu en jeu |
 | `LobbyJoin.js` | ~172 | Logique de connexion en tant qu'invité. Tout le handler est ignoré si le joueur est hôte (un invité promu le garde au bas de sa chaîne). Le message `welcome` est ignoré en partie (`getTurnManager()` non nul) : il ne doit remettre ni l'ancien code de partie ni le heartbeat du lobby après une reconnexion / un changement d'hôte |
-| `LobbyNavigator.js` | ~185 | Retour au lobby / lobby initial ; réinitialise `towerRules` au retour lobby |
+| `LobbyNavigator.js` | ~200 | Retour au lobby / lobby initial ; réinitialise `towerRules` au retour lobby. **✨ Lot 2** : ✕ de l'hôte → `leaveLobbyAsHost` (passage de relais) ; au retour lobby, un invité surveille l'hôte du salon (`onLobbyHostLost`) et son heartbeat/`onPlayerLeft` ne gèrent plus la liste |
 | `LobbyUI.js` | 356 | Interface du lobby |
 | `MeepleActionsUI.js` | ~670 | Actions meeples : rappel abbé, portail, éjection princesse, placement fée ; orchestre l'extension Tour via les imports de `TowerUI.js`. **✅ FIX** : `showMeepleActionCursors` résout désormais une cible fée dont la clé est `"tower-lock:x,y"` (garde verrouillant une tour) en lisant `gameState.extraState.towers`, et positionne son curseur via `TowerUI.getTowerLockMeepleAnchor(x, y)` au lieu du calcul en grille 5×5 utilisé pour un meeple classique — sans ce cas, la cible calculée par `DragonRules.getFairyTargets` n'avait aucun curseur affiché (`placedMeeples[key]` étant `undefined` pour ce format de clé). `initNetworkMeepleListeners(eventBus)` protégée par flag module-level (`_networkListenersInstalled`) contre la double installation — voir "Piège récurrent" |
 | `MeepleCursorsUI.js` | 455 | Curseurs de placement de meeple ; exclut la zone `tower` (et `dragon`/`volcano`/`portal`) des positions de meeple classiques |

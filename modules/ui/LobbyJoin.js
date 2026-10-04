@@ -44,7 +44,12 @@ export class LobbyJoin {
                     d.setGameCode(code);
                     document.getElementById('game-code-container').style.display = 'block';
                     document.getElementById('game-code-text').textContent = `Code: ${code}`;
-                    d.startHeartbeat(() => d.returnToInitialLobby("L'hote ne repond plus."));
+                    // ✨ NOUVEAU : hôte muet au salon → reprise par un invité (HostMigration) ; à défaut
+                    // d'invité éligible, HostMigration renvoie lui-même au lobby initial
+                    d.startHeartbeat(() => {
+                        if (d.onLobbyHostLost) d.onLobbyHostLost();
+                        else d.returnToInitialLobby("L'hote ne repond plus.");
+                    });
                 }
 
                 if (data.type === 'game-in-progress') {
@@ -65,6 +70,7 @@ export class LobbyJoin {
                 }
 
                 if (data.type === 'players-update') {
+                    d.onLobbyHostHello?.(); // ✨ NOUVEAU : confirmation du nouvel hôte du salon (HostMigration)
                     if (d.getTurnManager()) return; // en partie : géré par le handler de jeu
                     d.setPlayers(data.players);
                     d.getLobbyUI().setPlayers(data.players);
@@ -145,6 +151,11 @@ export class LobbyJoin {
                     d.returnToInitialLobby(data.reason || 'Impossible de rejoindre la partie.');
                 }
 
+                // ✨ NOUVEAU : l'hôte quitte le salon et désigne ses successeurs
+                if (data.type === 'lobby-host-transfer') {
+                    d.onLobbyHostTransfer?.(data);
+                }
+
                 if (data.type === 'you-are-kicked') {
                     d.returnToInitialLobby('Vous avez été retiré du salon.');
                 }
@@ -157,6 +168,8 @@ export class LobbyJoin {
 
             d.setOriginalLobbyHandler(lobbyHandler);
             d.getMultiplayer().onDataReceived = lobbyHandler;
+            // ✨ NOUVEAU : fermeture de la connexion à l'hôte au salon → reprise (HostMigration)
+            d.getMultiplayer().onHostDisconnected = () => d.onLobbyHostLost?.();
 
             await d.getMultiplayer().joinGame(code);
             document.getElementById('join-modal').style.display = 'none';

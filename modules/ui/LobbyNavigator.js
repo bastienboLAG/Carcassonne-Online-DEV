@@ -79,6 +79,12 @@ export class LobbyNavigator {
         const existingPeers = new Set(multiplayer._connectedPeers);
         d.stopHeartbeat();
         d.startHeartbeat((peerId) => {
+            // ✨ NOUVEAU : invité — ce heartbeat ne surveille que l'hôte du salon : s'il est muet,
+            // reprise du salon par un invité (HostMigration) au lieu de retirer qui que ce soit
+            if (!isHost) {
+                if (peerId === multiplayer.hostPeerId) d.onLobbyHostLost?.();
+                return;
+            }
             const p = d.getPlayers();
             d.setPlayers(p.filter(pl => pl.id !== peerId));
             d.getLobbyUI().setPlayers(d.getPlayers());
@@ -94,6 +100,7 @@ export class LobbyNavigator {
             if (hm) hm._lastPong[playerId] = Date.now();
         };
         multiplayer.onPlayerLeft = (peerId) => {
+            if (!isHost) return; // ✨ NOUVEAU : un invité ne gère pas la liste du salon (voir onHostDisconnected ci-dessous)
             d.setPlayers(d.getPlayers().filter(p => p.id !== peerId));
             d.getLobbyUI().setPlayers(d.getPlayers());
             multiplayer.broadcast({ type: 'players-update', players: d.getPlayers() });
@@ -118,13 +125,18 @@ export class LobbyNavigator {
                 lobbyUI.setPlayers(d.getPlayers());
                 multiplayer.broadcast({ type: 'players-update', players: d.getPlayers() });
             };
+            // ✨ NOUVEAU : l'hôte qui quitte le salon passe la main à un invité (HostMigration)
             lobbyUI.onHostLeave = () => {
+                if (d.leaveLobbyAsHost) { d.leaveLobbyAsHost(); return; }
                 const invites = d.getPlayers().filter(p => !p.isHost);
                 if (invites.length > 0) multiplayer.broadcast({ type: 'you-are-kicked' });
                 this.returnToInitialLobby();
             };
         } else {
             lobbyUI.setIsHost(false);
+            // ✨ NOUVEAU : au retour lobby, l'invité surveille de nouveau l'hôte du salon (le
+            // callback posé pendant la partie ne fait plus rien : plus de gameState)
+            multiplayer.onHostDisconnected = () => d.onLobbyHostLost?.();
             lobbyUI.onLeaveGame = () => {
                 multiplayer.broadcast({ type: 'player-left' });
                 this.returnToInitialLobby();
