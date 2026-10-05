@@ -149,6 +149,8 @@ export class SlotsUI {
 
     createCentralSlot() {
         console.log('🎯 Création du slot central...');
+        // ✅ FIX : jamais deux slots centraux (resynchronisation d'état, annulation de la 1re tuile)
+        document.querySelectorAll('.slot-central').forEach(s => s.remove());
         const slot = document.createElement('div');
         slot.className        = 'slot slot-central';
         slot.style.gridColumn = 50;
@@ -158,13 +160,17 @@ export class SlotsUI {
             slot.classList.add('slot-readonly');
             slot.style.cursor        = 'default';
             slot.style.pointerEvents = 'none';
-        } else {
-            slot.onclick = () => {
-                if (this.getTileEnMain() && !this.firstTilePlaced && this.onSlotClick) {
-                    this.onSlotClick(50, 50, this.getTileEnMain(), true);
-                }
-            };
         }
+        // ✅ FIX : le gestionnaire de clic est TOUJOURS posé, avec une garde relue au moment du
+        // clic. Auparavant il n'existait que si c'était déjà mon tour à la création : un slot
+        // créé « lecture seule » puis réactivé par onTurnChanged (qui ne change que le style)
+        // restait impossible à cliquer — la première tuile ne pouvait plus être posée.
+        slot.onclick = () => {
+            if (!this.isMyTurn || this.isBlocked) return;
+            if (this.getTileEnMain() && !this.firstTilePlaced && this.onSlotClick) {
+                this.onSlotClick(50, 50, this.getTileEnMain(), true);
+            }
+        };
 
         this.boardElement.appendChild(slot);
         console.log('✅ Slot central ajouté au board');

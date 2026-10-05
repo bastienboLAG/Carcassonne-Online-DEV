@@ -530,6 +530,14 @@ export class ReconnectionManager {
                 currentPlayer: turnManager.getCurrentPlayer()
             });
         }
+        // ✅ FIX : tant que la 1re tuile n'est pas posée (plateau vide), le slot central est le SEUL
+        // endroit où la poser. Il n'était recréé que si le plateau n'était PAS vide (ligne plus
+        // haut) et _clearBoardDom() vient de retirer tous les slots : après un changement d'hôte
+        // (ou une reconnexion) avant la 1re tuile, plus aucun slot n'apparaissait et la partie
+        // était bloquée. Créé ICI, après turn-changed, pour que SlotsUI connaisse déjà le joueur
+        // dont c'est le tour.
+        if (slotsUI && !firstTilePlaced) slotsUI.createCentralSlot();
+
         d.updateTurnDisplay();
 
         // ✅ FIX NOUVEAU : réafficher la modale d'échange de prisonnier si un choix était en
