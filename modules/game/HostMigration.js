@@ -129,6 +129,33 @@ export class HostMigration {
         }
     }
 
+    /**
+     * ✨ NOUVEAU : l'état restauré par un changement d'hôte est celui du DÉBUT du tour (snapshot).
+     * Tout l'état transitoire du tour avorté (non sérialisé, donc non remplacé par la
+     * resynchronisation) serait périmé : captures de tour/princesse/portail/dragon en attente,
+     * captures « fraîches », compteur « une rançon par tour », drapeaux de l'UndoManager, points
+     * d'abbé en attente, curseurs affichés. `_pendingPrisonerExchange` est volontairement ABSENT :
+     * il fait partie du paquet d'état (restauré par applyFullStateSync).
+     */
+    _resetTurnTransientState() {
+        const d  = this._d;
+        const gs = d.getGameState();
+        if (gs) {
+            gs._pendingTowerCapture    = null;
+            gs._pendingReciprocalCheck = null;
+            gs._pendingPrincessTile    = null;
+            gs._pendingPortalTile      = null;
+            gs._pendingDragonTile      = null;
+            gs._pendingVolcanoPos      = null;
+            gs._pendingBuilderBonus    = false;
+            gs._freshCaptures          = [];
+            gs._turnBuybackUsed        = false;
+        }
+        d.getUndoManager()?.reset();
+        d.setPendingAbbePoints?.(null);
+        d.hideAllCursors?.();
+    }
+
     // ─────────────────────────────────────────────────────────────
     // Invité : perte de l'hôte
     // ─────────────────────────────────────────────────────────────
@@ -344,6 +371,8 @@ export class HostMigration {
 
     _finish(hostId, sameHost) {
         const d = this._d;
+        // Rattaché à un NOUVEAU hôte en partie : son état est celui du début de tour (rollback)
+        if (!sameHost && this._mode === 'game') this._resetTurnTransientState();
         d.setGameCode(hostId);
         this._state = 'idle';
         if (sameHost) d.afficherToast('✅ Reconnecté à l\'hôte.');
@@ -410,8 +439,13 @@ export class HostMigration {
             .map(p => p.id === myId ? { ...p, isHost: true } : p));
 
         // Restaurer l'état de début de tour
-        d.getUndoManager()?.reset();
+        this._resetTurnTransientState(); // ✨ NOUVEAU : état du tour avorté (remet aussi l'UndoManager à zéro)
         rm.applyFullStateSync(snap);
+        // ✨ NOUVEAU : si l'ancien hôte était le joueur qui devait choisir un prisonnier à récupérer
+        // (échange automatique en attente, restauré par applyFullStateSync), plus personne ne peut
+        // répondre : résolution automatique avec son prisonnier le plus ancien — comme pour une
+        // exclusion (ReconnectionManager.excludeDisconnectedPlayer).
+        d.resolvePendingPrisonerExchange?.(oldHostId);
         const tileId = snap.tuileEnMain?.id;
         const tileData = tileId ? d.getDeck().tiles.find(t => t.id === tileId) : null;
         d.setCurrentTileForPlayer(tileData ?? null);

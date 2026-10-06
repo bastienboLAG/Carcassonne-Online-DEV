@@ -230,6 +230,9 @@ function _getHostMigration() {
                 origin: window.location.hostname + window.location.pathname.replace(/\/+$/, ''),
             }),
             setCurrentTileForPlayer:(v) => { currentTileForPlayer = v; },
+            setPendingAbbePoints:   (v) => { pendingAbbePoints = v; },
+            hideAllCursors:         () => hideAllCursors(),
+            resolvePendingPrisonerExchange: (id) => resolvePendingPrisonerExchangeForPlayer(id),
             attachGameSyncCallbacks: () => attachGameSyncCallbacks(),
             getInGameNetworkDeps:   () => _buildInGameNetworkDeps(),
             refreshGameMenu: () => initGameMenu({

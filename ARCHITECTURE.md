@@ -139,6 +139,17 @@ dépendance par-partie n'y est nécessaire.
   `force` = sans ré-évaluer l'isolement) les invités qui n'ont pas redonné signe de vie.
   Un invité **hors ligne** n'élit personne : `_waitOnline` attend le retour du réseau, puis lance
   l'élection (auparavant : reconnexion automatique en boucle).
+- **État transitoire du tour avorté** (`HostMigration._resetTurnTransientState`) : le snapshot
+  ramène le jeu au début du tour, mais les champs non sérialisés (`_pendingTowerCapture`,
+  `_pendingPrincessTile`, `_pendingPortalTile`, `_pendingDragonTile`, `_pendingVolcanoPos`,
+  `_pendingBuilderBonus`, `_pendingReciprocalCheck`, `_freshCaptures`, `_turnBuybackUsed`), les
+  drapeaux de l'`UndoManager`, les points d'abbé en attente et les curseurs affichés resteraient
+  périmés. Remis à zéro chez le nouvel hôte (avant `applyFullStateSync`) et chez chaque invité qui
+  rejoint un NOUVEL hôte (`_finish`, pas quand l'ancien hôte revient : son état n'est pas annulé).
+  `_pendingPrisonerExchange` n'y figure pas : il fait partie du paquet d'état.
+- **Échange de prisonniers en attente** : si l'ancien hôte était le joueur qui devait choisir, le
+  nouvel hôte le résout à sa place à la promotion (`resolvePendingPrisonerExchangeForPlayer` —
+  prisonnier le plus ancien), comme `excludeDisconnectedPlayer`.
 - **Retour des autres invités** : ils gardent leur id réseau → le nouvel hôte les traite en
   **CAS 5** de `initInGameNetworkHandler` (même id : réactivation + `sendFullStateTo`, sans remap).
   L'ancien hôte, s'il revient avec le même pseudo et le **nouveau code**, passe par le CAS 3.
@@ -229,6 +240,9 @@ et les options (`option-change`/`options-sync`).
 
 ### Check-list à chaque nouvelle extension
 
+0. **État transitoire du tour (`_pending*`, compteurs « par tour »)** : tout nouveau champ de ce type
+   doit être ajouté à `HostMigration._resetTurnTransientState`, sinon il restera périmé après un
+   changement d'hôte (le jeu revient au début du tour).
 1. **État transitoire à faire survivre** : le snapshot = paquet de reconnexion. Tout champ
    ajouté au full-state (`GameSync.buildFullStateMessage`, `ReconnectionManager.collectFullStateArgs`/
    `applyFullStateSync`) est automatiquement couvert **à la fois** par la reconnexion et par le
