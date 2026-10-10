@@ -1048,52 +1048,10 @@ export function resolvePendingPrisonerExchangeForPlayer(disconnectedPlayerId) {
     if (sync()) sync().syncPrisonerExchangeResolved(pending.opponentId, pending.chooserId, chosenType, pending.freshlyCapturedType);
 }
 
-/**
- * ✅ FIX — Reconnexion (CAS 3, même joueur qui reprend son identité avec un nouveau
- * playerId réseau) : remappe toutes les références à l'ancien id dans l'état de l'échange
- * automatique de prisonniers, exactement comme placedMeeples[].playerId est déjà remappé
- * par ailleurs (cf. ReconnectionManager.initInGameNetworkHandler, CAS 3). Sans ce remap,
- * un choisisseur qui recharge sa page (nouveau playerId) pendant que son choix est en
- * attente ne se reconnaîtrait plus comme "le choisisseur" (chooserId pointant vers son
- * ancien id) et resterait bloqué sans bouton, comme tous les autres — l'échange ne
- * pourrait alors plus jamais être résolu.
- * Ne touche volontairement PAS extraState.towers.lockedBy (même catégorie de problème
- * mais périmètre plus large, hors de cette demande — cf. ARCHITECTURE.md, limite connue).
- */
-export function remapPendingPrisonerExchangeAndPrisoners(oldPeerId, newPeerId) {
-    const gameState = gs();
-
-    // extraState.prisoners : clé = détenteur (capturant), entry.ownerId = capturé (propriétaire d'origine)
-    if (gameState.extraState.prisoners[oldPeerId]) {
-        gameState.extraState.prisoners[newPeerId] = gameState.extraState.prisoners[oldPeerId];
-        delete gameState.extraState.prisoners[oldPeerId];
-    }
-    Object.values(gameState.extraState.prisoners).forEach(list => {
-        list.forEach(entry => { if (entry.ownerId === oldPeerId) entry.ownerId = newPeerId; });
-    });
-
-    // Échange en attente de choix
-    if (gameState._pendingPrisonerExchange) {
-        const p = gameState._pendingPrisonerExchange;
-        if (p.chooserId  === oldPeerId) p.chooserId  = newPeerId;
-        if (p.opponentId === oldPeerId) p.opponentId = newPeerId;
-    }
-
-    // Vérification de réciprocité pas encore résolue (entre la capture et la fin du tour)
-    if (gameState._pendingReciprocalCheck) {
-        const c = gameState._pendingReciprocalCheck;
-        if (c.capturingPlayerId === oldPeerId) c.capturingPlayerId = newPeerId;
-        if (c.capturedOwnerId   === oldPeerId) c.capturedOwnerId   = newPeerId;
-    }
-
-    // Captures du tour en cours pas encore validées (bloquent temporairement le rachat)
-    if (gameState._freshCaptures) {
-        gameState._freshCaptures.forEach(c => {
-            if (c.holderId === oldPeerId) c.holderId = newPeerId;
-            if (c.ownerId  === oldPeerId) c.ownerId  = newPeerId;
-        });
-    }
-}
+// ✨ NOUVEAU : le remap d'identité d'un joueur qui revient sous un nouvel id réseau (anciennement
+// remapPendingPrisonerExchangeAndPrisoners, limité aux prisonniers et à l'échange en attente) est
+// désormais complet et générique : GameState.remapPlayerId — voir aussi home.js
+// _remapPlayerEverywhere et le message réseau `player-id-remapped`.
 
 /**
  * ✨ Échange automatique de prisonniers

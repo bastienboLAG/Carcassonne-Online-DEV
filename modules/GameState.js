@@ -1,4 +1,30 @@
 /**
+ * ✨ NOUVEAU : remplace un id de joueur dans une structure de type extraState (towers/prisoners, et
+ * futures sous-structures — ajouter ici tout nouvel id de joueur stocké dans extraState).
+ * Partagée par GameState.remapPlayerId et UndoManager.remapPlayerId (snapshots d'annulation).
+ */
+export function remapExtraStateIds(extraState, oldId, newId) {
+    if (!extraState) return;
+    // Tours : joueur qui a verrouillé + contributions par joueur
+    Object.values(extraState.towers ?? {}).forEach(t => {
+        if (t.lockedBy === oldId) t.lockedBy = newId;
+        if (t.contributions && oldId in t.contributions) {
+            t.contributions[newId] = (t.contributions[newId] ?? 0) + t.contributions[oldId];
+            delete t.contributions[oldId];
+        }
+    });
+    // Prisonniers : clé = détenteur (capturant), entry.ownerId = propriétaire d'origine
+    const prisoners = extraState.prisoners ?? {};
+    if (prisoners[oldId]) {
+        prisoners[newId] = [...(prisoners[newId] ?? []), ...prisoners[oldId]];
+        delete prisoners[oldId];
+    }
+    Object.values(prisoners).forEach(list => {
+        list.forEach(entry => { if (entry.ownerId === oldId) entry.ownerId = newId; });
+    });
+}
+
+/**
  * Gère l'état partagé du jeu entre tous les joueurs
  */
 export class GameState {
@@ -242,6 +268,41 @@ export class GameState {
 
     isPlayerTurn(playerId) {
         return this.getCurrentPlayer()?.id === playerId;
+    }
+
+    /**
+     * ✨ NOUVEAU : remplace TOUTES les références à un id de joueur par son nouvel id réseau (joueur
+     * qui revient sous un nouvel id : rechargement de page, retour de l'ancien hôte…). Fonction
+     * UNIQUE : tout id de joueur stocké hors de `players` doit y être remappé (voir
+     * ARCHITECTURE.md). Hors de gameState : placedMeeples (home.js _remapPlayerEverywhere) et
+     * snapshots d'annulation (UndoManager.remapPlayerId).
+     */
+    remapPlayerId(oldId, newId) {
+        if (!oldId || !newId || oldId === newId) return;
+
+        this.players.forEach(p => { if (p.id === oldId) p.id = newId; });
+        if (this.disconnectedPlayers?.[oldId]) {
+            this.disconnectedPlayers[newId] = this.disconnectedPlayers[oldId];
+            delete this.disconnectedPlayers[oldId];
+        }
+        remapExtraStateIds(this.extraState, oldId, newId);
+        if (this.fairyState?.ownerId === oldId) this.fairyState.ownerId = newId;
+
+        // État transitoire (non sérialisé)
+        if (this._pendingPrisonerExchange) {
+            const p = this._pendingPrisonerExchange;
+            if (p.chooserId  === oldId) p.chooserId  = newId;
+            if (p.opponentId === oldId) p.opponentId = newId;
+        }
+        if (this._pendingReciprocalCheck) {
+            const c = this._pendingReciprocalCheck;
+            if (c.capturingPlayerId === oldId) c.capturingPlayerId = newId;
+            if (c.capturedOwnerId   === oldId) c.capturedOwnerId   = newId;
+        }
+        (this._freshCaptures ?? []).forEach(c => {
+            if (c.holderId === oldId) c.holderId = newId;
+            if (c.ownerId  === oldId) c.ownerId  = newId;
+        });
     }
 
     serialize() {

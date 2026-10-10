@@ -14,7 +14,7 @@ export class GameSyncCallbacks {
         gameSync, gameState, deck, turnManager, tilePreviewUI, meepleDisplayUI,
         undoManager, unplaceableManager, scoring, zoneMerger, slotsUI, eventBus,
         plateau, gameConfig, ruleRegistry, scorePanelUI, tilePlacement, dragonRules,
-        finalScoresManager, getPlacedMeeples, getWaitingToRedraw, setWaitingToRedraw,
+        finalScoresManager, remapPlayerId, getPlacedMeeples, getWaitingToRedraw, setWaitingToRedraw,
         onRemoteUndo, onFinalScores, onTileDestroyed, onDeckReshuffled,
         onAbbeRecalled, onAbbeRecalledUndo, onBonusTurnStarted, onUnplaceableHandled,
         onGamePaused, onGameResumed, onFullStateSync,
@@ -31,6 +31,7 @@ export class GameSyncCallbacks {
             undoManager, unplaceableManager: unplaceableManager ?? null, scoring,
             zoneMerger, slotsUI, eventBus, plateau, gameConfig, ruleRegistry,
             scorePanelUI, tilePlacement, dragonRules, finalScoresManager,
+            remapPlayerId,
             getPlacedMeeples, getWaitingToRedraw, setWaitingToRedraw,
             onRemoteUndo, onFinalScores, onTileDestroyed, onDeckReshuffled,
             onAbbeRecalled, onAbbeRecalledUndo,
@@ -206,6 +207,12 @@ export class GameSyncCallbacks {
             console.log('🔀 [SYNC] Deck remélangé, currentIndex:', currentIndex);
             this.deck.tiles = tiles; this.deck.currentIndex = currentIndex;
             this.onDeckReshuffled(tiles, currentIndex);
+        };
+
+        // ✨ NOUVEAU — un joueur est revenu sous un nouvel id réseau : l'hôte a déjà remappé chez lui
+        gs.onPlayerIdRemapped = (oldId, newId) => {
+            if (this.isHost) return;
+            this.remapPlayerId?.(oldId, newId);
         };
 
         // ✨ NOUVEAU — Extension Tour : reçu par tous (guest ET host via echo, mais host ignore son propre echo)

@@ -1,3 +1,5 @@
+import { remapExtraStateIds } from '../GameState.js'; // ✨ NOUVEAU
+
 /**
  * UndoManager - Gère l'annulation des actions pendant un tour
  * Permet d'annuler la pose de meeple, puis la pose de tuile
@@ -475,6 +477,22 @@ export class UndoManager {
         this.lastAbbeRecalled = null;
         this.dragonMoveSnapshot = null;
         this.dragonMovePlacedThisTurn = false;
+    }
+
+    /**
+     * ✨ NOUVEAU : un joueur est revenu sous un nouvel id réseau — remplacer l'ancien id dans les
+     * snapshots d'annulation (sinon restaurer un snapshot réintroduirait l'ancien id dans
+     * extraState, les meeples, la fée…). Voir GameState.remapPlayerId.
+     */
+    remapPlayerId(oldId, newId) {
+        [this.turnStartSnapshot, this.afterTilePlacedSnapshot, this.dragonMoveSnapshot].forEach(snap => {
+            if (!snap) return;
+            remapExtraStateIds(snap.extraState, oldId, newId);
+            if (snap.fairyState?.ownerId === oldId) snap.fairyState.ownerId = newId;
+            (snap.playerMeeples ?? []).forEach(pm => { if (pm.id === oldId) pm.id = newId; });
+            Object.values(snap.placedMeeples ?? {}).forEach(m => { if (m.playerId === oldId) m.playerId = newId; });
+        });
+        if (this.lastAbbeRecalled?.playerId === oldId) this.lastAbbeRecalled.playerId = newId;
     }
 
     /**
