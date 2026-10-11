@@ -731,18 +731,18 @@ export class ReconnectionManager {
                         if (gsp2) d.getPlayers().push({ id: from, name: gsp2.name, color: gsp2.color, isHost: false });
                     }
                     Object.values(d.getPlacedMeeples()).forEach(m => { if (m.playerId === oldPeerId) m.playerId = from; });
-                    // ✅ FIX NOUVEAU : même remap que pour placedMeeples ci-dessus, mais pour
-                    // l'état de l'échange automatique de prisonniers (extraState.prisoners,
-                    // _pendingPrisonerExchange, etc.) — sans lui, un choisisseur qui recharge
-                    // sa page en plein choix ne se reconnaîtrait plus comme tel après
-                    // reconnexion (nouveau playerId réseau attribué par PeerJS).
-                    d.remapPendingPrisonerExchange?.(oldPeerId, from);
+                    // ✨ NOUVEAU : remap COMPLET de l'ancien id (tours verrouillées, prisonniers, fée,
+                    // échange en attente, snapshots d'annulation, meeples) — voir
+                    // GameState.remapPlayerId. Les autres invités l'appliquent à la réception de
+                    // `player-id-remapped` (diffusé plus bas, après players-update).
+                    d.remapPlayerId?.(oldPeerId, from);
                     const hm = d.getHeartbeatManager();
                     if (hm) { hm._connectedPeers = multiplayer._connectedPeers; hm._lastPong[from] = Date.now(); hm._timedOut.delete(oldPeerId); delete hm._lastPong[oldPeerId]; }
                     this.sendFullStateTo(from);
                     if (this.gamePaused) d.resumeGame('reconnected');
                     d.afficherToast(`✅ ${name} s'est reconnecté !`);
                     multiplayer.broadcast({ type: 'players-update', players: d.buildPlayersForBroadcast() });
+                    multiplayer.broadcast({ type: 'player-id-remapped', oldId: oldPeerId, newId: from });
                     eventBus.emit('score-updated');
                     if (scorePanelUI) { scorePanelUI.update(); scorePanelUI.updateMobile(); }
                     d.updateTurnDisplay();

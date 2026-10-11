@@ -42,6 +42,7 @@ export class GameSync {
         this.onHostSnapshot  = null; // invités : snapshot reçu de l'hôte
         this.onTurnEndSynced = null; // hôte : appelé après chaque syncTurnEnd (pour diffuser le snapshot)
         this.onHostMoved     = null; // ancien hôte : le nouvel hôte lui annonce le nouveau code
+        this.onPlayerIdRemapped = null; // invités : un joueur est revenu sous un nouvel id réseau
     }
 
     /**
@@ -81,7 +82,8 @@ export class GameSync {
             'prisoner-exchange-resolved', 'prisoner-exchange-pending', // ✨ NOUVEAU — Échange auto de prisonniers
             'prisoner-buyback-executed', // ✨ NOUVEAU — Rachat de prisonnier
             'host-snapshot', // ✨ NOUVEAU — Snapshot d'état diffusé par l'hôte (changement d'hôte)
-            'host-moved'     // ✨ NOUVEAU — Le nouvel hôte prévient l'ancien (reconnecté) du nouveau code
+            'host-moved',    // ✨ NOUVEAU — Le nouvel hôte prévient l'ancien (reconnecté) du nouveau code
+            'player-id-remapped' // ✨ NOUVEAU — Un joueur est revenu sous un nouvel id réseau (hôte → invités)
             // NOTE: 'return-to-lobby', 'player-order-update' et 'game-starting' 
             //       sont gérés par le lobby handler
             // NOTE: 'tower-floor-request', 'tower-capture-request', 'tower-lock-request',
@@ -768,6 +770,11 @@ export class GameSync {
             // ✨ NOUVEAU — Changement d'hôte : snapshot reçu par les invités
             case 'host-snapshot':
                 if (!this.isHost && this.onHostSnapshot) this.onHostSnapshot(data);
+                break;
+
+            // ✨ NOUVEAU — Remplacement d'un id de joueur (reconnexion sous un nouvel id), côté invités
+            case 'player-id-remapped':
+                if (!this.isHost && this.onPlayerIdRemapped) this.onPlayerIdRemapped(data.oldId, data.newId);
                 break;
 
             // ✨ NOUVEAU — Changement d'hôte : reçu par l'ANCIEN hôte (qui se croit encore hôte)

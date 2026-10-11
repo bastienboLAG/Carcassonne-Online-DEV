@@ -160,6 +160,14 @@ export class LobbyNavigator {
             this.returnToLobby();
         }
 
+        // ✅ FIX : départ DÉFINITIF — couper toute surveillance de l'hôte. returnToLobby() vient de
+        // ré-armer onHostDisconnected / le heartbeat du salon (invité) : la fermeture du peer,
+        // 100 ms plus tard, déclenchait la reprise du salon (HostMigration) et l'invité qui
+        // venait de quitter se reconnectait en boucle à l'hôte (qui le réintégrait comme joueur).
+        d.getMultiplayer().onHostDisconnected = null;
+        d.stopHeartbeat();
+        d.resetHostMigration?.();
+
         d.stopAutoReconnect();
         window._isAutoReconnecting = false;
         d.stopGameTimer();

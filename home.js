@@ -34,7 +34,6 @@ import {
     // est en attente : résolution automatique à l'exclusion, remap d'identité à la
     // reconnexion, réaffichage de la modale après un reload de page.
     resolvePendingPrisonerExchangeForPlayer,
-    remapPendingPrisonerExchangeAndPrisoners,
     restorePendingPrisonerExchangeUI,
 } from './modules/game/TowerUI.js';
 import { TowerRules } from './modules/rules/TowerRules.js'; // ✨ NOUVEAU (import direct non utilisé ici mais gardé pour clarté — l'instanciation réelle se fait dans GameModuleInitializer)
@@ -1034,6 +1033,7 @@ function attachGameSyncCallbacks() {
         undoManager, unplaceableManager, scoring, zoneMerger, slotsUI, eventBus,
         plateau, gameConfig, ruleRegistry, scorePanelUI, tilePlacement, dragonRules,
         finalScoresManager,
+        remapPlayerId: (oldId, newId) => _remapPlayerEverywhere(oldId, newId), // ✨ NOUVEAU
         getPlacedMeeples:  () => placedMeeples,
         getWaitingToRedraw: () => waitingToRedraw,
         setWaitingToRedraw: (v) => { waitingToRedraw = v; updateTurnDisplay(); },
@@ -1486,6 +1486,18 @@ function _makeStarter() {
     });
 }
 
+// ✨ NOUVEAU : un joueur est revenu sous un nouvel id réseau — remplace l'ancien id PARTOUT :
+// gameState (joueurs, tours verrouillées, prisonniers, fée, états transitoires), snapshots
+// d'annulation, meeples posés. Appelé par l'hôte (ReconnectionManager, CAS 3) puis par chaque
+// invité à la réception de `player-id-remapped` (GameSyncCallbacks).
+function _remapPlayerEverywhere(oldId, newId) {
+    if (!oldId || !newId || oldId === newId) return;
+    gameState?.remapPlayerId(oldId, newId);
+    undoManager?.remapPlayerId(oldId, newId);
+    Object.values(placedMeeples).forEach(m => { if (m.playerId === oldId) m.playerId = newId; });
+    eventBus.emit('score-updated'); // redessine les panneaux (prisonniers, couleurs)
+}
+
 // ✨ NOUVEAU : deps du handler réseau en cours de partie, extraites de _makeStarter() pour
 // pouvoir être réutilisées par HostMigration lors de la promotion d'un invité en hôte.
 function _buildInGameNetworkDeps() {
@@ -1514,7 +1526,7 @@ function _buildInGameNetworkDeps() {
         excludeDisconnectedPlayer:   (name) => _excludeDisconnectedPlayer(name),
         // ✅ FIX NOUVEAU — remap de l'identité réseau (CAS 3 : même joueur qui
         // reprend son identité) dans l'état de l'échange automatique de prisonniers.
-        remapPendingPrisonerExchange: (oldId, newId) => remapPendingPrisonerExchangeAndPrisoners(oldId, newId),
+        remapPlayerId: (oldId, newId) => _remapPlayerEverywhere(oldId, newId),
     };
 }
 
@@ -1615,6 +1627,7 @@ function _makeLobbyNavigator() {
         getTurnManager:           () => turnManager,
         getPlayerColor:           () => playerColor,
         // ✨ NOUVEAU — changement d'hôte au salon (HostMigration)
+        resetHostMigration:       () => hostMigration?.reset(),
         leaveLobbyAsHost:         () => _getHostMigration().leaveLobbyAsHost(),
         onLobbyHostLost:          () => _getHostMigration().onLobbyHostLost(),
         setInLobby:               (v) => { inLobby = v; },
