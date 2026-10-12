@@ -547,7 +547,11 @@ export class GameSync {
             'tile-drawn',
             'meeple-count-update', 'score-update',
             'tile-destroyed', 'deck-reshuffled', 'abbe-recalled', 'abbe-recalled-undo',
-            'game-ended'
+            'game-ended',
+            // ✅ FIX : pose/vol de la fée par un INVITÉ — topologie en étoile, un invité ne parle
+            // qu'à l'hôte : sans relais, les AUTRES invités gardaient la fée à son ancienne place
+            // (visible dès 3 joueurs). L'émetteur ne reçoit pas son propre message (broadcastExcept).
+            'fairy-placed-sync'
         ];
         if (this.isHost && from && from !== this.multiplayer.playerId && relayTypes.includes(data.type)) {
             console.log(`🔀 [HÔTE] Relais message ${data.type} de ${from} vers les autres`);

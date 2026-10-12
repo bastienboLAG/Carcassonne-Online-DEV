@@ -275,6 +275,9 @@ prisonnier, d'une tour verrouillée, de la fée…) : il faut donc le remplacer 
    `game-in-progress` (`ReconnectionManager`, `onPlayerJoined`).
 3. **Nouveau message invité → hôte** : à gérer dans `GameSyncCallbacks._attachHostCallbacks` (ou le
    `switch` de `GameSync`) — repris sans travail en plus, car la promotion rappelle `attachGameSyncCallbacks()`.
+   **Si ce message doit aussi atteindre les AUTRES invités** (un invité ne parle qu'à l'hôte — topologie
+   en étoile), l'ajouter à `relayTypes` dans `GameSync._handleGameMessage` : sinon seuls l'hôte et
+   l'émetteur voient l'action (bug de la fée posée par un invité, vue à 3 joueurs et plus).
 4. **Variables « hôte » vivant dans `home.js` hors `gameState`** (comme `currentTileForPlayer`) :
    si l'hôte en dépend, les réaffecter dans `HostMigration._promote`.
 5. **Id de joueur mémorisé hors de `players`** : les invités gardent leur id ; seul l'id de
@@ -870,6 +873,7 @@ aussi la section `gameState.extraState` en tête de ce document.
 | Aucun slot pour poser la 1re tuile après un changement d'hôte / une reconnexion (plateau vide) | `modules/game/ReconnectionManager.js` (`applyFullStateSync` : `_clearBoardDom` retire les slots, le slot central doit être recréé si `!firstTilePlaced`), `modules/ui/SlotsUI.js` (`createCentralSlot`) |
 | Après le retour d'un joueur (rechargement, ancien hôte), ses prisonniers/gardes de tour/fée ne lui appartiennent plus chez certains joueurs | `modules/GameState.js` (`remapPlayerId`, `remapExtraStateIds`), `home.js` (`_remapPlayerEverywhere`), `modules/game/ReconnectionManager.js` (CAS 3, message `player-id-remapped`), `modules/game/GameSyncCallbacks.js` (`onPlayerIdRemapped`) |
 | Un invité qui quitte la partie / le salon se reconnecte tout seul | `modules/ui/LobbyNavigator.js` (`returnToInitialLobby` doit couper `onHostDisconnected`, le heartbeat et `HostMigration`) |
+| Une action d'un invité (ex. fée déplacée) n'est vue que par l'hôte et l'émetteur, pas par les autres invités | `modules/core/GameSync.js` (`relayTypes` dans `_handleGameMessage` : le message de l'invité doit y figurer) |
 | Le code affiché (menu, lobby) n'est pas celui du nouvel hôte | `home.js` (`_refreshGameCodeDisplays`, dep `setGameCode` de `_getHostMigration`) |
 | L'hôte disparaît : la partie ne continue pas / mauvais successeur / deux hôtes / invités bloqués sur « Connexion perdue » | `modules/game/HostMigration.js` (logs `[MIGRATION]`), `modules/core/Multiplayer.js` (`reconnectTo`, `startAccepting`, `hostPeerId`), `modules/game/ReconnectionManager.js` (CAS 5, `_notifyHostLost`), `modules/core/GameSync.js` (`host-snapshot`, `onTurnEndSynced`), section « Changement d'hôte » en tête de ce document |
 | Score incorrect | `modules/game/Scoring.js`, `modules/game/ZoneMerger.js`, `modules/game/ZoneRegistry.js`, `modules/MeepleUtils.js` |
