@@ -510,12 +510,20 @@ export class ReconnectionManager {
         }
 
         const _tuilePosee  = tuilePosee;
-        const _tuileEnMain = d.getTuileEnMain();
         requestAnimationFrame(() => {
+            // ✅ FIX : ce callback est suspendu par le navigateur tant que l'onglet est en
+            // arrière-plan (autre onglet, appli mobile au second plan, écran verrouillé…) et ne
+            // s'exécute qu'au retour au premier plan — potentiellement plusieurs tours plus tard.
+            // Auparavant il redessinait l'aperçu avec la tuile CAPTURÉE à l'instant du
+            // full-state-sync (ex: la tuile du tour avorté de l'ancien hôte), écrasant la tuile
+            // réellement en main (état et slots corrects, aperçu faux). On relit donc l'état
+            // courant au moment de l'exécution — jamais de valeurs capturées.
             if (!tilePreviewUI) return;
-            if (_tuilePosee)       tilePreviewUI.showBackside();
-            else if (_tuileEnMain) tilePreviewUI.showTile(_tuileEnMain);
-            else                   tilePreviewUI.showMessage('En attente...');
+            const _liveTuileEnMain = d.getTuileEnMain();
+            const _livePosee       = d.getTurnManager()?.tilePlaced ?? _tuilePosee;
+            if (_livePosee)             tilePreviewUI.showBackside();
+            else if (_liveTuileEnMain)  tilePreviewUI.showTile(_liveTuileEnMain);
+            else                        tilePreviewUI.showMessage('En attente...');
         });
 
         if (slotsUI) slotsUI.tileAvailable = !tuilePosee && !!d.getTuileEnMain();
