@@ -393,14 +393,32 @@ eventBus.on('tile-drawn', (data) => {
     }
 
 
-    if (isOwnTurnStart && isMyTurn && tilePlacement && unplaceableManager) {
-        const isRiverPhase = tuileEnMain?.id?.startsWith('river-') ?? false;
-        const placeable = unplaceableManager.isTilePlaceable(tuileEnMain, tilePlacement.plateau, isRiverPhase);
-        if (!placeable) {
-            const actionText = gameConfig?.unplaceableAction === 'reshuffle'
-                ? 'remise dans la pioche'
-                : 'détruite';
-            unplaceableManager.showUnplaceableBadge(tuileEnMain, actionText);
+    // ✅ FIX : une tuile reçue par resynchronisation d'état complet (changement d'hôte, reconnexion,
+    // rechargement de page — `fromFullSync`, posé par ReconnectionManager.applyFullStateSync) n'est
+    // pas un « début de tour propre » (isOwnTurnStart est faux car fromNetwork), donc la vérification
+    // « tuile implaçable » ne s'exécutait JAMAIS pour elle : le joueur concerné restait bloqué sans
+    // badge ni modale (slots grisés pour une tuile dragon sans volcan, ou aucun slot pour une tuile
+    // réellement implaçable). On la vérifie donc aussi dans ce cas, pour le joueur dont c'est le tour.
+    const _isFullSyncDraw = !!data.fromFullSync;
+    if ((isOwnTurnStart || _isFullSyncDraw) && isMyTurn && tilePlacement && unplaceableManager) {
+        // Tuile dragon sans volcan : le badge dédié est normalement posé par hostDrawAndSend
+        // (pioche normale) ; pour une tuile reçue par full-state-sync, c'est ici qu'on le pose.
+        const _isDragonPrematureFS = _isFullSyncDraw && !!(
+            gameConfig?.tileGroups?.dragon && gameConfig?.extensions?.dragon &&
+            tileHasDragonZone(tuileEnMain) &&
+            !Object.values(plateau.placedTiles ?? {}).some(t => tileHasVolcanoZone(t))
+        );
+        if (_isDragonPrematureFS) {
+            unplaceableManager.showUnplaceableBadgeDragon(tuileEnMain.id);
+        } else {
+            const isRiverPhase = tuileEnMain?.id?.startsWith('river-') ?? false;
+            const placeable = unplaceableManager.isTilePlaceable(tuileEnMain, tilePlacement.plateau, isRiverPhase);
+            if (!placeable) {
+                const actionText = gameConfig?.unplaceableAction === 'reshuffle'
+                    ? 'remise dans la pioche'
+                    : 'détruite';
+                unplaceableManager.showUnplaceableBadge(tuileEnMain, actionText);
+            }
         }
     }
 });

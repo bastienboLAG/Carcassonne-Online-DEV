@@ -505,7 +505,12 @@ export class ReconnectionManager {
                 const tuileEnMain = new Tile(td);
                 tuileEnMain.rotation = data.tuileEnMain.rotation || 0;
                 d.setTuileEnMain(tuileEnMain);
-                d.getEventBus().emit('tile-drawn', { tileData: tuileEnMain, fromNetwork: true });
+                // ✅ FIX : `fromFullSync` — ce tile-drawn n'est ni un début de tour « propre »
+                // (isOwnTurnStart faux, car fromNetwork) ni une pioche réseau classique : la tuile
+                // arrive par resynchronisation (changement d'hôte, reconnexion, rechargement).
+                // Sans ce marqueur, home.js ne vérifiait JAMAIS si cette tuile était implaçable
+                // (ni tuile dragon sans volcan) : le joueur restait bloqué sans badge ni modale.
+                d.getEventBus().emit('tile-drawn', { tileData: tuileEnMain, fromNetwork: true, fromFullSync: true });
             }
         }
 

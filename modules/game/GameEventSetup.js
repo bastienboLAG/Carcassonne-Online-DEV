@@ -71,6 +71,13 @@ export class GameEventSetup {
                     const _t = d.hostDrawAndSend();
                     if (_t) d.getTurnManager().receiveYourTurn(_t.id);
                     d.setWaitingToRedraw(false);
+                    // ✅ FIX : la repioche (tuile implaçable / dragon sans volcan remélangé) modifie la
+                    // tuile en main ET la pioche (tuile détruite ou remélangée) SANS passer par
+                    // syncTurnEnd : le dernier snapshot de changement d'hôte restait donc périmé
+                    // (ancienne tuile, ancienne pioche). Un hôte perdu juste après faisait reprendre
+                    // la partie par son successeur avec une tuile déjà écartée. On rediffuse le
+                    // snapshot (hook posé par HostMigration.install, sans effet hors hôte).
+                    d.getGameSync()?.onTurnEndSynced?.();
                 } else {
                     const gameSync = d.getGameSync();
                     if (gameSync) gameSync.syncUnplaceableRedraw();

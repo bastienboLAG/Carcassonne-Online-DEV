@@ -473,6 +473,12 @@ export class GameSyncCallbacks {
                 }
             }
             gs._pendingUnplaceableRedraw = null;
+            // ✅ FIX : même raison que le bouton « Repiocher » de l'hôte (GameEventSetup) — la
+            // repioche d'un invité (tuile implaçable / dragon sans volcan) change la tuile en main
+            // et la pioche sans passer par syncTurnEnd : sans cette rediffusion, le snapshot de
+            // changement d'hôte garde l'ancienne tuile et l'ancienne pioche. Hook posé par
+            // HostMigration.install, sans effet si ce pair n'est plus hôte.
+            gs.onTurnEndSynced?.();
         };
 
         gs.multiplayer.onDataReceived = ((prev) => (data, from) => {
