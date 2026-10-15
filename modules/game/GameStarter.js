@@ -44,9 +44,13 @@ export class GameStarter {
         if (ext.pig)             { gameState.players.forEach(p => { p.hasPig         = true; }); }
 
         // ✨ NOUVEAU — Extension Tour : stock de pièces selon le nombre de joueurs (hors spectateurs)
+        // ✅ FIX : le quota est désormais mémorisé dans gameState.towerPiecesQuota (sérialisé) — il
+        // est FIGÉ au lancement de la partie et réutilisé tel quel pour tout joueur qui rejoint en
+        // cours de partie (voir ReconnectionManager, CAS 1 et handler players-update).
         if (ext.tower) {
             const activePlayerCount = gameState.players.filter(p => p.color !== 'spectator').length;
             const pieces = getTowerPiecesForPlayerCount(activePlayerCount);
+            gameState.towerPiecesQuota = pieces;
             gameState.players.forEach(p => { if (p.color !== 'spectator') p.towerPieces = pieces; });
         }
 

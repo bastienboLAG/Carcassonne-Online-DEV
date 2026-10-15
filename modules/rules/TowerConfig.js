@@ -2,12 +2,15 @@
  * TowerConfig — Configuration de l'extension Tour
  *
  * TOWER_PIECES_BY_PLAYER_COUNT : nombre de pièces de tour par joueur selon le nombre de joueurs
+ *   AU LANCEMENT de la partie. Ce quota est ensuite figé (GameState.towerPiecesQuota) et attribué
+ *   tel quel à tout joueur qui rejoint en cours de partie.
  * TOWER_CAPTURABLE_MEEPLES     : types de meeples capturables (hors pions spéciaux et structures)
  * TOWER_LOCK_MEEPLES           : types de meeples autorisés à verrouiller une tour (utilisé plus tard)
  * PRISONER_BUYBACK_COST        : ✨ NOUVEAU — coût en points du rachat d'un prisonnier
  */
 
 export const TOWER_PIECES_BY_PLAYER_COUNT = {
+    1: 10, // ✅ FIX : partie lancée seul — auparavant absent, retombait sur le défaut (5)
     2: 10,
     3: 9,
     4: 7,

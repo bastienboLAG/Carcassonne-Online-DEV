@@ -704,6 +704,13 @@ export class ReconnectionManager {
                         if (gameConfig.extensions?.largeMeeple)     newP.hasLargeMeeple = true;
                         if (gameConfig.extensions?.tradersBuilders) newP.hasBuilder     = true;
                         if (gameConfig.extensions?.pig)             newP.hasPig         = true;
+                        // ✅ FIX : un joueur qui rejoint EN COURS de partie arrivait avec 0 pièce de tour.
+                        // Il reçoit le quota FIGÉ au lancement (gameState.towerPiecesQuota), identique à
+                        // celui des joueurs d'origine. Posé AVANT sendFullStateTo ci-dessous pour que le
+                        // nouvel arrivant reçoive la bonne valeur ; les autres invités appliquent la même
+                        // règle localement dans le handler players-update (même quota, aucun champ
+                        // supplémentaire à transporter).
+                        if (gameConfig.extensions?.tower)           newP.towerPieces    = gameState.towerPiecesQuota ?? 0;
                     }
                     d.getPlayers().push({ id: from, name, color: assigned, isHost: false });
                     this.sendFullStateTo(from);
@@ -809,6 +816,12 @@ export class ReconnectionManager {
                                 if (gameConfig.extensions?.largeMeeple)     newP.hasLargeMeeple = true;
                                 if (gameConfig.extensions?.tradersBuilders) newP.hasBuilder     = true;
                                 if (gameConfig.extensions?.pig)             newP.hasPig         = true;
+                                // ✅ FIX : même règle que le CAS 1 côté hôte — le quota figé
+                                // (gameState.towerPiecesQuota, reçu via game-start / full-state-sync /
+                                // turn-ended) est identique chez tous les clients, donc le nouvel arrivant
+                                // reçoit le même stock partout sans transporter towerPieces dans
+                                // players-update. Les spectateurs n'ont pas de pièces (comme au lancement).
+                                if (gameConfig.extensions?.tower && p.color !== 'spectator') newP.towerPieces = gameState.towerPiecesQuota ?? 0;
                             }
                         }
                     } else {

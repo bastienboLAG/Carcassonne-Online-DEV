@@ -95,6 +95,15 @@ export class GameState {
         // Sérialisé (contrairement aux _pending*) car doit survivre à une reconnexion/full-sync.
         this.hasPrisonerBuybacks = false;
 
+        // ✅ FIX : quota de pièces de tour par joueur, FIGÉ au lancement de la partie (calculé par
+        // GameStarter._initGameState d'après le nombre de joueurs non spectateurs présents à ce
+        // moment-là). Sert à doter tout joueur qui rejoint EN COURS de partie du même stock que
+        // les joueurs d'origine (au lieu de 0). Sérialisé : doit survivre à une reconnexion et à un
+        // changement d'hôte (le nouvel hôte doit connaître le quota pour les futurs arrivants).
+        // Reste un champ de premier niveau (pas dans extraState) : c'est une constante de partie,
+        // pas un état de plateau restauré par l'undo. 0 = extension Tour inactive.
+        this.towerPiecesQuota = 0;
+
         // ✨ NOUVEAU : liste transitoire des captures effectuées durant le tour EN COURS
         // (non sérialisée, comme les autres _pending*). Vidée intégralement à chaque
         // 'turn-changed' (cf. home.js). Sert de garde-fou temporaire : tant que le tour du
@@ -241,7 +250,7 @@ export class GameState {
             hasBuilder:     false,
             hasPig:         false,
             hasFairy:       false,
-            towerPieces:    0, // ✨ NOUVEAU : défini au démarrage de partie selon le nombre de joueurs
+            towerPieces:    0, // ✨ NOUVEAU : défini au démarrage de partie (GameStarter) ou à l'arrivée en cours de partie (ReconnectionManager) d'après towerPiecesQuota
             goods: { cloth: 0, wheat: 0, wine: 0 },
             scoreDetail: { cities: 0, roads: 0, monasteries: 0, fields: 0, goods: 0, fairy: 0 }
         });
@@ -317,6 +326,7 @@ export class GameState {
             fairyState:         this.fairyState,
             extraState:         this.extraState, // ✨ NOUVEAU : remplace les anciens champs towers/prisoners séparés
             hasPrisonerBuybacks: this.hasPrisonerBuybacks,
+            towerPiecesQuota:   this.towerPiecesQuota, // ✅ FIX : quota figé, doit survivre à reconnexion / changement d'hôte
         };
     }
 
@@ -363,5 +373,6 @@ export class GameState {
             prisoners: data.extraState?.prisoners ?? {},
         };
         this.hasPrisonerBuybacks = data.hasPrisonerBuybacks ?? false;
+        this.towerPiecesQuota    = data.towerPiecesQuota    ?? 0; // ✅ FIX
     }
 }

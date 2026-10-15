@@ -1,7 +1,7 @@
 # Architecture — Carcassonne Online REFIXED (multijoueur P2P)
 
 > Document généré à partir d'un accès réel au dépôt GitHub
-> (`bastienboLAG/Carcassonne-Online-REFIXED`, branche `main`).
+> (`bastienboLAG/Carcassonne-Online-DEV`, branche `main`).
 > Nombre de lignes indiqué à titre de repère de taille/complexité.
 
 ## Vue d'ensemble
