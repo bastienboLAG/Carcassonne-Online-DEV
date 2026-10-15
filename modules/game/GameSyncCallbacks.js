@@ -469,7 +469,16 @@ export class GameSyncCallbacks {
                 else {
                     const conn = gs.multiplayer.connections.find(c => c.peer === playerId);
                     if (conn?.open) conn.send({ type: 'your-turn', tileId: _nextTile.id });
-                    if (this.tilePreviewUI) this.tilePreviewUI.showTile(_nextTile);
+                    // ✅ FIX : l'hôte « reflète » la tuile de l'invité dont c'est le tour (aperçu + slots en
+                    // lecture seule) via l'événement tile-drawn — à un début de tour normal, c'est
+                    // receiveYourTurn qui l'émet (onTurnEndRequest). Ici (repioche après tuile implaçable)
+                    // seul l'aperçu était mis à jour : tuileEnMain et SlotsUI de l'hôte restaient sur
+                    // l'ancienne tuile implaçable (donc aucun slot) jusqu'à ce que l'invité pose puis
+                    // annule sa tuile. `fromNetwork` (sans fromYourTurn) = même chemin que celui d'un
+                    // invité qui reçoit cette pioche : pas de point de fée de début de tour, et
+                    // snapshot d'annulation de l'hôte recalé sur la nouvelle tuile.
+                    this.eventBus.emit('tile-drawn', { tileData: { ..._nextTile, rotation: 0 }, fromNetwork: true });
+                    this.eventBus.emit('deck-updated', { remaining: this.deck.remaining(), total: this.deck.total() });
                 }
             }
             gs._pendingUnplaceableRedraw = null;
