@@ -22,6 +22,7 @@ export class GameEventSetup {
         this._installModals(d);
         this._installMobile(d);
         this._installMobileMenu(d);
+        this._installSelectorAutoClose(); // ✅ FIX : fermeture du sélecteur de meeple au toucher extérieur (mobile)
 
         this._installed = true;
         console.log('✅ Event listeners installés');
@@ -30,6 +31,26 @@ export class GameEventSetup {
     _closeMenu() {
         const popover = document.getElementById('game-menu-popover');
         if (popover) popover.style.display = 'none';
+    }
+
+    // ── Fermeture automatique du sélecteur de meeple ──────────────────────────
+
+    /**
+     * ✅ FIX : sur mobile, les boutons (annuler, terminer le tour, rotation…) sont branchés sur
+     * `touchend` avec preventDefault() : le navigateur ne génère alors AUCUN événement `click`,
+     * donc l'écouteur « clic extérieur » posé sur `document` par chaque sélecteur ne se
+     * déclenchait jamais. Le sélecteur restait ouvert après une annulation de tuile ou une fin de
+     * tour, et permettait de poser un meeple hors de propos.
+     * `pointerdown` est émis pour tout contact (souris ou tactile), indépendamment de
+     * preventDefault() sur touchend. Tous les sélecteurs (meeple, portail, fée/abbé, tour) partagent
+     * l'id `meeple-selector` : un seul écouteur global, installé une fois (garde `_installed`),
+     * les couvre donc tous. Phase de capture : insensible à un éventuel stopPropagation().
+     */
+    _installSelectorAutoClose() {
+        document.addEventListener('pointerdown', (e) => {
+            const selector = document.getElementById('meeple-selector');
+            if (selector && !selector.contains(e.target)) selector.remove();
+        }, true);
     }
 
     // ── Rotation tuile ────────────────────────────────────────────────────────
