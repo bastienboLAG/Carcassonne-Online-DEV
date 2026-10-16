@@ -1,5 +1,9 @@
 import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
 
+// ✨ NOUVEAU : identifiant spécial de la carte « Spectateurs » (jamais un id de joueur réel),
+// utilisé pour l'état d'ouverture desktop/mobile et pour dataset.playerId.
+const SPECTATORS_KEY = '__spectators__';
+
 /**
  * ScorePanelUI - Affichage des joueurs : panel PC + barre mobile
  *
@@ -7,10 +11,16 @@ import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
  * _buildMeeplesDisplay(), appelée par les deux rendus (PC et mobile).
  *
  * ✨ NOUVEAU : sur mobile, la barre de cartes reste toujours visible et fermée
- * (nom + score + chevron). Un clic sur une carte ouvre son détail (meeples +
- * marchandises) dans un conteneur séparé (#mobile-player-detail), centré,
- * un seul joueur ouvert à la fois (accordéon — cohérent avec l'espace limité).
+ * (meeple coloré + score + chevron — le pseudo n'est plus sur la carte mais dans l'en-tête du
+ * détail). Un clic sur une carte ouvre son détail (meeples + marchandises) dans un conteneur
+ * séparé (#mobile-player-detail), centré, un seul joueur ouvert à la fois (accordéon).
+ * La barre défile horizontalement (cartes de largeur minimale --mobile-card-min-w) ; la carte
+ * du joueur actif est recentrée à chaque changement de tour.
  * Le panel PC (#players-scores) n'est pas concerné, il reste toujours déplié.
+ *
+ * ✨ NOUVEAU — Spectateurs : tous les spectateurs sont regroupés en UNE carte (desktop :
+ * « Spectateur(s) (N) » dépliable avec la liste des pseudos ; mobile : fantôme + nombre, la liste
+ * est dans le détail).
  *
  * ✨ NOUVEAU — Sélection de prisonniers (mécanisme générique) : voir
  * enablePrisonerSelection()/disablePrisonerSelection()/forceOpenPlayerPanel() plus bas.
@@ -24,8 +34,8 @@ import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
  *     les prisonniers sélectionnables qui restent au-dessus du calque (cliquables) ;
  *   - panel du joueur qui CHOISIT (chooserId, desktop uniquement) → visible mais recouvert
  *     d'un calque sombre local, pour le distinguer du panel cible ;
- *   - tous les autres panels → masqués entièrement pendant la sélection (desktop et mobile,
- *     y compris les cartes fermées de la barre du haut sur mobile).
+ *   - tous les autres panels (carte Spectateurs incluse) → masqués entièrement pendant la
+ *     sélection (desktop et mobile, y compris les cartes fermées de la barre du haut sur mobile).
  *
  * ✨ NOUVEAU : gameState.prisoners a été déplacé sous gameState.extraState.prisoners
  * (conteneur générique partagé par toutes les extensions à état persistant — voir
@@ -71,6 +81,15 @@ export class ScorePanelUI {
         // { isSelectable(entry, panelPlayerId), onSelect(entry, panelPlayerId) }, ou null.
         // Enregistré une fois par TowerUI.setupPrisonerBuyback() au démarrage de la partie.
         this._buybackHandler = null;
+
+        // ✨ NOUVEAU : dernier joueur actif centré dans la barre mobile (recentrage uniquement
+        // quand le joueur actif CHANGE, pas à chaque rafraîchissement de score)
+        this._lastActiveId = null;
+
+        // ✨ NOUVEAU : suivi de la hauteur réelle de la barre mobile (variable CSS --mobile-bar-h)
+        this._barObserver = null;
+        this._onWinResize = null;
+        this._observeMobileBarHeight();
     }
 
     onScoreUpdated() { this.update(this._isBonusTurn, this._isDragonTurn); }
@@ -94,6 +113,71 @@ export class ScorePanelUI {
     updateMobile() { this._updateMobile(this._isBonusTurn, this._isDragonTurn); }
 
     // ─────────────────────────────────────────────────────────────
+    // ✨ NOUVEAU : hauteur de la barre mobile → variable CSS --mobile-bar-h
+    // Le panel de détail (#mobile-player-detail) se place sous la barre grâce à cette variable :
+    // si la barre grandit, elle repousse le détail au lieu de passer par-dessus (auparavant top: 56px en dur).
+    // ─────────────────────────────────────────────────────────────
+
+    _observeMobileBarHeight() {
+        const bar = document.getElementById('mobile-players-bar');
+        if (!bar) return;
+        const apply = () => {
+            const h = Math.ceil(bar.getBoundingClientRect().height);
+            if (h > 0) document.documentElement.style.setProperty('--mobile-bar-h', `${h}px`);
+            else       document.documentElement.style.removeProperty('--mobile-bar-h'); // barre masquée (desktop)
+        };
+        apply();
+        if (typeof ResizeObserver !== 'undefined') {
+            this._barObserver = new ResizeObserver(apply);
+            this._barObserver.observe(bar);
+        } else {
+            this._onWinResize = apply;
+            window.addEventListener('resize', apply);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ✨ NOUVEAU : regroupe joueurs et spectateurs à afficher
+    // (les entrées spectateur dont le pseudo correspond à un joueur actif sont masquées, comme avant)
+    // ─────────────────────────────────────────────────────────────
+
+    _getDisplayGroups() {
+        const activeNames = new Set(
+            this.gameState.players
+                .filter(p => p.color !== 'spectator' && !p.disconnected && !p.kicked)
+                .map(p => p.name)
+        );
+        const visible = this.gameState.players
+            .filter(p => p.color !== 'spectator' || !activeNames.has(p.name));
+        return {
+            playersList: visible.filter(p => p.color !== 'spectator'),
+            spectators:  visible.filter(p => p.color === 'spectator'),
+        };
+    }
+
+    /**
+     * ✨ NOUVEAU : liste des spectateurs (fantôme + pseudo), partagée desktop / mobile.
+     */
+    _buildSpectatorList(spectators) {
+        const list = document.createElement('div');
+        list.className = 'spectator-list';
+        spectators.forEach(spec => {
+            const item = document.createElement('div');
+            item.className = 'spectator-item';
+            const ghost = document.createElement('img');
+            ghost.className = 'spectator-ghost-icon';
+            ghost.src = './assets/Meeples/Spectator.png';
+            ghost.alt = 'Spectateur';
+            item.appendChild(ghost);
+            const nameEl = document.createElement('span');
+            nameEl.textContent = spec.name;
+            item.appendChild(nameEl);
+            list.appendChild(item);
+        });
+        return list;
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // Rendu PC
     // ─────────────────────────────────────────────────────────────
 
@@ -104,21 +188,9 @@ export class ScorePanelUI {
         container.innerHTML = '';
         const currentPlayer = this.gameState.getCurrentPlayer();
 
-        // Filtrer les entrées spec dont le nom est présent comme joueur actif (non ghost)
-        // Si le fantôme est disconnected/kicked, on garde l'entrée spec (elle représente l'observateur)
-        const activeNames = new Set(
-            this.gameState.players
-                .filter(p => p.color !== 'spectator' && !p.disconnected && !p.kicked)
-                .map(p => p.name)
-        );
-        const sortedPlayers = [...this.gameState.players]
-            .filter(p => p.color !== 'spectator' || !activeNames.has(p.name))
-            .sort((a, b) => {
-                if (a.color === 'spectator' && b.color !== 'spectator') return 1;
-                if (a.color !== 'spectator' && b.color === 'spectator') return -1;
-                return 0;
-            });
-        sortedPlayers.forEach(player => {
+        // ✨ NOUVEAU : joueurs d'un côté, spectateurs regroupés de l'autre
+        const { playersList, spectators } = this._getDisplayGroups();
+        playersList.forEach(player => {
             const dragonMover = isDragonTurn ? this.gameState.players[this.gameState.dragonPhase?.moverIndex] : null;
             const isActive = dragonMover
                 ? player.id === dragonMover.id
@@ -205,33 +277,73 @@ export class ScorePanelUI {
 
             container.appendChild(card);
         });
+
+        // ✨ NOUVEAU : une seule carte pour tous les spectateurs, en dernière position
+        if (spectators.length > 0) container.appendChild(this._buildDesktopSpectatorCard(spectators));
+    }
+
+    /**
+     * ✨ NOUVEAU : carte unique « Spectateur(s) » (desktop). Repliée : fantôme + libellé.
+     * Dépliée : liste des spectateurs avec leur fantôme.
+     */
+    _buildDesktopSpectatorCard(spectators) {
+        const isOpen = this._desktopOpenPlayerIds.has(SPECTATORS_KEY);
+        const card = document.createElement('div');
+        card.className = 'player-score-card spectator-card';
+        if (isOpen) card.classList.add('open');
+        // Pendant une sélection de prisonnier, les spectateurs ne sont pas concernés → masqués
+        if (this._prisonerSelection) card.classList.add('prisoner-selection-hidden');
+        card.onclick = () => {
+            if (isOpen) this._desktopOpenPlayerIds.delete(SPECTATORS_KEY);
+            else this._desktopOpenPlayerIds.add(SPECTATORS_KEY);
+            this._updateDesktop(this._isBonusTurn, this._isDragonTurn);
+        };
+
+        const header = document.createElement('div');
+        header.className = 'player-score-header';
+
+        const ghost = document.createElement('img');
+        ghost.className = 'spectator-ghost-icon';
+        ghost.src = './assets/Meeples/Spectator.png';
+        ghost.alt = 'Spectateur';
+        header.appendChild(ghost);
+
+        const name = document.createElement('span');
+        name.className   = 'player-score-name';
+        name.textContent = spectators.length > 1 ? `Spectateurs (${spectators.length})` : 'Spectateur';
+        header.appendChild(name);
+
+        const chevron = document.createElement('span');
+        chevron.className   = 'player-score-chevron';
+        chevron.textContent = '▼';
+        header.appendChild(chevron);
+
+        card.appendChild(header);
+
+        if (isOpen) card.appendChild(this._buildSpectatorList(spectators));
+
+        return card;
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Rendu mobile — carte fermée (nom + score + chevron) + détail séparé
+    // Rendu mobile — carte fermée (meeple coloré + score + chevron) + détail séparé
     // ─────────────────────────────────────────────────────────────
 
     _updateMobile(isBonusTurn, isDragonTurn = false) {
         const container = document.getElementById('mobile-players-scores');
         if (!container || !this.gameState) return;
 
+        // ✨ NOUVEAU : mémoriser le défilement manuel — innerHTML = '' le remet à 0 sinon
+        const savedScroll = container.scrollLeft;
         container.innerHTML = '';
         const currentPlayer = this.gameState.getCurrentPlayer();
 
-        const activeNamesMobile = new Set(
-            this.gameState.players
-                .filter(p => p.color !== 'spectator' && !p.disconnected && !p.kicked)
-                .map(p => p.name)
-        );
-        const sortedPlayersMobile = [...this.gameState.players]
-            .filter(p => p.color !== 'spectator' || !activeNamesMobile.has(p.name))
-            .sort((a, b) => {
-                if (a.color === 'spectator' && b.color !== 'spectator') return 1;
-                if (a.color !== 'spectator' && b.color === 'spectator') return -1;
-                return 0;
-            });
-        sortedPlayersMobile.forEach(player => {
-            const dragonMoverM = isDragonTurn ? this.gameState.players[this.gameState.dragonPhase?.moverIndex] : null;
+        const { playersList, spectators } = this._getDisplayGroups();
+        const dragonMoverM = isDragonTurn ? this.gameState.players[this.gameState.dragonPhase?.moverIndex] : null;
+        const activeId = dragonMoverM ? dragonMoverM.id : (currentPlayer?.id ?? null);
+        let activeCard = null;
+
+        playersList.forEach(player => {
             const isActive = dragonMoverM
                 ? player.id === dragonMoverM.id
                 : currentPlayer && player.id === currentPlayer.id;
@@ -251,17 +363,20 @@ export class ScorePanelUI {
             card.className = 'mobile-player-card' + (isActive ? activeClass : '') + (isOpen ? ' open' : ''); // ✨ NOUVEAU : classe open
             if (isGhost) card.style.opacity = '0.45';
             card.dataset.playerId = player.id;
+            card.title = player.name;
+            if (isActive) activeCard = card;
 
             // ✅ FIX : pendant une sélection, toutes les cartes de la barre du haut sauf celle
             // du joueur cible sont masquées (demande explicite : sur mobile un seul panel
             // possible, donc on cache aussi les cartes fermées des autres joueurs).
             if (selection && !isSelectionTarget) card.classList.add('prisoner-selection-hidden');
-            // ✅ FIX : la carte fermée du joueur cible (nom + score) est elle aussi recouverte par le calque sombre
+            // ✅ FIX : la carte fermée du joueur cible (meeple + score) est elle aussi recouverte par le calque sombre
             if (isSelectionTarget) card.classList.add('prisoner-selection-target');
 
+            // ✨ NOUVEAU : plus de pseudo sur la carte (place) — seul le meeple normal coloré
+            // identifie le joueur ; le pseudo est dans l'en-tête du détail (_renderMobileDetail).
             const name = document.createElement('div');
             name.className = 'mobile-player-name';
-            // ✨ NOUVEAU : petit meeple normal coloré à côté du pseudo — identifie le joueur même panel fermé
             if (player.color !== 'spectator') {
                 const colorCap = player.color.charAt(0).toUpperCase() + player.color.slice(1);
                 const colorIcon = document.createElement('img');
@@ -270,10 +385,6 @@ export class ScorePanelUI {
                 colorIcon.alt = player.color;
                 name.appendChild(colorIcon);
             }
-            const nameText = document.createElement('span');
-            nameText.className   = 'mobile-player-name-text';
-            nameText.textContent = (player.kicked ? '🚪 ' : '') + player.name;
-            name.appendChild(nameText);
             card.appendChild(name);
 
             if (player.color !== 'spectator') {
@@ -302,12 +413,67 @@ export class ScorePanelUI {
             container.appendChild(card);
         });
 
+        // ✨ NOUVEAU : carte unique « Spectateurs » (fantôme + nombre), en dernière position
+        if (spectators.length > 0) container.appendChild(this._buildMobileSpectatorCard(spectators));
+
+        // ✨ NOUVEAU : défilement — recentrer la carte du joueur actif UNIQUEMENT quand il change
+        // (forcé, même si la rangée avait été défilée à la main) ; sinon restaurer le défilement manuel.
+        // Calcul synchrone (pas de requestAnimationFrame : suspendu en onglet caché, cf. ARCHITECTURE.md).
+        if (activeCard && container.clientWidth > 0 && activeId !== this._lastActiveId) {
+            const cr = container.getBoundingClientRect();
+            const r  = activeCard.getBoundingClientRect();
+            container.scrollLeft += (r.left + r.width / 2) - (cr.left + cr.width / 2);
+            this._lastActiveId = activeId;
+        } else {
+            container.scrollLeft = savedScroll;
+        }
+
         this._renderMobileDetail(); // ✨ NOUVEAU
+    }
+
+    /**
+     * ✨ NOUVEAU : carte compacte « Spectateurs » de la barre mobile (fantôme + nombre + chevron).
+     */
+    _buildMobileSpectatorCard(spectators) {
+        const isOpen = this._mobileOpenPlayerId === SPECTATORS_KEY;
+        const card = document.createElement('div');
+        card.className = 'mobile-player-card mobile-spectator-card' + (isOpen ? ' open' : '');
+        card.dataset.playerId = SPECTATORS_KEY;
+        // Pendant une sélection de prisonnier, les spectateurs ne sont pas concernés → masqués
+        if (this._prisonerSelection) card.classList.add('prisoner-selection-hidden');
+
+        const name = document.createElement('div');
+        name.className = 'mobile-player-name';
+        const ghost = document.createElement('img');
+        ghost.className = 'mobile-player-color-icon';
+        ghost.src = './assets/Meeples/Spectator.png';
+        ghost.alt = 'Spectateurs';
+        name.appendChild(ghost);
+        card.appendChild(name);
+
+        const count = document.createElement('div');
+        count.className   = 'mobile-player-score mobile-spectator-count';
+        count.textContent = `×${spectators.length}`;
+        card.appendChild(count);
+
+        const chevron = document.createElement('div');
+        chevron.className   = 'mobile-player-chevron';
+        chevron.textContent = '▼';
+        card.appendChild(chevron);
+
+        card.onclick = () => {
+            this._mobileOpenPlayerId = isOpen ? null : SPECTATORS_KEY;
+            this._updateMobile(this._isBonusTurn, this._isDragonTurn);
+        };
+
+        return card;
     }
 
     /**
      * ✨ NOUVEAU : affiche le détail (meeples + marchandises) du joueur actuellement ouvert
      * dans le conteneur séparé #mobile-player-detail, centré sous la barre de cartes.
+     * Joueur : en-tête (meeple, pseudo, score — classes isolées, facilement masquables en CSS)
+     * puis inventaire. Spectateurs : liste des pseudos.
      */
     _renderMobileDetail() {
         const container = document.getElementById('mobile-player-detail');
@@ -315,6 +481,24 @@ export class ScorePanelUI {
         container.innerHTML = '';
 
         if (!this._mobileOpenPlayerId || !this.gameState) return;
+
+        // ── Carte Spectateurs : liste regroupée ──
+        if (this._mobileOpenPlayerId === SPECTATORS_KEY) {
+            const { spectators } = this._getDisplayGroups();
+            if (spectators.length === 0) { this._mobileOpenPlayerId = null; return; } // plus aucun spectateur
+            const specCard = document.createElement('div');
+            specCard.className = 'mobile-player-detail-card';
+            const title = document.createElement('div');
+            title.className   = 'mobile-player-detail-header';
+            const titleText = document.createElement('span');
+            titleText.className   = 'mobile-player-detail-name';
+            titleText.textContent = spectators.length > 1 ? `Spectateurs (${spectators.length})` : 'Spectateur';
+            title.appendChild(titleText);
+            specCard.appendChild(title);
+            specCard.appendChild(this._buildSpectatorList(spectators));
+            container.appendChild(specCard);
+            return;
+        }
 
         const player = this.gameState.players.find(p => p.id === this._mobileOpenPlayerId);
         if (!player) { this._mobileOpenPlayerId = null; return; } // joueur parti/déconnecté
@@ -328,8 +512,28 @@ export class ScorePanelUI {
             card.classList.add('prisoner-selection-target');
         }
 
-        // ✨ NOUVEAU : plus d'en-tête pseudo/pastille ici — déjà visible dans la carte fermée juste au-dessus,
-        // la couleur des meeples affichés suffit à identifier de qui il s'agit.
+        // ✨ NOUVEAU : en-tête pseudo/score (le pseudo n'est plus sur la carte fermée).
+        // Isolé dans .mobile-player-detail-header : `display:none` en CSS suffit pour le retirer.
+        if (player.color !== 'spectator') {
+            const colorCap = player.color.charAt(0).toUpperCase() + player.color.slice(1);
+            const header = document.createElement('div');
+            header.className = 'mobile-player-detail-header';
+            const icon = document.createElement('img');
+            icon.className = 'mobile-player-color-icon';
+            icon.src = `./assets/Meeples/${colorCap}/Normal.png`;
+            icon.alt = player.color;
+            header.appendChild(icon);
+            const nameEl = document.createElement('span');
+            nameEl.className   = 'mobile-player-detail-name';
+            nameEl.textContent = (player.kicked ? '🚪 ' : '') + player.name;
+            header.appendChild(nameEl);
+            const scoreEl = document.createElement('span');
+            scoreEl.className   = 'mobile-player-detail-score';
+            scoreEl.textContent = `${player.score} pts`;
+            header.appendChild(scoreEl);
+            card.appendChild(header);
+        }
+
         const meeplesDisplay = document.createElement('div');
         meeplesDisplay.className = 'mobile-player-meeples';
         this._buildMeeplesDisplay(meeplesDisplay, player, 'panelMobile');
@@ -626,7 +830,12 @@ export class ScorePanelUI {
         this._desktopOpenPlayerIds.clear(); // ✨ NOUVEAU
         this._prisonerSelection = null; // ✨ NOUVEAU
         this._buybackHandler = null; // ✨ NOUVEAU
+        this._lastActiveId = null; // ✨ NOUVEAU
         document.body.classList.remove('prisoner-selection-mode'); // ✨ NOUVEAU
+
+        // ✨ NOUVEAU : arrêter le suivi de la hauteur de barre
+        if (this._barObserver) { this._barObserver.disconnect(); this._barObserver = null; }
+        if (this._onWinResize) { window.removeEventListener('resize', this._onWinResize); this._onWinResize = null; }
 
         this.eventBus.off('score-updated',        this._onScoreUpdated);
         this.eventBus.off('meeple-count-updated', this._onMeepleCountUpdated);

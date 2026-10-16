@@ -78,6 +78,8 @@ export class LobbyUI {
 
     /**
      * Mettre à jour la liste des joueurs avec drag & drop
+     * ✨ NOUVEAU : les 6 emplacements ne comptent que les NON-spectateurs ; les spectateurs
+     * sont listés à part, dans un bloc « Spectateurs » (sans limite, sans emplacements vides).
      */
     updatePlayersList() {
         if (!this.playersListEl) return;
@@ -91,91 +93,125 @@ export class LobbyUI {
             return;
         }
         
+        // ✨ NOUVEAU : séparer joueurs et spectateurs en conservant l'index d'origine
+        // (movePlayer travaille sur l'index dans this.players complet)
+        let playingCount = 0;
+        const spectators = [];
         this.players.forEach((player, index) => {
-            const slot = document.createElement('div');
-            slot.className = 'player-slot';
-            
-            // Rendre draggable seulement pour l'hôte
-            if (this.isHost) {
-                slot.draggable = true;
-                slot.style.cursor = 'grab';
-                slot.dataset.playerIndex = index;
-                
-                slot.addEventListener('dragstart', (e) => {
-                    e.dataTransfer.effectAllowed = 'move';
-                    e.dataTransfer.setData('text/plain', index);
-                    slot.style.opacity = '0.5';
-                });
-                
-                slot.addEventListener('dragend', () => {
-                    slot.style.opacity = '1';
-                });
-                
-                slot.addEventListener('dragover', (e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                    slot.style.borderTop = '2px solid gold';
-                });
-                
-                slot.addEventListener('dragleave', () => {
-                    slot.style.borderTop = '';
-                });
-                
-                slot.addEventListener('drop', (e) => {
-                    e.preventDefault();
-                    slot.style.borderTop = '';
-                    
-                    const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
-                    const toIndex = parseInt(slot.dataset.playerIndex);
-                    
-                    if (fromIndex !== toIndex) {
-                        this.movePlayer(fromIndex, toIndex);
-                    }
-                });
+            if (player.color === 'spectator') {
+                spectators.push({ player, index });
+                return;
             }
-            
-            const nameSpan = document.createElement('span');
-            nameSpan.className   = 'player-name';
-            nameSpan.textContent = player.name + (player.isHost ? ' 👑' : '');
-            slot.appendChild(nameSpan);
-
-            const meepleImg = document.createElement('img');
-            meepleImg.src       = this.colorImages[player.color];
-            meepleImg.className = 'player-meeple-img';
-            meepleImg.alt       = player.color;
-            slot.appendChild(meepleImg);
-
-            // Croix kick (hôte sur les invités) ou quitter (invité sur soi-même)
-            const myId = this.multiplayer?.playerId;
-            const showKick      = this.isHost && !player.isHost;
-            const showHostLeave = this.isHost && player.isHost;
-            const showLeave     = !this.isHost && player.id === myId;
-
-            if (showKick || showLeave || showHostLeave) {
-                const closeBtn = document.createElement('button');
-                closeBtn.className   = 'lobby-kick-btn';
-                closeBtn.textContent = '✕';
-                closeBtn.title       = showKick ? 'Retirer ce joueur' : 'Quitter le salon';
-                closeBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    console.log('🔴 Croix cliquée — showKick:', showKick, 'showLeave:', showLeave, 'showHostLeave:', showHostLeave, 'onHostLeave:', !!this.onHostLeave);
-                    if (showKick && this.onKickPlayer)     this.onKickPlayer(player.id);
-                    if (showLeave && this.onLeaveGame)     this.onLeaveGame();
-                    if (showHostLeave && this.onHostLeave) this.onHostLeave();
-                });
-                slot.appendChild(closeBtn);
-            }
-
-            this.playersListEl.appendChild(slot);
+            playingCount++;
+            this.playersListEl.appendChild(this._createPlayerSlot(player, index, true));
         });
         
-        // Ajouter les slots vides
-        for (let i = this.players.length; i < 6; i++) {
+        // Ajouter les slots vides (6 places pour les joueurs, spectateurs exclus)
+        for (let i = playingCount; i < 6; i++) {
             const slot = document.createElement('div');
             slot.className = 'player-slot empty';
             slot.innerHTML = '<span class="player-name">En attente...</span>';
             this.playersListEl.appendChild(slot);
         }
+
+        // ✨ NOUVEAU : bloc Spectateurs (uniquement s'il y en a)
+        if (spectators.length > 0) {
+            const title = document.createElement('div');
+            title.className   = 'lobby-spectators-title';
+            title.textContent = `Spectateurs (${spectators.length})`;
+            this.playersListEl.appendChild(title);
+
+            spectators.forEach(({ player, index }) => {
+                const slot = this._createPlayerSlot(player, index, false);
+                slot.classList.add('spectator-slot');
+                this.playersListEl.appendChild(slot);
+            });
+        }
+    }
+
+    /**
+     * ✨ NOUVEAU : construit un emplacement joueur (extrait de updatePlayersList pour être
+     * partagé entre la liste des joueurs et celle des spectateurs).
+     * @param {object}  player
+     * @param {number}  index      — index dans this.players (drag & drop)
+     * @param {boolean} draggable  — false pour les spectateurs (ordre sans importance)
+     */
+    _createPlayerSlot(player, index, draggable) {
+        const slot = document.createElement('div');
+        slot.className = 'player-slot';
+        
+        // Rendre draggable seulement pour l'hôte
+        if (this.isHost && draggable) {
+            slot.draggable = true;
+            slot.style.cursor = 'grab';
+            slot.dataset.playerIndex = index;
+            
+            slot.addEventListener('dragstart', (e) => {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', index);
+                slot.style.opacity = '0.5';
+            });
+            
+            slot.addEventListener('dragend', () => {
+                slot.style.opacity = '1';
+            });
+            
+            slot.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                slot.style.borderTop = '2px solid gold';
+            });
+            
+            slot.addEventListener('dragleave', () => {
+                slot.style.borderTop = '';
+            });
+            
+            slot.addEventListener('drop', (e) => {
+                e.preventDefault();
+                slot.style.borderTop = '';
+                
+                const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                const toIndex = parseInt(slot.dataset.playerIndex);
+                
+                if (fromIndex !== toIndex) {
+                    this.movePlayer(fromIndex, toIndex);
+                }
+            });
+        }
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.className   = 'player-name';
+        nameSpan.textContent = player.name + (player.isHost ? ' 👑' : '');
+        slot.appendChild(nameSpan);
+
+        const meepleImg = document.createElement('img');
+        meepleImg.src       = this.colorImages[player.color];
+        meepleImg.className = 'player-meeple-img';
+        meepleImg.alt       = player.color;
+        slot.appendChild(meepleImg);
+
+        // Croix kick (hôte sur les invités) ou quitter (invité sur soi-même)
+        const myId = this.multiplayer?.playerId;
+        const showKick      = this.isHost && !player.isHost;
+        const showHostLeave = this.isHost && player.isHost;
+        const showLeave     = !this.isHost && player.id === myId;
+
+        if (showKick || showLeave || showHostLeave) {
+            const closeBtn = document.createElement('button');
+            closeBtn.className   = 'lobby-kick-btn';
+            closeBtn.textContent = '✕';
+            closeBtn.title       = showKick ? 'Retirer ce joueur' : 'Quitter le salon';
+            closeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                console.log('🔴 Croix cliquée — showKick:', showKick, 'showLeave:', showLeave, 'showHostLeave:', showHostLeave, 'onHostLeave:', !!this.onHostLeave);
+                if (showKick && this.onKickPlayer)     this.onKickPlayer(player.id);
+                if (showLeave && this.onLeaveGame)     this.onLeaveGame();
+                if (showHostLeave && this.onHostLeave) this.onHostLeave();
+            });
+            slot.appendChild(closeBtn);
+        }
+
+        return slot;
     }
 
     /**
@@ -329,19 +365,38 @@ export class LobbyUI {
 
     /**
      * Affiche la modale de choix joueur/spectateur et appelle callback(isSpectator).
+     * ✨ NOUVEAU : `opts.playerDisabled` (partie complète) masque le bouton « Joueur » et adapte
+     * le texte ; l'état d'origine de la modale est restauré à la fermeture.
+     * @param {Function} callback
+     * @param {{ playerDisabled?: boolean }} [opts]
      */
-    showRoleChoiceModal(callback) {
+    showRoleChoiceModal(callback, opts = {}) {
         const modal = document.getElementById('join-role-modal');
         if (!modal) return;
+
+        const playerBtn    = document.getElementById('join-as-player-btn');
+        const spectatorBtn = document.getElementById('join-as-spectator-btn');
+        const textEl       = modal.querySelector('p');
+        const originalText = textEl ? textEl.textContent : null;
+
+        if (opts.playerDisabled) {
+            playerBtn.style.display = 'none';
+            if (textEl) textEl.textContent = 'La partie est complète : vous pouvez la rejoindre en tant que spectateur.';
+        } else {
+            playerBtn.style.display = '';
+        }
+
         modal.style.display = 'flex';
         const cleanup = () => {
-            document.getElementById('join-as-player-btn').removeEventListener('click', onPlayer);
-            document.getElementById('join-as-spectator-btn').removeEventListener('click', onSpectator);
+            playerBtn.removeEventListener('click', onPlayer);
+            spectatorBtn.removeEventListener('click', onSpectator);
+            playerBtn.style.display = '';
+            if (textEl && originalText !== null) textEl.textContent = originalText;
         };
         const onPlayer    = () => { modal.style.display = 'none'; cleanup(); callback(false); };
         const onSpectator = () => { modal.style.display = 'none'; cleanup(); callback(true);  };
-        document.getElementById('join-as-player-btn').addEventListener('click', onPlayer);
-        document.getElementById('join-as-spectator-btn').addEventListener('click', onSpectator);
+        playerBtn.addEventListener('click', onPlayer);
+        spectatorBtn.addEventListener('click', onSpectator);
     }
 
     /**

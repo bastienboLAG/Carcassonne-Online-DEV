@@ -681,10 +681,16 @@ function _buildHostLobbyHandler() {
                 return;
             }
             if (!players.find(p => p.id === from)) {
-                const taken    = players.map(p => p.color);
-                const assigned = taken.includes(data.color)
-                    ? (allColors.find(c => !taken.includes(c)) || 'blue')
-                    : data.color;
+                // ✅ FIX : seules les couleurs de joueurs comptent comme « prises » — 'spectator' est
+                // partagée par tous les spectateurs. Auparavant un 2e spectateur se voyait réattribuer
+                // une vraie couleur libre, et un 7e joueur (plus aucune couleur libre) recevait 'blue'
+                // en doublon. ✨ NOUVEAU : sans couleur libre (salon complet), le nouvel arrivant
+                // devient automatiquement spectateur.
+                const takenPlaying = players.filter(p => p.color !== 'spectator').map(p => p.color);
+                let assigned;
+                if (data.isSpectator || data.color === 'spectator') assigned = 'spectator';
+                else if (!takenPlaying.includes(data.color))        assigned = data.color;
+                else assigned = allColors.find(c => !takenPlaying.includes(c)) || 'spectator';
                 players.push({ id: from, name: data.name, color: assigned, isHost: false });
                 lobbyUI.setPlayers(players);
             }
@@ -724,7 +730,8 @@ function _buildHostLobbyHandler() {
 
         if (data.type === 'color-change') {
             const player     = players.find(p => p.id === data.playerId);
-            const colorTaken = players.some(p => p.id !== data.playerId && p.color === data.color);
+            // ✅ FIX : 'spectator' n'est jamais « prise » (plusieurs spectateurs possibles)
+            const colorTaken = data.color !== 'spectator' && players.some(p => p.id !== data.playerId && p.color === data.color);
             if (player && !colorTaken) {
                 player.color = data.color;
                 lobbyUI.updatePlayersList();
@@ -919,7 +926,8 @@ document.getElementById('join-cancel-btn').addEventListener('click', () => {
     document.getElementById('join-modal').style.display = 'none';
 });
 
-function _showRoleChoiceModal(cb) { lobbyUI.showRoleChoiceModal(cb); }
+// ✨ NOUVEAU : `opts` transmis (ex. { playerDisabled } — partie complète : seul « Spectateur » proposé)
+function _showRoleChoiceModal(cb, opts) { lobbyUI.showRoleChoiceModal(cb, opts); }
 
 function showJoinError(msg) { lobbyUI.showJoinError(msg); }
 

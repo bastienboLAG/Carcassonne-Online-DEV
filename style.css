@@ -1,4 +1,14 @@
 /* style.css */
+
+/* ✨ NOUVEAU : réglages de la barre joueurs mobile (ajustables sans toucher au reste)
+   --mobile-card-min-w : largeur minimale d'une carte joueur ; la rangée défile au-delà.
+                         Mettre 0 pour retrouver l'ancien comportement (cartes compressées, sans défilement).
+   --mobile-bar-h      : hauteur réelle de la barre, mesurée par ScorePanelUI (valeur de repli ci-dessous). */
+:root {
+    --mobile-card-min-w: 56px;
+    --mobile-bar-h: 56px;
+}
+
 html, body {
     margin: 0;
     padding: 0;
@@ -1249,11 +1259,24 @@ h3 .ext-master {
         min-height: 0;
     }
 
+    /* ✨ NOUVEAU : rangée défilante à la main (gauche/droite), scrollbar masquée.
+       Padding vertical : l'overflow-x force un clipping vertical — il faut laisser la place à la
+       carte active agrandie (scale 1.05), à son halo et à l'outline de la carte ouverte. */
     #mobile-players-scores {
         display: flex;
-        flex-wrap: nowrap; /* ✅ FIX : garantit une seule ligne quel que soit le nombre de joueurs (au lieu de wrap qui repassait sur 2 lignes) */
-        gap: 6px;
+        flex-wrap: nowrap;
+        gap: 3px; /* ✨ NOUVEAU : réduit (6px auparavant) */
         width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 6px 4px;
+        box-sizing: border-box;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;      /* Firefox */
+        -ms-overflow-style: none;   /* IE/Edge */
+    }
+    #mobile-players-scores::-webkit-scrollbar {
+        display: none;              /* Chrome/Safari */
     }
 
     /* Carte joueur mobile */
@@ -1265,8 +1288,12 @@ h3 .ext-master {
         border: 2px solid rgba(255,255,255,0.1);
         border-radius: 8px;
         padding: 4px 6px;
-        min-width: 0;   /* ✅ FIX : plus de largeur minimale fixe, autorise le rétrécissement pour tenir sur une ligne */
-        flex: 1 1 0;    /* ✅ FIX : répartition égale et rétrécissable (au lieu de flex:1 avec min-width:80px) */
+        /* ✨ NOUVEAU : largeur minimale réglable (--mobile-card-min-w, voir :root). Les cartes
+           s'étirent pour remplir la barre s'il y a de la place, sinon la rangée défile.
+           Avec --mobile-card-min-w: 0 → ancien comportement (cartes compressées). */
+        min-width: var(--mobile-card-min-w);
+        flex: 1 1 var(--mobile-card-min-w);
+        box-sizing: border-box;
         transition: all 0.2s;
         opacity: 0.7;
         transform: scale(0.95);
@@ -1309,7 +1336,7 @@ h3 .ext-master {
     }
 
     .mobile-player-name {
-        display: flex; /* ✨ NOUVEAU : accueille l'icône meeple colorée à côté du pseudo */
+        display: flex; /* ✨ NOUVEAU : ne contient plus que l'icône meeple colorée (le pseudo est dans le détail) */
         align-items: center;
         justify-content: center;
         gap: 3px;
@@ -1317,10 +1344,10 @@ h3 .ext-master {
         overflow: hidden;
     }
 
-    /* ✨ NOUVEAU : petit meeple normal coloré, identifie le joueur même panel fermé */
+    /* ✨ NOUVEAU : meeple normal coloré, identifie le joueur (seul identifiant sur la carte fermée) */
     .mobile-player-color-icon {
-        width: 11px;
-        height: 13px;
+        width: 16px;
+        height: 19px;
         object-fit: contain;
         flex-shrink: 0;
     }
@@ -1338,6 +1365,12 @@ h3 .ext-master {
         font-size: 14px;
         font-weight: bold;
         color: gold;
+        white-space: nowrap;
+    }
+
+    /* ✨ NOUVEAU : compteur de la carte Spectateurs (pas de score doré) */
+    .mobile-player-score.mobile-spectator-count {
+        color: rgba(255,255,255,0.85);
     }
 
     /* ✨ NOUVEAU : chevron indiquant l'état ouvert/fermé du détail */
@@ -1378,7 +1411,9 @@ h3 .ext-master {
         display: flex;
         justify-content: center;
         position: fixed;
-        top: 56px; /* sous la barre de cartes */
+        /* ✅ FIX : placé sous la barre grâce à sa hauteur réelle (--mobile-bar-h, mesurée par
+           ScorePanelUI). Auparavant 56px en dur : une barre plus haute passait par-dessus le panel. */
+        top: var(--mobile-bar-h, 56px);
         left: 0;
         right: 0;
         z-index: 49;
@@ -1397,6 +1432,32 @@ h3 .ext-master {
         max-width: 320px;
         width: 100%;
         box-shadow: 0 6px 20px rgba(0,0,0,0.5);
+    }
+
+    /* ✨ NOUVEAU : en-tête du détail (meeple + pseudo + score) — le pseudo n'est plus sur la carte.
+       Isolé dans cette classe : `display: none;` ci-dessous suffit à le retirer si le rendu déplaît. */
+    .mobile-player-detail-header {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 6px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+    .mobile-player-detail-name {
+        flex: 1;
+        font-size: 13px;
+        font-weight: bold;
+        color: white;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .mobile-player-detail-score {
+        font-size: 13px;
+        font-weight: bold;
+        color: gold;
+        white-space: nowrap;
     }
 
     /* ── Plateau prend tout l'espace restant ───────────── */
@@ -1773,4 +1834,58 @@ body.prisoner-selection-mode #mobile-player-detail {
     background: rgba(0, 0, 0, 0.75);
     border-radius: 8px;
     pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════════════════
+   ✨ NOUVEAU — Spectateurs : carte groupée (panel) + bloc du lobby
+   ═══════════════════════════════════════════════════════ */
+
+/* Icône fantôme (cartes, listes de spectateurs) */
+.spectator-ghost-icon {
+    width: 18px;
+    height: 20px;
+    object-fit: contain;
+    flex-shrink: 0;
+    opacity: 0.9;
+}
+
+/* Carte « Spectateur(s) » desktop : replié, pas de marge sous l'en-tête */
+.player-score-card.spectator-card .player-score-header {
+    margin-bottom: 0;
+}
+.player-score-card.spectator-card.open .player-score-header {
+    margin-bottom: 10px;
+}
+
+/* Liste des spectateurs (desktop déplié + détail mobile) */
+.spectator-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.spectator-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #ecf0f1;
+    font-size: 14px;
+}
+.spectator-item span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Lobby : titre + emplacements du bloc Spectateurs (en dernier pour l'emporter sur .player-slot:not(.empty)) */
+.lobby-spectators-title {
+    font-size: 13px;
+    color: #bdc3c7;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-top: 6px;
+}
+.player-slot.spectator-slot {
+    border-style: dashed;
+    border-color: rgba(255,255,255,0.3);
+    opacity: 0.85;
 }

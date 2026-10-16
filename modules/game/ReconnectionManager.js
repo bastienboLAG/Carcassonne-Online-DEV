@@ -494,6 +494,13 @@ export class ReconnectionManager {
                 meInState.id = this.multiplayer.playerId;
                 d.setPlayerColor(meInState.color); // met à jour playerColor ('spectator' si applicable)
             }
+            // ✨ NOUVEAU : un joueur devenu spectateur sans l'avoir choisi (partie pleine → conversion
+            // automatique par l'hôte) doit aussi le savoir localement, sinon une reconnexion ultérieure
+            // enverrait isSpectator:false (cf. LobbyJoin, game-in-progress). Le test ci-dessus ne le
+            // couvre pas : l'id de l'entrée spectateur est déjà le bon.
+            if (meInState?.color === 'spectator' && d.getPlayerColor() !== 'spectator') {
+                d.setPlayerColor('spectator');
+            }
         }
 
         if (turnManager) turnManager.updateTurnState();
@@ -650,7 +657,21 @@ export class ReconnectionManager {
             // recevait ce message d'un invité et affichait la modale « Comment rejoindre ? ».
             // Relu dynamiquement : le rôle peut changer en cours de partie.
             if (!this._isHost) return;
-            multiplayer.sendTo(playerId, { type: 'game-in-progress' });
+
+            // ✨ NOUVEAU : indiquer si la partie est complète (les 6 couleurs de joueur sont prises,
+            // fantômes déconnectés/exclus compris — ils occupent encore leur couleur). Dans ce cas la
+            // modale côté invité ne propose que « Spectateur », sauf pour un pseudo réservé :
+            // `reservedNames` = pseudos des joueurs non spectateurs (un joueur qui revient après un
+            // rechargement de page doit pouvoir reprendre sa place — CAS 3, y compris quand l'hôte ne
+            // l'a pas encore détecté comme déconnecté).
+            const _gs = this._getGameState();
+            const _playerColors = ['black','red','pink','green','blue','yellow'];
+            const _taken = (_gs?.players ?? []).map(p => p.color);
+            const _full  = _playerColors.every(c => _taken.includes(c));
+            const _reservedNames = _full
+                ? (_gs?.players ?? []).filter(p => p.color !== 'spectator').map(p => p.name)
+                : [];
+            multiplayer.sendTo(playerId, { type: 'game-in-progress', full: _full, reservedNames: _reservedNames });
         };
 
         const _prevOnData = multiplayer.onDataReceived;
@@ -691,7 +712,20 @@ export class ReconnectionManager {
                 const eventBus   = d.getEventBus();
                 const scorePanelUI = d.getScorePanelUI();
 
-                if (!isKnown && !data.isSpectator) {
+                // ✨ NOUVEAU : filet de sécurité « partie complète » — un nouveau joueur inconnu qui
+                // arrive alors que les 6 couleurs sont prises devient spectateur (CAS 2) au lieu d'être
+                // refusé (« Partie complète » → retour seul au lobby). Un joueur connu (reconnexion)
+                // n'est jamais concerné : il réutilise sa propre place.
+                let wantsSpectator = !!data.isSpectator;
+                if (!isKnown && !wantsSpectator) {
+                    const takenAll = gameState.players.map(p => p.color);
+                    if (allPlayerColors.every(c => takenAll.includes(c))) {
+                        wantsSpectator = true;
+                        console.log(`👁 Partie complète — ${name} devient spectateur`);
+                    }
+                }
+
+                if (!isKnown && !wantsSpectator) {
                     // CAS 1 : nouveau joueur inconnu
                     const takenNow    = gameState.players.map(p => p.color);
                     const freePlaying = allPlayerColors.filter(c => !takenNow.includes(c));
@@ -721,7 +755,7 @@ export class ReconnectionManager {
                     d.afficherToast(`👋 ${name} a rejoint la partie !`);
                     console.log(`👤 Nouveau joueur: ${name}`);
 
-                } else if (!isKnown && data.isSpectator) {
+                } else if (!isKnown && wantsSpectator) {
                     // CAS 2 : nouveau spectateur inconnu
                     gameState.addPlayer(from, name, 'spectator');
                     d.getPlayers().push({ id: from, name, color: 'spectator', isHost: false });
@@ -735,7 +769,7 @@ export class ReconnectionManager {
                     d.afficherToast(`👁 ${name} observe la partie.`);
                     console.log(`👁 Nouveau spectateur: ${name}`);
 
-                } else if (isKnown && !data.isSpectator) {
+                } else if (isKnown && !wantsSpectator) {
                     // CAS 3 : joueur connu qui revient jouer
                     const oldPeerId = reconnectOldPeerId;
                     const specIdx   = gameState.players.findIndex(p => p.name === name && p.color === 'spectator');

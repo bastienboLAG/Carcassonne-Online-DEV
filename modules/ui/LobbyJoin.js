@@ -62,10 +62,15 @@ export class LobbyJoin {
                         d.getMultiplayer().broadcast({ type: 'player-info', name: d.getPlayerName(), color: d.getPlayerColor(), isSpectator: d.getPlayerColor() === 'spectator', version: d.getAppVersion?.(), origin: d.getAppOrigin?.() });
                     } else {
                         window._waitingForRoleChoice = true;
+                        // ✨ NOUVEAU : partie complète (6 joueurs) → seule l'option « Spectateur » est proposée,
+                        // SAUF si le pseudo saisi correspond à une place réservée (joueur qui revient après
+                        // un rechargement de page : il doit pouvoir reprendre sa place — CAS 3 côté hôte).
+                        const _reserved = data.reservedNames ?? [];
+                        const _playerDisabled = !!data.full && !_reserved.includes(d.getPlayerName());
                         d.showRoleChoiceModal((chosenIsSpectator) => {
                             window._waitingForRoleChoice = false;
                             d.getMultiplayer().broadcast({ type: 'player-info', name: d.getPlayerName(), color: d.getPlayerColor(), isSpectator: chosenIsSpectator, version: d.getAppVersion?.(), origin: d.getAppOrigin?.() });
-                        });
+                        }, { playerDisabled: _playerDisabled });
                     }
                 }
 
