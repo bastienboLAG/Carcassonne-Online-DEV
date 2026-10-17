@@ -8,6 +8,16 @@
     --mobile-card-min-w: 56px;
     --mobile-bar-h: 56px;
     --mobile-fade-w: 18px; /* largeur de l'estompage des bords de la barre quand elle peut défiler (0 = désactivé) */
+
+    /* ✨ NOUVEAU : fond gris des panels joueurs (PC + mobile) — remplace rgba(0,0,0,0.3), illisible
+       pour le meeple noir sur le plateau noir. Un seul endroit à ajuster pour tester d'autres teintes.
+       Les variantes "active" sont opaques (et non des teintes à 0.1) : une teinte translucide
+       remplacerait le gris et redonnerait un fond quasi transparent sur le plateau. */
+    --score-card-bg:        rgba(93, 109, 126, 0.85);
+    --score-card-border:    rgba(255, 255, 255, 0.2);
+    --score-card-bg-active: rgba(72, 130, 105, 0.88);  /* tour normal (vert) */
+    --score-card-bg-bonus:  rgba(140, 125, 60, 0.88);  /* tour bonus (or) */
+    --score-card-bg-dragon: rgba(140, 70, 50, 0.88);   /* phase dragon (rouge) */
 }
 
 html, body {
@@ -930,27 +940,31 @@ h3 .ext-master {
 }
 
 .player-score-card {
-    background-color: rgba(0, 0, 0, 0.3);
-    border: 2px solid rgba(255, 255, 255, 0.1);
+    /* ✨ NOUVEAU : fond gris (variable --score-card-bg) au lieu de rgba(0,0,0,0.3) — le meeple noir
+       était invisible sur le plateau noir. */
+    background-color: var(--score-card-bg);
+    border: 2px solid var(--score-card-border);
     border-radius: 8px;
     padding: 15px;
     transition: all 0.3s;
 }
 
+/* ✨ NOUVEAU : les états de tour ont désormais un fond opaque teinté (et non plus une teinte à 0.1,
+   qui aurait écrasé le gris et rendu la carte quasi transparente). */
 .player-score-card.active {
     border-color: #2ecc71;
-    background-color: rgba(46, 204, 113, 0.1);
+    background-color: var(--score-card-bg-active);
 }
 
 .player-score-card.active-bonus {
     border-color: gold;
-    background-color: rgba(255, 215, 0, 0.12);
+    background-color: var(--score-card-bg-bonus);
     box-shadow: 0 0 10px rgba(255, 215, 0, 0.3);
 }
 
 .player-score-card.active-dragon {
     border-color: #c83200;
-    background-color: rgba(200, 50, 0, 0.12);
+    background-color: var(--score-card-bg-dragon);
     box-shadow: 0 0 10px rgba(200, 50, 0, 0.4);
 }
 
@@ -1300,8 +1314,9 @@ h3 .ext-master {
         display: flex;
         flex-direction: column;
         align-items: center;
-        background: rgba(0,0,0,0.3);
-        border: 2px solid rgba(255,255,255,0.1);
+        /* ✨ NOUVEAU : fond gris (variable --score-card-bg) au lieu de rgba(0,0,0,0.3) */
+        background: var(--score-card-bg);
+        border: 2px solid var(--score-card-border);
         border-radius: 8px;
         padding: 4px 6px;
         /* ✨ NOUVEAU : largeur minimale réglable (--mobile-card-min-w, voir :root). Les cartes
@@ -1311,14 +1326,15 @@ h3 .ext-master {
         flex: 1 1 var(--mobile-card-min-w);
         box-sizing: border-box;
         transition: all 0.2s;
-        opacity: 0.7;
+        /* ✨ NOUVEAU : 0.7 → 0.85 — à 0.7 le gris des cartes inactives devenait trop délavé */
+        opacity: 0.85;
         transform: scale(0.95);
         cursor: pointer; /* ✨ NOUVEAU : la carte est cliquable pour ouvrir/fermer le détail */
     }
 
     .mobile-player-card.active {
         border-color: #2ecc71;
-        background: rgba(46, 204, 113, 0.15);
+        background: var(--score-card-bg-active);
         opacity: 1;
         transform: scale(1.05);
         box-shadow: 0 0 8px rgba(46, 204, 113, 0.4);
@@ -1326,7 +1342,7 @@ h3 .ext-master {
 
     .mobile-player-card.active-bonus {
         border-color: gold;
-        background: rgba(255, 215, 0, 0.15);
+        background: var(--score-card-bg-bonus);
         opacity: 1;
         transform: scale(1.05);
         box-shadow: 0 0 8px rgba(255, 215, 0, 0.5);
@@ -1334,7 +1350,7 @@ h3 .ext-master {
 
     .mobile-player-card.active-dragon {
         border-color: #c83200;
-        background: rgba(200, 50, 0, 0.15);
+        background: var(--score-card-bg-dragon);
         opacity: 1;
         transform: scale(1.05);
         box-shadow: 0 0 8px rgba(200, 50, 0, 0.5);
@@ -1441,8 +1457,10 @@ h3 .ext-master {
     }
     .mobile-player-detail-card {
         pointer-events: auto;
-        background: rgba(30, 45, 60, 0.95);
-        border: 1px solid rgba(255,255,255,0.15);
+        /* ✨ NOUVEAU : gris, comme les cartes (le fond rgba(30,45,60,0.95) rendait le meeple noir
+           peu visible dans le détail) — légèrement plus opaque car il se superpose au plateau */
+        background: rgba(93, 109, 126, 0.96);
+        border: 1px solid rgba(255,255,255,0.25);
         border-radius: 10px;
         padding: 8px 12px 10px;
         max-width: 320px;
