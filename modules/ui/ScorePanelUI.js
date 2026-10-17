@@ -1,14 +1,28 @@
 import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
+// ✨ NOUVEAU : aperçu visuel provisoire (mode debug) — voir ScorePanelPreview.js pour le retirer
+import { installScorePanelPreview, removeScorePanelPreview, getScorePanelPreviewExtras } from './ScorePanelPreview.js';
 
 // ✨ NOUVEAU : identifiant spécial de la carte « Spectateurs » (jamais un id de joueur réel),
 // utilisé pour l'état d'ouverture desktop/mobile et pour dataset.playerId.
 const SPECTATORS_KEY = '__spectators__';
+
+// ✨ NOUVEAU : couleurs utilisées pour les prisonniers fictifs de l'aperçu debug
+const PREVIEW_COLORS = ['Red', 'Green', 'Yellow', 'Pink', 'Black', 'Blue'];
 
 /**
  * ScorePanelUI - Affichage des joueurs : panel PC + barre mobile
  *
  * Toute la logique de rendu des meeples est centralisée dans
  * _buildMeeplesDisplay(), appelée par les deux rendus (PC et mobile).
+ *
+ * ✨ NOUVEAU — Contenu d'un panneau : 4 rangées dans un ordre fixe (voir _buildMeeplesDisplay) :
+ *   1. meeples (Normal, Abbé, Grand, Maire, Chariot, Berger, Directeur, puis Bâtisseur+Cochon en bloc insécable)
+ *   2. structures (Grange, Forteresse, Tour, Pont)
+ *   3. jetons (Blé, Vin, Tissu, Mouton, Roi, Brigand)
+ *   4. butin (tuile monastère à gauche, prisonniers à droite)
+ * Flux libre avec retour à la ligne ; une rangée sans élément n'est pas rendue. Compteur « ×N »
+ * superposé en bas à droite de l'icône (sauf Roi, Brigand, tuile et prisonniers, uniques/individuels).
+ * Les pièces des extensions futures se branchent via _getPieceExtras().
  *
  * ✨ NOUVEAU : sur mobile, la barre de cartes reste toujours visible et fermée
  * (meeple coloré + score + chevron — le pseudo n'est plus sur la carte mais dans l'en-tête du
@@ -95,6 +109,11 @@ export class ScorePanelUI {
         this._scrollEl = null;
         this._onScroll = null;
         this._installScrollFade();
+
+        // ✨ NOUVEAU : aperçu visuel provisoire des futurs pions (uniquement avec « Mode debug »)
+        if (this.config?.enableDebug) {
+            installScorePanelPreview(() => this.update(this._isBonusTurn, this._isDragonTurn));
+        }
     }
 
     onScoreUpdated() { this.update(this._isBonusTurn, this._isDragonTurn); }
@@ -576,14 +595,121 @@ export class ScorePanelUI {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Méthode partagée : construit les meeples dans un container
+    // ✨ NOUVEAU — Rangées du panneau joueur (voir en-tête de classe)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Point de branchement UNIQUE des pièces des extensions pas encore implémentées.
+     * Retourne un objet { mayor, wagon, shepherd, ringmaster, barn, castle, bridge, sheep } (compteurs),
+     * { king, robber, monastery } (booléens : le joueur détient la pièce unique) et { fakePrisoners }.
+     * Une clé absente = pièce non affichée. Aujourd'hui seul l'aperçu debug alimente cet objet ;
+     * à l'ajout réel d'une extension, lire ici la donnée réelle (player.xxx / gameState.extraState.xxx).
+     */
+    _getPieceExtras(player) {
+        const idx = this.gameState.players.indexOf(player);
+        return getScorePanelPreviewExtras(idx) ?? {}; // ← aperçu provisoire (ScorePanelPreview.js)
+    }
+
+    /** Rangée en flux libre avec retour à la ligne (styles en ligne, comme l'ancienne rangée de marchandises). */
+    _makeRow(className) {
+        const row = document.createElement('div');
+        row.className = className;
+        row.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px;';
+        return row;
+    }
+
+    /**
+     * Chip = icône + compteur « ×N » superposé en bas à droite (absent si count === null).
+     * Grisé (.unavailable, l'icône seulement) quand count <= 0.
+     * @param {object} p
+     * @param {string} p.type      — clé MeepleConfig (taille)
+     * @param {string} p.src
+     * @param {string} p.alt
+     * @param {number|null} p.count
+     * @param {string} p.context
+     * @param {boolean} [p.heightAuto] — conserve le ratio propre à l'image (ex. Tour)
+     * @param {{width:string,height:string}} [p.size] — remplace la taille MeepleConfig (ex. marchandises)
+     */
+    _buildChip({ type, src, alt, count, context, heightAuto = false, size = null }) {
+        const wrap = document.createElement('span');
+        wrap.className = 'meeple-chip';
+        wrap.style.cssText = 'position:relative;display:inline-flex;';
+
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = alt;
+        const { width, height } = size ?? getMeepleSize(type, context);
+        img.style.width     = width;
+        img.style.height    = heightAuto ? 'auto' : height;
+        img.style.objectFit = 'contain';
+        if (count !== null && count <= 0) img.classList.add('unavailable');
+        wrap.appendChild(img);
+
+        if (count !== null) {
+            const countEl = document.createElement('span');
+            countEl.className   = 'meeple-chip-count';
+            countEl.textContent = `×${count}`;
+            countEl.style.cssText =
+                'position:absolute;right:-4px;bottom:-4px;min-width:8px;padding:0 3px;border-radius:7px;' +
+                'background:rgba(0,0,0,0.7);color:#fff;font-weight:bold;line-height:13px;text-align:center;' +
+                `font-size:${context === 'panel' ? '10px' : '9px'};pointer-events:none;`;
+            wrap.appendChild(countEl);
+        }
+        return wrap;
+    }
+
+    /**
+     * Prisonnier : meeple à la couleur de son propriétaire d'origine, derrière des barreaux.
+     * `clickHandler` null → non cliquable (le clic est quand même absorbé : il ne doit pas
+     * basculer l'ouverture de la carte).
+     */
+    _buildPrisonerChip(type, ownerColorCap, context, clickHandler) {
+        // ✅ FIX : un paysan (Farmer/Large-Farmer) capturé rejoint le même pool
+        // générique player.meeples / hasLargeMeeple qu'un meeple normal — une fois
+        // en prison, il n'y a plus de distinction "paysan" dans l'état de jeu.
+        // Le sprite Farmer étant dessiné couché (posture "dans le champ"), l'afficher
+        // tel quel dans la case prisonnier était trompeur. On affiche donc toujours
+        // le sprite Normal/Large — `entry.type` (donnée réelle utilisée par le rachat
+        // et l'échange automatique) reste inchangé, seul le sprite affiché change.
+        const displayType = type === 'Farmer' ? 'Normal' : type === 'Large-Farmer' ? 'Large' : type;
+
+        const wrap = document.createElement('span');
+        wrap.style.cssText = 'position:relative;display:inline-flex;';
+
+        const img = document.createElement('img');
+        img.src = `./assets/Meeples/${ownerColorCap}/${displayType}.png`;
+        const { width, height } = getMeepleSize(displayType, context);
+        img.style.width  = width;
+        img.style.height = height;
+        img.style.objectFit = 'contain';
+        wrap.appendChild(img);
+
+        // Grille de capture — même traitement visuel prévu dans le document de design
+        const bars = document.createElement('div');
+        bars.style.cssText = 'position:absolute;inset:0;background:repeating-linear-gradient(90deg, rgba(0,0,0,0.85) 0 1.5px, transparent 1.5px 6px);pointer-events:none;';
+        wrap.appendChild(bars);
+
+        if (clickHandler) wrap.classList.add('prisoner-selectable');
+        // ✅ FIX : stopPropagation systématique, même sans clickHandler — sinon un clic
+        // sur un prisonnier non rachetable (pas assez de points, pas le sien, etc.)
+        // remonte jusqu'à la carte et en bascule l'ouverture/fermeture (PC), ou ne fait
+        // rien de visible mais laisse un comportement incohérent (mobile). "Rien ne doit
+        // se passer" doit vraiment signifier rien, y compris l'absence de cet effet de bord.
+        wrap.onclick = (e) => {
+            e.stopPropagation();
+            if (clickHandler) clickHandler();
+        };
+        return wrap;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Méthode partagée : construit les rangées dans un container
     // context : 'panel' (PC) | 'panelMobile' (mobile)
     //
-    // ✨ NOUVEAU : icône unique + compteur "×N" pour chaque type de meeple,
-    // au lieu de répéter une icône par exemplaire (7 icônes normal meeple,
-    // ou une icône par exemplaire pour abbé/grand meeple/bâtisseur/cochon).
-    // Grisée (classe .unavailable) quand le compteur est à 0.
-    // Appliqué de façon identique PC et mobile.
+    // ✨ NOUVEAU : 4 rangées dans un ordre fixe (meeples / structures / jetons / butin),
+    // chaque rangée n'étant rendue que si elle contient au moins un élément. Pour brancher une
+    // nouvelle pièce : l'ajouter dans la bonne rangée ci-dessous (+ sa donnée dans _getPieceExtras
+    // et sa taille dans MeepleConfig.js).
     // ─────────────────────────────────────────────────────────────
 
     _buildMeeplesDisplay(container, player, context) {
@@ -604,191 +730,125 @@ export class ScorePanelUI {
             return;
         }
 
-        // ✨ NOUVEAU : construit un chip icône + "×N", grisé si count <= 0
-        const buildMeepleChip = (type, imgFile, count) => {
-            const wrap = document.createElement('span');
-            wrap.className = 'meeple-chip';
+        const ext    = this.config?.extensions ?? {};
+        const extras = this._getPieceExtras(player);
 
-            const img = document.createElement('img');
-            img.src = `./assets/Meeples/${colorCap}/${imgFile}`;
-            img.alt = type;
-            const { width, height } = getMeepleSize(type, context);
-            img.style.width     = width;
-            img.style.height    = height;
-            img.style.objectFit = 'contain';
-            if (count <= 0) img.classList.add('unavailable');
-            wrap.appendChild(img);
+        // Raccourcis de construction (compteur partout, sauf mention contraire)
+        const colored = (type, file, count, alt = type) => this._buildChip({
+            type, src: `./assets/Meeples/${colorCap}/${file}`, alt, count, context });
+        const misc = (type, file, count, alt = type) => this._buildChip({
+            type, src: `./assets/Misc/C2/${file}`, alt, count, context });
 
-            const countEl = document.createElement('span');
-            countEl.className   = 'meeple-chip-count';
-            countEl.textContent = `×${count}`;
-            wrap.appendChild(countEl);
+        // ── Rangée 1 : meeples ───────────────────────────────────────────
+        const meeplesRow = this._makeRow('meeples-row');
+        meeplesRow.appendChild(colored('Normal', 'Normal.png', player.meeples));
+        if (ext.abbot)       meeplesRow.appendChild(colored('Abbot', 'Abbot.png', player.hasAbbot ? 1 : 0));
+        if (ext.largeMeeple) meeplesRow.appendChild(colored('Large', 'Large.png', player.hasLargeMeeple ? 1 : 0));
+        // ✨ NOUVEAU : meeples des futures extensions (données via _getPieceExtras)
+        if (extras.mayor      !== undefined) meeplesRow.appendChild(colored('Mayor',      'Mayor.png',      extras.mayor,      'Maire'));
+        if (extras.wagon      !== undefined) meeplesRow.appendChild(colored('Wagon',      'Wagon.png',      extras.wagon,      'Chariot'));
+        if (extras.shepherd   !== undefined) meeplesRow.appendChild(colored('Shepherd',   'Shepherd.png',   extras.shepherd,   'Berger'));
+        if (extras.ringmaster !== undefined) meeplesRow.appendChild(colored('Ringmaster', 'Ringmaster.png', extras.ringmaster, 'Directeur de cirque'));
+        // Bâtisseur + Cochon : bloc insécable (retour à la ligne des deux d'un coup, ou aucun)
+        const specialPair = document.createElement('span');
+        specialPair.style.cssText = 'display:inline-flex;flex-wrap:nowrap;align-items:center;gap:6px;';
+        if (ext.tradersBuilders) specialPair.appendChild(colored('Builder', 'Builder.png', player.hasBuilder ? 1 : 0));
+        if (ext.pig)             specialPair.appendChild(colored('Pig', 'Pig.png', player.hasPig ? 1 : 0));
+        if (specialPair.childNodes.length > 0) meeplesRow.appendChild(specialPair);
+        if (meeplesRow.childNodes.length > 0) container.appendChild(meeplesRow);
 
-            return wrap;
-        };
-
-        // ✨ NOUVEAU — Ligne 1 : meeples classiques + spéciaux (séparés par une barre)
-        // (Emplacement réservé pour une future ligne "structures" entre celle-ci et les marchandises)
-        const meeplesRow = document.createElement('div');
-        meeplesRow.className = 'meeples-row';
-
-        meeplesRow.appendChild(buildMeepleChip('Normal', 'Normal.png', player.meeples));
-        if (this.config?.extensions?.abbot) {
-            meeplesRow.appendChild(buildMeepleChip('Abbot', 'Abbot.png', player.hasAbbot ? 1 : 0));
+        // ── Rangée 2 : structures ────────────────────────────────────────
+        const structuresRow = this._makeRow('structures-row');
+        if (extras.barn   !== undefined) structuresRow.appendChild(colored('Barn', 'Barn.png', extras.barn, 'Grange'));
+        if (extras.castle !== undefined) structuresRow.appendChild(misc('Castle', 'Castle.png', extras.castle, 'Forteresse'));
+        // Pièces de Tour — la hauteur reste 'auto' pour préserver le ratio de l'image
+        if (ext.tower) {
+            structuresRow.appendChild(this._buildChip({
+                type: 'Tower', src: './assets/Meeples/Tower01.png', alt: 'Tour',
+                count: player.towerPieces ?? 0, context, heightAuto: true }));
         }
-        if (this.config?.extensions?.largeMeeple) {
-            meeplesRow.appendChild(buildMeepleChip('Large', 'Large.png', player.hasLargeMeeple ? 1 : 0));
-        }
+        if (extras.bridge !== undefined) structuresRow.appendChild(this._buildChip({
+            type: 'Bridge', src: './assets/Meeples/Bridge.png', alt: 'Pont', count: extras.bridge, context }));
+        if (structuresRow.childNodes.length > 0) container.appendChild(structuresRow);
 
-        // Pions spéciaux (bâtisseur, cochon) — séparés visuellement des meeples classiques
-        const specialChips = [];
-        if (this.config?.extensions?.tradersBuilders) {
-            specialChips.push(buildMeepleChip('Builder', 'Builder.png', player.hasBuilder ? 1 : 0));
-        }
-        if (this.config?.extensions?.pig) {
-            specialChips.push(buildMeepleChip('Pig', 'Pig.png', player.hasPig ? 1 : 0));
-        }
-        // ✨ NOUVEAU : stock de pièces de tour restant
-        // ✅ FIX : taille issue de MeepleConfig('Tower', context) au lieu de '16px' fixe,
-        // pour être ajustable et cohérente avec le reste des tailles de meeples.
-        if (this.config?.extensions?.tower) {
-            const wrap = document.createElement('span');
-            wrap.className = 'meeple-chip';
-            const img = document.createElement('img');
-            img.src = './assets/Meeples/Tower01.png';
-            img.alt = 'Tour';
-            const { width: towerChipWidth } = getMeepleSize('Tower', context);
-            img.style.width  = towerChipWidth;
-            img.style.height = 'auto';
-            img.style.objectFit = 'contain';
-            if ((player.towerPieces ?? 0) <= 0) img.classList.add('unavailable');
-            wrap.appendChild(img);
-            const countEl = document.createElement('span');
-            countEl.className   = 'meeple-chip-count';
-            countEl.textContent = `×${player.towerPieces ?? 0}`;
-            wrap.appendChild(countEl);
-            specialChips.push(wrap);
-        }
-        if (specialChips.length > 0) {
-            const divider = document.createElement('span');
-            divider.style.cssText = 'width:1px;align-self:stretch;background:rgba(255,255,255,0.2);margin:0 2px;';
-            meeplesRow.appendChild(divider);
-            specialChips.forEach(chip => meeplesRow.appendChild(chip));
-        }
-
-        container.appendChild(meeplesRow);
-
-        // ✨ NOUVEAU — Ligne 2 : marchandises, sur sa propre ligne (plus de séparateur inline)
-        // (Emplacement réservé pour une future ligne "prison + tuile bonus" en dessous)
-        if (!isSpectator && this.config?.extensions?.merchants) {
+        // ── Rangée 3 : jetons ────────────────────────────────────────────
+        const tokensRow = this._makeRow('tokens-row');
+        if (ext.merchants) {
             const goods     = player.goods || { cloth: 0, wheat: 0, wine: 0 };
             const goodsSize = getGoodsSize(context === 'panel' ? 'panel' : 'panelMobile');
-
-            const goodsRow = document.createElement('div');
-            goodsRow.className = 'goods-row';
-
             [
-                { key: 'cloth', src: './assets/Misc/C2/Cloth.png', alt: 'Tissu' },
-                { key: 'wheat', src: './assets/Misc/C2/Wheat.png', alt: 'Blé'   },
-                { key: 'wine',  src: './assets/Misc/C2/Wine.png',  alt: 'Vin'   },
-            ].forEach(({ key, src, alt }) => {
-                const wrap = document.createElement('span');
-                wrap.style.cssText = 'display:inline-flex;align-items:center;gap:2px;';
-
-                const img = document.createElement('img');
-                img.src          = src;
-                img.alt          = alt;
-                img.style.width  = goodsSize.width;
-                img.style.height = goodsSize.height;
-                img.style.objectFit = 'contain';
-                wrap.appendChild(img);
-
-                const count = document.createElement('span');
-                count.textContent = goods[key] ?? 0;
-                count.style.cssText = 'color:white;font-size:11px;font-weight:bold;min-width:10px;';
-                wrap.appendChild(count);
-
-                goodsRow.appendChild(wrap);
+                { key: 'wheat', file: 'Wheat.png', alt: 'Blé'   },
+                { key: 'wine',  file: 'Wine.png',  alt: 'Vin'   },
+                { key: 'cloth', file: 'Cloth.png', alt: 'Tissu' },
+            ].forEach(({ key, file, alt }) => {
+                tokensRow.appendChild(this._buildChip({
+                    type: key, src: `./assets/Misc/C2/${file}`, alt,
+                    count: goods[key] ?? 0, context, size: goodsSize }));
             });
-
-            container.appendChild(goodsRow);
         }
+        if (extras.sheep !== undefined) tokensRow.appendChild(misc('Sheep', 'Sheep1.png', extras.sheep, 'Mouton'));
+        // Roi / Brigand : jeton unique partagé, affiché seulement chez le joueur qui le détient, sans compteur
+        if (extras.king)   tokensRow.appendChild(misc('King',   'TokenKing.png',   null, 'Roi'));
+        if (extras.robber) tokensRow.appendChild(misc('Robber', 'TokenRobber.png', null, 'Brigand'));
+        if (tokensRow.childNodes.length > 0) container.appendChild(tokensRow);
 
-        // ✨ NOUVEAU — Ligne 3 : prisonniers (butin), un chip par meeple capturé avec la couleur d'origine
-        if (this.config?.extensions?.tower) {
+        // ── Rangée 4 : butin = tuile monastère (gauche) + prisonniers (droite) ──
+        const prisoners = [];
+        const selection = this._prisonerSelection;
+        const isSelectionPanel = selection && selection.playerId === player.id;
+
+        if (ext.tower) {
             // ✨ NOUVEAU : gameState.prisoners a été déplacé sous gameState.extraState.prisoners
             const myPrisoners = this.gameState?.extraState?.prisoners?.[player.id] ?? [];
-            if (myPrisoners.length > 0) {
+            myPrisoners.forEach((entry) => {
+                const { type, ownerId } = entry;
+                const ownerPlayer = this.gameState.players.find(p => p.id === ownerId);
+                const ownerColorCap = (ownerPlayer?.color ?? 'black').charAt(0).toUpperCase() + (ownerPlayer?.color ?? 'black').slice(1);
+
+                // ✨ NOUVEAU : priorité à une session d'échange automatique en cours sur CE
+                // panel (mécanisme temporaire et ciblé) ; sinon, retombe sur le gestionnaire
+                // de rachat (mécanisme permanent, actif sur tous les panels — voir
+                // TowerUI.setupPrisonerBuyback). Les deux ne peuvent jamais s'appliquer
+                // simultanément au même prisonnier : le rachat se désactive de lui-même
+                // tant qu'un échange automatique attend sa résolution.
+                let clickHandler = null;
+                if (isSelectionPanel && selection.isSelectable(entry)) {
+                    clickHandler = () => selection.onSelect(entry);
+                } else if (this._buybackHandler && this._buybackHandler.isSelectable(entry, player.id)) {
+                    clickHandler = () => this._buybackHandler.onSelect(entry, player.id);
+                }
+                prisoners.push(this._buildPrisonerChip(type, ownerColorCap, context, clickHandler));
+            });
+        }
+        // ✨ NOUVEAU : prisonniers fictifs de l'aperçu debug (jamais cliquables)
+        for (let i = 0; i < (extras.fakePrisoners ?? 0); i++) {
+            prisoners.push(this._buildPrisonerChip('Normal', PREVIEW_COLORS[i % PREVIEW_COLORS.length], context, null));
+        }
+
+        if (extras.monastery || prisoners.length > 0) {
+            const lootRow = document.createElement('div');
+            lootRow.className = 'loot-row';
+            lootRow.style.cssText = 'display:flex;align-items:flex-start;gap:8px;';
+
+            // Tuile monastère unique, à gauche, sans compteur
+            if (extras.monastery) {
+                const tile = document.createElement('img');
+                tile.src = './assets/Misc/C2/Monastery.jpg';
+                tile.alt = 'Tuile monastère';
+                const { width, height } = getMeepleSize('Monastery', context);
+                tile.style.cssText = `width:${width};height:${height};flex-shrink:0;object-fit:contain;border-radius:3px;`;
+                lootRow.appendChild(tile);
+            }
+
+            // Prisonniers à droite (toute la largeur s'il n'y a pas de tuile)
+            if (prisoners.length > 0) {
                 const prisonRow = document.createElement('div');
                 prisonRow.className = 'prison-row';
-
-                // ✨ NOUVEAU : sélection de prisonniers — mécanisme générique (voir constructeur
-                // et enablePrisonerSelection() plus bas). Aujourd'hui utilisé par l'échange
-                // automatique de prisonniers ; prévu pour être réutilisé plus tard par le
-                // rachat de prisonnier.
-                const selection = this._prisonerSelection;
-                const isSelectionPanel = selection && selection.playerId === player.id;
-
-                myPrisoners.forEach((entry) => {
-                    const { type, ownerId } = entry;
-                    const ownerPlayer = this.gameState.players.find(p => p.id === ownerId);
-                    const ownerColorCap = (ownerPlayer?.color ?? 'black').charAt(0).toUpperCase() + (ownerPlayer?.color ?? 'black').slice(1);
-
-                    // ✅ FIX : un paysan (Farmer/Large-Farmer) capturé rejoint le même pool
-                    // générique player.meeples / hasLargeMeeple qu'un meeple normal — une fois
-                    // en prison, il n'y a plus de distinction "paysan" dans l'état de jeu.
-                    // Le sprite Farmer étant dessiné couché (posture "dans le champ"), l'afficher
-                    // tel quel dans la case prisonnier était trompeur. On affiche donc toujours
-                    // le sprite Normal/Large — `entry.type` (donnée réelle utilisée par le rachat
-                    // et l'échange automatique) reste inchangé, seul le sprite affiché change.
-                    const displayType = type === 'Farmer' ? 'Normal' : type === 'Large-Farmer' ? 'Large' : type;
-
-                    const wrap = document.createElement('span');
-                    wrap.style.cssText = 'position:relative;display:inline-flex;';
-
-                    const img = document.createElement('img');
-                    img.src = `./assets/Meeples/${ownerColorCap}/${displayType}.png`;
-                    const { width, height } = getMeepleSize(displayType, context);
-                    img.style.width  = width;
-                    img.style.height = height;
-                    img.style.objectFit = 'contain';
-                    wrap.appendChild(img);
-
-                    // Grille de capture — même traitement visuel prévu dans le document de design
-                    const bars = document.createElement('div');
-                    bars.style.cssText = 'position:absolute;inset:0;background:repeating-linear-gradient(90deg, rgba(0,0,0,0.85) 0 1.5px, transparent 1.5px 6px);pointer-events:none;';
-                    wrap.appendChild(bars);
-
-                    // ✨ NOUVEAU : priorité à une session d'échange automatique en cours sur CE
-                    // panel (mécanisme temporaire et ciblé) ; sinon, retombe sur le gestionnaire
-                    // de rachat (mécanisme permanent, actif sur tous les panels — voir
-                    // TowerUI.setupPrisonerBuyback). Les deux ne peuvent jamais s'appliquer
-                    // simultanément au même prisonnier : le rachat se désactive de lui-même
-                    // tant qu'un échange automatique attend sa résolution.
-                    let clickHandler = null;
-                    if (isSelectionPanel && selection.isSelectable(entry)) {
-                        clickHandler = () => selection.onSelect(entry);
-                    } else if (this._buybackHandler && this._buybackHandler.isSelectable(entry, player.id)) {
-                        clickHandler = () => this._buybackHandler.onSelect(entry, player.id);
-                    }
-                    if (clickHandler) {
-                        wrap.classList.add('prisoner-selectable');
-                    }
-                    // ✅ FIX : stopPropagation systématique, même sans clickHandler — sinon un clic
-                    // sur un prisonnier non rachetable (pas assez de points, pas le sien, etc.)
-                    // remonte jusqu'à la carte et en bascule l'ouverture/fermeture (PC), ou ne fait
-                    // rien de visible mais laisse un comportement incohérent (mobile). "Rien ne doit
-                    // se passer" doit vraiment signifier rien, y compris l'absence de cet effet de bord.
-                    wrap.onclick = (e) => {
-                        e.stopPropagation();
-                        if (clickHandler) clickHandler();
-                    };
-
-                    prisonRow.appendChild(wrap);
-                });
-
-                container.appendChild(prisonRow);
+                prisonRow.style.cssText = 'flex:1;min-width:0;align-content:flex-start;align-items:flex-start;';
+                prisoners.forEach(p => prisonRow.appendChild(p));
+                lootRow.appendChild(prisonRow);
             }
+            container.appendChild(lootRow);
         }
     }
 
@@ -874,6 +934,8 @@ export class ScorePanelUI {
             this._scrollEl.classList.remove('can-scroll-left', 'can-scroll-right');
             this._scrollEl = null; this._onScroll = null;
         }
+
+        removeScorePanelPreview(); // ✨ NOUVEAU : retire le bouton d'aperçu debug
 
         this.eventBus.off('score-updated',        this._onScoreUpdated);
         this.eventBus.off('meeple-count-updated', this._onMeepleCountUpdated);

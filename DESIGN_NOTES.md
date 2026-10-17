@@ -15,7 +15,7 @@
 7. Interaction Dragon / Fée ↔ garde de tour
 8. Check-list d'une nouvelle extension
 9. Extensions à venir
-10. Panneaux joueurs (spectateurs, barre mobile)
+10. Panneaux joueurs (spectateurs, barre mobile, rangées de pions)
 
 ---
 
@@ -312,8 +312,10 @@ Règles à retenir :
    de tour rediffuse le snapshot ; tout message traité par un handler lobby invité doit être inoffensif pour un hôte.
 8. **Ids de joueur** hors de `players` → `remapPlayerId` / `remapExtraStateIds` (§4).
 9. **Rendu DOM différé** dans `applyFullStateSync` : relire l'état courant à l'exécution (§1.2).
-10. **Pions génériques** (fée, dragon) pouvant cibler la nouvelle pièce : clé distincte + parcours de tous les lieux
+10. **Pions génériques** (fée, dragon) pouvant cibler la nouvelle pièce : clé distincte + parcourir tous les lieux
     qui lisent une clé de pion (§7).
+11. **Panneau joueur** : ranger la pièce dans la bonne rangée de `ScorePanelUI._buildMeeplesDisplay`, lire sa donnée
+    dans `_getPieceExtras`, ajouter ses tailles dans `MeepleConfig.js` (§10).
 
 ---
 
@@ -328,11 +330,13 @@ Aide-mémoire des pièges déjà identifiés ; chaque extension est traitée une
 | Grange | Pion à l'intersection de 4 tuiles | Hors format `"x,y,position"` : nouveau schéma de clé dans `extraState` |
 | Pont | Pièce au centre d'une tuile, modifie la connectivité des bords | Touche `Tile.getEdgeType` / `Board.canPlaceTile`, pas seulement l'affichage — chantier le plus structurant |
 | Forteresse | Modificateur de score attaché à une ville | Probablement `Scoring.js` / `InnsRules.js` plutôt qu'un nouveau pion — à confirmer |
+| Roi, Brigand | Jetons uniques partagés (un seul détenteur à la fois) | Donnée = id du détenteur (pas un compteur) ; à ranger dans `extraState` et à remapper (§4) |
+| Tuile bonus monastère | Tuile unique détenue par un joueur | Idem : id du détenteur dans `extraState` |
 | Zone à 3 meeples empilés | Casse « une clé = 0 ou 1 meeple » | Impacte `ZoneMerger.getZoneMeeples`, `MeeplePlacement.canPlace`, `Scoring` : plan dédié avant tout code |
 
 ---
 
-## 10. Panneaux joueurs (spectateurs, barre mobile)
+## 10. Panneaux joueurs (spectateurs, barre mobile, rangées de pions)
 
 - **Spectateurs** : jamais une carte chacun. `ScorePanelUI._getDisplayGroups()` sépare joueurs et spectateurs ; tous
   les spectateurs sont regroupés en **une** carte (clé `SPECTATORS_KEY`, qui n'est pas un id de joueur : à gérer dans
@@ -346,3 +350,24 @@ Aide-mémoire des pièges déjà identifiés ; chaque extension est traitée une
 - **Panel de détail mobile** : `#mobile-player-detail` se place sous la barre via `--mobile-bar-h`, mesurée par un
   `ResizeObserver` dans `ScorePanelUI` — ne jamais le positionner avec un `top` en dur. Le pseudo n'est pas sur la
   carte mobile mais dans `.mobile-player-detail-header`.
+- **Contenu d'un panneau : 4 rangées dans un ordre fixe**, construites par `ScorePanelUI._buildMeeplesDisplay`
+  (identique PC et mobile, seule la taille change via le contexte `panel` / `panelMobile`) :
+  1. **meeples** : Normal, Abbé, Grand, Maire, Chariot, Berger, Directeur, puis Bâtisseur + Cochon en **bloc
+     insécable** (ils passent à la ligne ensemble ou pas du tout) ;
+  2. **structures** : Grange, Forteresse, Tour, Pont ;
+  3. **jetons** : Blé, Vin, Tissu, Mouton, Roi, Brigand ;
+  4. **butin** : tuile monastère à gauche, prisonniers à droite (toute la largeur s'il n'y a pas de tuile).
+- **Règles d'affichage** : flux libre avec retour à la ligne (pas de colonnes fixes, pas de libellés de rangée, pas
+  de séparateur) ; une rangée sans élément n'est **pas rendue** (aucune marge fantôme) ; les icônes ne sont **jamais
+  réduites** pour gagner de la place. Compteur `×N` superposé en bas à droite de l'icône (`_buildChip`), `×0` conservé
+  et icône grisée (`.unavailable`) quand le pion est épuisé. **Sans compteur** : Roi, Brigand (jeton unique, affiché
+  seulement chez son détenteur), tuile monastère (unique) et prisonniers (individuels). Les styles de ces rangées
+  sont posés **en ligne** dans `ScorePanelUI` (comme l'ancienne rangée de marchandises), pas dans `style.css`.
+- **Brancher une nouvelle pièce** : l'ajouter dans la bonne rangée de `_buildMeeplesDisplay`, lire sa donnée réelle
+  dans `_getPieceExtras(player)` (point de branchement unique ; clé absente = pièce non affichée), déclarer ses
+  tailles `w/h` + échelles dans `MeepleConfig.js`. Image : pion par couleur dans `assets/Meeples/{Couleur}/`, pion
+  neutre dans `assets/Meeples/`, jeton ou tuile dans `assets/Misc/C2/` (casse exacte).
+- **Aperçu provisoire** : `ScorePanelPreview.js` ajoute un bouton 🎨 (visible uniquement si « Mode debug » est
+  coché au lobby) pour afficher des pièces **fictives** et juger l'agencement. Purement visuel : aucun impact sur
+  `gameState`, le réseau ou l'undo. Pour le retirer : supprimer le fichier, puis l'import, l'appel dans le
+  constructeur/`destroy()` et la ligne `getScorePanelPreviewExtras` de `_getPieceExtras` dans `ScorePanelUI.js`.

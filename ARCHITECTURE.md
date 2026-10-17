@@ -35,7 +35,7 @@ Carcassonne en HTML/CSS/JS vanilla (modules ES, aucun framework), multijoueur P2
 | `Deck.js` | Chargement (`data/{Groupe}/{id}.json`), mélange, pioche, remélange tuile dragon |
 | `GameState.js` | État partagé : joueurs, dragon, fée, `extraState`, `_pending*` transitoires, `remapPlayerId` |
 | `LobbyOptions.js` | Cases du lobby, presets, coches maîtres, dépendances entre options, `localStorage` |
-| `MeepleConfig.js` | Tailles des pions par contexte d'affichage (`getMeepleSize`) |
+| `MeepleConfig.js` | Tailles des pions/jetons/tuile bonus par contexte d'affichage (`getMeepleSize`) |
 | `MeepleUtils.js` | Poids de majorité d'un meeple (Grand = 2, Bâtisseur/Cochon = 0) |
 
 ## `modules/core/` — infrastructure
@@ -91,7 +91,8 @@ Carcassonne en HTML/CSS/JS vanilla (modules ES, aucun framework), multijoueur P2
 | Fichier | Rôle |
 |---|---|
 | `TurnUI.js` | Boutons de tour, preview mobile, messages et toasts |
-| `ScorePanelUI.js` | Panneaux joueurs (PC + mobile, carte Spectateurs groupée, barre mobile défilante), meeples/marchandises/prisonniers, sélection de prisonniers |
+| `ScorePanelUI.js` | Panneaux joueurs (PC + mobile, carte Spectateurs groupée, barre mobile défilante) : 4 rangées meeples / structures / jetons / butin, sélection de prisonniers → DN §10 |
+| `ScorePanelPreview.js` | **Provisoire** (mode debug) : pions/jetons fictifs des futures extensions injectés dans les panneaux joueurs pour juger l'agencement ; supprimable → DN §10 |
 | `SlotsUI.js` | Slots de placement de tuile (dont slot central) |
 | `TilePreviewUI.js` | Aperçu de la tuile en main et compteur |
 | `MeepleCursorsUI.js` | Curseurs de placement de meeple, curseurs de rappel d'Abbé |
@@ -111,7 +112,10 @@ Carcassonne en HTML/CSS/JS vanilla (modules ES, aucun framework), multijoueur P2
   `meeplePosition` ∈ 1-25 (grille 5×5). `features` : `shield`, `inn`, `cathedral`, `cloth|wheat|wine`, `princess`,
   ou `{adjacentCities:[ids locaux]}` pour les champs. Id de tuile en jeu = `{extension en minuscules}-{id}`.
 - `data/Presets/NN.json` : presets du lobby (clés mappées dans `LobbyOptions.PRESET_MAP`).
-- `assets/` : images des tuiles (`assets/{Groupe}/C2/`) et des pions (`assets/Meeples/{Couleur}/`).
+- `assets/` : images des tuiles (`assets/{Groupe}/C2/`), des pions (`assets/Meeples/{Couleur}/`, dont
+  `Mayor|Wagon|Shepherd|Ringmaster|Barn.png`), des pions neutres (`assets/Meeples/Bridge.png`) et des jetons/tuile
+  bonus (`assets/Misc/C2/` : marchandises, `Castle.png`, `Sheep1.png`, `TokenKing.png`, `TokenRobber.png`,
+  `Monastery.jpg`). Casse exacte obligatoire (hébergement sensible à la majuscule).
 
 ## Règles transversales (détails → `docs/DESIGN_NOTES.md`)
 
@@ -123,6 +127,7 @@ Carcassonne en HTML/CSS/JS vanilla (modules ES, aucun framework), multijoueur P2
 6. **Tout changement de tuile en main / pioche en cours de tour** → rediffuser le snapshot (`gameSync.onTurnEndSynced?.()`). → DN §3
 7. **Clé de pion spéciale `"tower-lock:x,y"`** (garde de tour, absent de `placedMeeples`) à gérer partout où une clé de pion est lue. → DN §7
 8. **Nouvelle extension** : suivre la check-list. → DN §8
+9. **Nouvelle pièce affichée dans le panneau joueur** : la ranger dans la bonne des 4 rangées de `ScorePanelUI._buildMeeplesDisplay`. → DN §10
 
 ## Symptôme → fichiers
 
@@ -152,6 +157,7 @@ Carcassonne en HTML/CSS/JS vanilla (modules ES, aucun framework), multijoueur P2
 | Auberges / Cathédrales / Grand meeple | `rules/InnsRules.js` |
 | Spectateurs : 7ᵉ joueur, partie complète, liste du lobby, carte Spectateurs | `home.js` (handler lobby hôte), `ReconnectionManager.js` (`game-in-progress`, CAS 1/2), `LobbyJoin.js`, `LobbyUI.js`, `ScorePanelUI.js`, DN §2 et §10 |
 | Barre joueurs mobile (défilement, panel de détail mal placé) | `ScorePanelUI.js`, `style.css`, DN §10 |
+| Contenu d'un panneau joueur (ordre des rangées, compteurs, retours à la ligne, taille d'un pion) | `ScorePanelUI.js` (`_buildMeeplesDisplay`), `MeepleConfig.js`, `ScorePanelPreview.js`, DN §10 |
 | Affichage PC/mobile, panneaux de score, modales, toasts | `TurnUI.js`, `ScorePanelUI.js`, `ModalUI.js`, `style.css`, `index.html` |
 | Zoom / déplacement du plateau | `NavigationManager.js`, `ZoomManager.js` |
 | Démarrage d'une nouvelle extension | DN §8 (puis DN §9 pour les pièges déjà identifiés) |
