@@ -90,6 +90,11 @@ export class ScorePanelUI {
         this._barObserver = null;
         this._onWinResize = null;
         this._observeMobileBarHeight();
+
+        // ✨ NOUVEAU : indicateur de défilement de la barre mobile (estompage des bords, voir _updateScrollFade)
+        this._scrollEl = null;
+        this._onScroll = null;
+        this._installScrollFade();
     }
 
     onScoreUpdated() { this.update(this._isBonusTurn, this._isDragonTurn); }
@@ -125,6 +130,7 @@ export class ScorePanelUI {
             const h = Math.ceil(bar.getBoundingClientRect().height);
             if (h > 0) document.documentElement.style.setProperty('--mobile-bar-h', `${h}px`);
             else       document.documentElement.style.removeProperty('--mobile-bar-h'); // barre masquée (desktop)
+            this._updateScrollFade(); // la largeur disponible a pu changer (rotation, redimensionnement)
         };
         apply();
         if (typeof ResizeObserver !== 'undefined') {
@@ -134,6 +140,32 @@ export class ScorePanelUI {
             this._onWinResize = apply;
             window.addEventListener('resize', apply);
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // ✨ NOUVEAU : indicateur de défilement de la barre mobile.
+    // Pose les classes can-scroll-left / can-scroll-right sur #mobile-players-scores selon qu'il reste des
+    // cartes à découvrir de chaque côté ; style.css estompe alors le bord correspondant (masque).
+    // Aucune classe si tout tient à l'écran.
+    // ─────────────────────────────────────────────────────────────
+
+    _installScrollFade() {
+        const el = document.getElementById('mobile-players-scores');
+        if (!el) return;
+        this._scrollEl = el;
+        this._onScroll = () => this._updateScrollFade();
+        el.addEventListener('scroll', this._onScroll, { passive: true });
+        this._updateScrollFade();
+    }
+
+    _updateScrollFade() {
+        const el = this._scrollEl;
+        if (!el) return;
+        const max   = el.scrollWidth - el.clientWidth;
+        const left  = max > 2 && el.scrollLeft > 2;
+        const right = max > 2 && el.scrollLeft < max - 2;
+        el.classList.toggle('can-scroll-left',  left);
+        el.classList.toggle('can-scroll-right', right);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -427,6 +459,7 @@ export class ScorePanelUI {
         } else {
             container.scrollLeft = savedScroll;
         }
+        this._updateScrollFade(); // ✨ NOUVEAU : le contenu vient d'être reconstruit
 
         this._renderMobileDetail(); // ✨ NOUVEAU
     }
@@ -836,6 +869,11 @@ export class ScorePanelUI {
         // ✨ NOUVEAU : arrêter le suivi de la hauteur de barre
         if (this._barObserver) { this._barObserver.disconnect(); this._barObserver = null; }
         if (this._onWinResize) { window.removeEventListener('resize', this._onWinResize); this._onWinResize = null; }
+        if (this._scrollEl) {
+            this._scrollEl.removeEventListener('scroll', this._onScroll);
+            this._scrollEl.classList.remove('can-scroll-left', 'can-scroll-right');
+            this._scrollEl = null; this._onScroll = null;
+        }
 
         this.eventBus.off('score-updated',        this._onScoreUpdated);
         this.eventBus.off('meeple-count-updated', this._onMeepleCountUpdated);

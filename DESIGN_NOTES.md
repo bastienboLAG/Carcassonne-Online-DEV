@@ -15,6 +15,7 @@
 7. Interaction Dragon / Fée ↔ garde de tour
 8. Check-list d'une nouvelle extension
 9. Extensions à venir
+10. Panneaux joueurs (spectateurs, barre mobile)
 
 ---
 
@@ -65,6 +66,12 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   utilisé à la fois par `full-state-sync` (reconnexion) et `host-snapshot` (changement d'hôte). **Tout champ ajouté
   là est couvert par les deux mécanismes.** Les champs transitoires non sérialisés par `gameState.serialize()` qui
   doivent survivre à un rechargement (ex. `_pendingPrisonerExchange`) doivent y être transportés explicitement.
+- **Capacité** : 6 joueurs non spectateurs maximum. `'spectator'` n'est jamais une couleur « prise » (spectateurs
+  illimités). Un nouvel arrivant sans couleur libre devient spectateur, au lobby (`home.js`, handler `player-info`)
+  comme en partie (`ReconnectionManager`, CAS 1 → CAS 2). `game-in-progress` transporte `full` et `reservedNames`
+  (pseudos des joueurs non spectateurs) : `LobbyJoin` masque « Joueur » si `full` et pseudo non réservé — un joueur
+  qui revient doit toujours pouvoir reprendre sa place (CAS 3). Un joueur converti en spectateur aligne son
+  `playerColor` local sur `'spectator'` (`applyFullStateSync`).
 - **Validation hôte** : l'hôte ne fait jamais confiance au client (ex. `getCurrentPlayer()?.id === from` avant
   d'appliquer une requête de tour) ; l'identité fiable est `from`, pas un champ du message.
 
@@ -322,3 +329,20 @@ Aide-mémoire des pièges déjà identifiés ; chaque extension est traitée une
 | Pont | Pièce au centre d'une tuile, modifie la connectivité des bords | Touche `Tile.getEdgeType` / `Board.canPlaceTile`, pas seulement l'affichage — chantier le plus structurant |
 | Forteresse | Modificateur de score attaché à une ville | Probablement `Scoring.js` / `InnsRules.js` plutôt qu'un nouveau pion — à confirmer |
 | Zone à 3 meeples empilés | Casse « une clé = 0 ou 1 meeple » | Impacte `ZoneMerger.getZoneMeeples`, `MeeplePlacement.canPlace`, `Scoring` : plan dédié avant tout code |
+
+---
+
+## 10. Panneaux joueurs (spectateurs, barre mobile)
+
+- **Spectateurs** : jamais une carte chacun. `ScorePanelUI._getDisplayGroups()` sépare joueurs et spectateurs ; tous
+  les spectateurs sont regroupés en **une** carte (clé `SPECTATORS_KEY`, qui n'est pas un id de joueur : à gérer dans
+  tout code qui lit `dataset.playerId` des cartes). Elle est masquée pendant une sélection de prisonnier. Au lobby,
+  `LobbyUI` compte les 6 emplacements hors spectateurs et liste ceux-ci dans un bloc séparé.
+- **Barre mobile** : `#mobile-players-scores` défile horizontalement (cartes de largeur minimale
+  `--mobile-card-min-w`, `0` = ancien comportement compressé). Le rendu vide le conteneur : `scrollLeft` est donc
+  sauvegardé/restauré à chaque rendu, et le joueur actif n'est recentré que lorsqu'il **change** (`_lastActiveId`),
+  par un calcul synchrone (pas de `requestAnimationFrame`, cf. §1.2). Les classes `can-scroll-left/right`
+  (`_updateScrollFade`) estompent par masque CSS le bord où il reste des cartes ; `--mobile-fade-w: 0` le désactive.
+- **Panel de détail mobile** : `#mobile-player-detail` se place sous la barre via `--mobile-bar-h`, mesurée par un
+  `ResizeObserver` dans `ScorePanelUI` — ne jamais le positionner avec un `top` en dur. Le pseudo n'est pas sur la
+  carte mobile mais dans `.mobile-player-detail-header`.

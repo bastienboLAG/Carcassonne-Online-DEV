@@ -91,7 +91,7 @@ Carcassonne en HTML/CSS/JS vanilla (modules ES, aucun framework), multijoueur P2
 | Fichier | Rôle |
 |---|---|
 | `TurnUI.js` | Boutons de tour, preview mobile, messages et toasts |
-| `ScorePanelUI.js` | Panneaux joueurs (PC + mobile), meeples/marchandises/prisonniers, sélection de prisonniers |
+| `ScorePanelUI.js` | Panneaux joueurs (PC + mobile, carte Spectateurs groupée, barre mobile défilante), meeples/marchandises/prisonniers, sélection de prisonniers |
 | `SlotsUI.js` | Slots de placement de tuile (dont slot central) |
 | `TilePreviewUI.js` | Aperçu de la tuile en main et compteur |
 | `MeepleCursorsUI.js` | Curseurs de placement de meeple, curseurs de rappel d'Abbé |
@@ -100,7 +100,7 @@ Carcassonne en HTML/CSS/JS vanilla (modules ES, aucun framework), multijoueur P2
 | `MeepleActionsUI.js` | Actions sur pions : rappel Abbé, fée, princesse, portail ; listeners réseau Tour/Portail/Princesse |
 | `ModalUI.js` | Modales génériques (tuiles restantes, règles de la partie) |
 | `GameMenuUI.js` | Visibilité des boutons du menu en jeu |
-| `LobbyUI.js` | Liste des joueurs, couleurs, code de partie |
+| `LobbyUI.js` | Liste des joueurs (6 emplacements + bloc Spectateurs), couleurs, code de partie, modale joueur/spectateur |
 | `LobbyJoin.js` | Logique d'un invité qui rejoint (handler lobby) |
 | `LobbyNavigator.js` | Retour au lobby / lobby initial |
 
@@ -150,6 +150,8 @@ Carcassonne en HTML/CSS/JS vanilla (modules ES, aucun framework), multijoueur P2
 | Bâtisseur / Cochon / Marchandises | `rules/BuilderRules.js`, `MeepleUtils.js` |
 | Abbé / jardin | `rules/AbbeRules.js`, `MeepleActionsUI.js` (`handleAbbeRecall`) |
 | Auberges / Cathédrales / Grand meeple | `rules/InnsRules.js` |
+| Spectateurs : 7ᵉ joueur, partie complète, liste du lobby, carte Spectateurs | `home.js` (handler lobby hôte), `ReconnectionManager.js` (`game-in-progress`, CAS 1/2), `LobbyJoin.js`, `LobbyUI.js`, `ScorePanelUI.js`, DN §2 et §10 |
+| Barre joueurs mobile (défilement, panel de détail mal placé) | `ScorePanelUI.js`, `style.css`, DN §10 |
 | Affichage PC/mobile, panneaux de score, modales, toasts | `TurnUI.js`, `ScorePanelUI.js`, `ModalUI.js`, `style.css`, `index.html` |
 | Zoom / déplacement du plateau | `NavigationManager.js`, `ZoomManager.js` |
 | Démarrage d'une nouvelle extension | DN §8 (puis DN §9 pour les pièges déjà identifiés) |

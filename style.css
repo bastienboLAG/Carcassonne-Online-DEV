@@ -7,6 +7,7 @@
 :root {
     --mobile-card-min-w: 56px;
     --mobile-bar-h: 56px;
+    --mobile-fade-w: 18px; /* largeur de l'estompage des bords de la barre quand elle peut défiler (0 = désactivé) */
 }
 
 html, body {
@@ -1277,6 +1278,21 @@ h3 .ext-master {
     }
     #mobile-players-scores::-webkit-scrollbar {
         display: none;              /* Chrome/Safari */
+    }
+
+    /* ✨ NOUVEAU : estompage du bord côté où il reste des cartes (classes posées par ScorePanelUI._updateScrollFade).
+       Masque (et non dégradé de couleur) : la barre est semi-transparente sur le plateau. */
+    #mobile-players-scores.can-scroll-right {
+        -webkit-mask-image: linear-gradient(to right, #000 calc(100% - var(--mobile-fade-w)), transparent 100%);
+                mask-image: linear-gradient(to right, #000 calc(100% - var(--mobile-fade-w)), transparent 100%);
+    }
+    #mobile-players-scores.can-scroll-left {
+        -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--mobile-fade-w));
+                mask-image: linear-gradient(to right, transparent 0, #000 var(--mobile-fade-w));
+    }
+    #mobile-players-scores.can-scroll-left.can-scroll-right {
+        -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--mobile-fade-w), #000 calc(100% - var(--mobile-fade-w)), transparent 100%);
+                mask-image: linear-gradient(to right, transparent 0, #000 var(--mobile-fade-w), #000 calc(100% - var(--mobile-fade-w)), transparent 100%);
     }
 
     /* Carte joueur mobile */
