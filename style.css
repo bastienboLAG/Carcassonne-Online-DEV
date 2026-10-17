@@ -1054,16 +1054,20 @@ h3 .ext-master {
     opacity: 0.9;
 }
 
-/* ✅ FIX : contour noir FORCÉ. L'ancienne version (opacity 0.15 + drop-shadow flou) rendait aussi le
-   contour à 15 % → invisible. Ici plus d'opacité globale : le remplissage est une silhouette claire
-   opaque (brightness(0) puis invert partiel = gris clair), puis 4 drop-shadow nets de 1px noirs
-   (haut/bas/gauche/droite) forment un trait plein. Pour éclaircir/assombrir le remplissage :
-   changer la valeur de invert(0.7) (0 = noir, 1 = blanc). */
+/* ✅ FIX : contour noir visible SANS opacité globale (elle diluait aussi le contour). Le remplissage
+   reproduit le rendu de l'ancien (opacité 0.15 de blanc sur le gris du panel ≈ gris clair) par une
+   silhouette opaque : brightness(0) puis invert(0.52). Réglages :
+   - remplissage : invert(0.52) (0 = noir, 1 = blanc) ;
+   - contour : alpha 0.4 des 4 drop-shadow (0 = invisible, 1 = noir plein), épaisseur 1px.
+   padding + margin négative : le contour est dessiné hors de l'image et était rogné aux bords ;
+   le padding lui laisse la place, la marge négative annule le décalage de mise en page. */
 .player-meeples-display img.unavailable {
     opacity: 1;
-    filter: brightness(0) invert(0.7)
-            drop-shadow(1px 0 0 #000) drop-shadow(-1px 0 0 #000)
-            drop-shadow(0 1px 0 #000) drop-shadow(0 -1px 0 #000);
+    filter: brightness(0) invert(0.52)
+            drop-shadow(1px 0 0 rgba(0,0,0,0.4)) drop-shadow(-1px 0 0 rgba(0,0,0,0.4))
+            drop-shadow(0 1px 0 rgba(0,0,0,0.4)) drop-shadow(0 -1px 0 rgba(0,0,0,0.4));
+    padding: 2px;
+    margin: -2px;
 }
 
 /* ✨ NOUVEAU : chip icône + compteur "×N" — remplace la répétition d'icônes par exemplaire */
@@ -1435,12 +1439,14 @@ h3 .ext-master {
         width: auto;
     }
 
-    /* ✅ FIX : même contour noir forcé que sur PC (voir commentaire de .player-meeples-display img.unavailable) */
+    /* ✅ FIX : même rendu que sur PC (voir commentaire de .player-meeples-display img.unavailable) */
     .mobile-player-meeples img.unavailable {
         opacity: 1;
-        filter: brightness(0) invert(0.7)
-                drop-shadow(1px 0 0 #000) drop-shadow(-1px 0 0 #000)
-                drop-shadow(0 1px 0 #000) drop-shadow(0 -1px 0 #000);
+        filter: brightness(0) invert(0.52)
+                drop-shadow(1px 0 0 rgba(0,0,0,0.4)) drop-shadow(-1px 0 0 rgba(0,0,0,0.4))
+                drop-shadow(0 1px 0 rgba(0,0,0,0.4)) drop-shadow(0 -1px 0 rgba(0,0,0,0.4));
+        padding: 2px;
+        margin: -2px;
     }
 
     /* ✨ NOUVEAU : chip icône + compteur en contexte mobile (même logique que PC) */
