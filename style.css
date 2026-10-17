@@ -1054,12 +1054,11 @@ h3 .ext-master {
     opacity: 0.9;
 }
 
-/* ✅ FIX : sur le fond gris des panels, l'ancien traitement (opacité 0.15 + brightness(3), silhouette
-   blanchâtre) devenait quasi invisible. Silhouette sombre + fin contour clair : lisible quelle que
-   soit la couleur du meeple (noir compris) et clairement "vide" face à une icône disponible. */
+/* ✅ FIX : rendu clair d'origine conservé, avec un fin contour noir (drop-shadow) pour que l'icône
+   reste lisible sur le fond gris des panels. */
 .player-meeples-display img.unavailable {
-    opacity: 0.55;
-    filter: grayscale(100%) brightness(0.25) drop-shadow(0 0 1px rgba(255, 255, 255, 0.9));
+    opacity: 0.15;
+    filter: grayscale(100%) brightness(3) drop-shadow(0 0 1px #000);
 }
 
 /* ✨ NOUVEAU : chip icône + compteur "×N" — remplace la répétition d'icônes par exemplaire */
@@ -1431,10 +1430,10 @@ h3 .ext-master {
         width: auto;
     }
 
-    /* ✅ FIX : même traitement que sur PC (silhouette sombre + contour clair) */
+    /* ✅ FIX : rendu clair d'origine conservé, avec un fin contour noir (comme sur PC) */
     .mobile-player-meeples img.unavailable {
-        opacity: 0.55;
-        filter: grayscale(100%) brightness(0.25) drop-shadow(0 0 1px rgba(255, 255, 255, 0.9));
+        opacity: 0.2;
+        filter: grayscale(100%) brightness(3) drop-shadow(0 0 1px #000);
     }
 
     /* ✨ NOUVEAU : chip icône + compteur en contexte mobile (même logique que PC) */
