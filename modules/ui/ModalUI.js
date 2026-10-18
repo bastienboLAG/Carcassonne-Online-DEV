@@ -220,7 +220,14 @@ export class ModalUI {
         const optionsSection = this._createSection('⚙️ Options', optionsList);
         content.appendChild(optionsSection);
         
-        // Section Extensions (avec arborescence visuelle - v2)
+        // Section Extensions
+        // ✅ FIX : toutes les extensions et toutes leurs règles sont TOUJOURS affichées, avec ✓ (active)
+        // ou ✗ (inactive). Auparavant, Tour et Princesse & Dragon s'affichaient avec un ✓ codé en dur
+        // dès que leurs tuiles étaient cochées (même sans aucune règle), alors que les autres extensions
+        // disparaissaient : l'extension semblait active à tort. Le ✓/✗ d'une extension ne dépend que de
+        // ses RÈGLES (les tuiles sont listées à part, dans la section « Tuiles »).
+        // ✨ NOUVEAU : une future extension s'ajoute simplement en déclarant son bloc ci-dessous.
+        const ext = config.extensions ?? {};
         const extensionsSection = document.createElement('div');
         extensionsSection.style.cssText = `
             margin-bottom: 20px;
@@ -234,212 +241,42 @@ export class ModalUI {
             font-size: 18px;
         `;
         extensionsSection.appendChild(extensionsTitle);
-        
-        // Base avec arborescence
-        if (config.extensions?.base) {
-            const baseContainer = document.createElement('div');
-            baseContainer.style.cssText = `
-                font-family: 'Courier New', monospace;
-                color: #e0e0e0;
-                line-height: 1.6;
-            `;
-            
-            // Ligne Base
-            const baseLine = document.createElement('div');
-            baseLine.textContent = '└─ ✓ Base (Carcassonne)';
-            baseLine.style.cssText = `
-                margin-left: 5px;
-                font-size: 15px;
-            `;
-            baseContainer.appendChild(baseLine);
-            
-            // Options de Base (indentées)
-            // Les champs s'affichent toujours avec leur statut
-            const fieldLine = document.createElement('div');
-            if (config.playFields) {
-                fieldLine.textContent = '   └─ ✓ Les champs';
-                fieldLine.style.cssText = `
-                    margin-left: 5px;
-                    font-size: 15px;
-                    color: #a8d8a8;
-                    padding-left: 20px;
-                `;
-            } else {
-                fieldLine.textContent = '   └─ Les champs (désactivés)';
-                fieldLine.style.cssText = `
-                    margin-left: 5px;
-                    font-size: 15px;
-                    color: #888;
-                    font-style: italic;
-                    padding-left: 20px;
-                `;
-            }
-            baseContainer.appendChild(fieldLine);
-            
-            extensionsSection.appendChild(baseContainer);
-        }
-        
-        // Extension Abbé
-        if (config.extensions?.abbot) {
-            const abbotContainer = document.createElement('div');
-            abbotContainer.style.cssText = `
-                font-family: 'Courier New', monospace;
-                color: #e0e0e0;
-                line-height: 1.6;
-                margin-top: 8px;
-            `;
 
-            const abbotLine = document.createElement('div');
-            abbotLine.textContent = '└─ ✓ L\'Abbé';
-            abbotLine.style.cssText = 'margin-left: 5px; font-size: 15px;';
-            abbotContainer.appendChild(abbotLine);
-
-            extensionsSection.appendChild(abbotContainer);
-        }
-
-        // Extension Auberges & Cathédrales
-        const hasInnsExt = config.extensions?.largeMeeple || config.extensions?.cathedrals || config.extensions?.inns;
-        if (hasInnsExt) {
-            const innsContainer = document.createElement('div');
-            innsContainer.style.cssText = `
-                font-family: 'Courier New', monospace;
-                color: #e0e0e0;
-                line-height: 1.6;
-                margin-top: 8px;
-            `;
-
-            const innsLine = document.createElement('div');
-            innsLine.textContent = '└─ ✓ Auberges & Cathédrales';
-            innsLine.style.cssText = 'margin-left: 5px; font-size: 15px;';
-            innsContainer.appendChild(innsLine);
-
-            const makeSubLine = (text) => {
-                const el = document.createElement('div');
-                el.textContent = `   └─ ✓ ${text}`;
-                el.style.cssText = `
-                    margin-left: 5px;
-                    font-size: 14px;
-                    padding-left: 20px;
-                    color: #a8d8a8;
-                `;
-                return el;
-            };
-
-            if (config.extensions?.largeMeeple) innsContainer.appendChild(makeSubLine('Grand Meeple'));
-            if (config.extensions?.cathedrals)  innsContainer.appendChild(makeSubLine('Cathédrales'));
-            if (config.extensions?.inns)         innsContainer.appendChild(makeSubLine('Auberges'));
-
-            extensionsSection.appendChild(innsContainer);
-        }
-
-        // Extension Marchands & Bâtisseurs
-        if (config.extensions?.tradersBuilders || config.extensions?.merchants || config.extensions?.pig) {
-            const tbContainer = document.createElement('div');
-            tbContainer.style.cssText = `
-                font-family: 'Courier New', monospace;
-                color: #e0e0e0;
-                line-height: 1.6;
-                margin-top: 8px;
-            `;
-
-            const tbLine = document.createElement('div');
-            tbLine.textContent = '└─ ✓ Marchands & Bâtisseurs';
-            tbLine.style.cssText = 'margin-left: 5px; font-size: 15px;';
-            tbContainer.appendChild(tbLine);
-
-            const makeSubLine = (text) => {
-                const el = document.createElement('div');
-                el.textContent = `   └─ ✓ ${text}`;
-                el.style.cssText = `
-                    margin-left: 5px;
-                    font-size: 14px;
-                    padding-left: 20px;
-                    color: #a8d8a8;
-                `;
-                return el;
-            };
-
-            if (config.extensions?.tradersBuilders) tbContainer.appendChild(makeSubLine('Bâtisseur'));
-            if (config.extensions?.merchants)        tbContainer.appendChild(makeSubLine('Marchandises'));
-            if (config.extensions?.pig)              tbContainer.appendChild(makeSubLine('Meeple Cochon'));
-
-            extensionsSection.appendChild(tbContainer);
-        }
-
-        // Extension Princesse & Dragon
-        const hasDragonExt = config.tileGroups?.dragon || config.extensions?.dragon
-            || config.extensions?.princess || config.extensions?.portal
-            || config.extensions?.fairyProtection || config.extensions?.fairyScoreTurn
-            || config.extensions?.fairyScoreZone;
-        if (hasDragonExt) {
-            const dragonContainer = document.createElement('div');
-            dragonContainer.style.cssText = `
-                font-family: 'Courier New', monospace;
-                color: #e0e0e0;
-                line-height: 1.6;
-                margin-top: 8px;
-            `;
-
-            const dragonLine = document.createElement('div');
-            dragonLine.textContent = '└─ ✓ Princesse & Dragon';
-            dragonLine.style.cssText = 'margin-left: 5px; font-size: 15px;';
-            dragonContainer.appendChild(dragonLine);
-
-            const makeSubLine = (text) => {
-                const el = document.createElement('div');
-                el.textContent = `   └─ ✓ ${text}`;
-                el.style.cssText = `
-                    margin-left: 5px;
-                    font-size: 14px;
-                    padding-left: 20px;
-                    color: #a8d8a8;
-                `;
-                return el;
-            };
-
-            if (config.extensions?.dragon)          dragonContainer.appendChild(makeSubLine('Dragon'));
-            if (config.extensions?.princess)         dragonContainer.appendChild(makeSubLine('Princesse'));
-            if (config.extensions?.portal)           dragonContainer.appendChild(makeSubLine('Portail Magique'));
-            if (config.extensions?.fairyProtection)  dragonContainer.appendChild(makeSubLine('Protection Fée'));
-            if (config.extensions?.fairyScoreTurn)   dragonContainer.appendChild(makeSubLine('Fée : +1pt/tour'));
-            if (config.extensions?.fairyScoreZone)   dragonContainer.appendChild(makeSubLine('Fée : +3pts/zone'));
-
-            extensionsSection.appendChild(dragonContainer);
-        }
-
-        // ✨ NOUVEAU : Extension Tour (capture par les tours + rançon)
-        const hasTowerExt = config.tileGroups?.tower || config.extensions?.tower || config.extensions?.ransom;
-        if (hasTowerExt) {
-            const towerContainer = document.createElement('div');
-            towerContainer.style.cssText = `
-                font-family: 'Courier New', monospace;
-                color: #e0e0e0;
-                line-height: 1.6;
-                margin-top: 8px;
-            `;
-
-            const towerLine = document.createElement('div');
-            towerLine.textContent = '└─ ✓ Tour';
-            towerLine.style.cssText = 'margin-left: 5px; font-size: 15px;';
-            towerContainer.appendChild(towerLine);
-
-            const makeSubLine = (text) => {
-                const el = document.createElement('div');
-                el.textContent = `   └─ ✓ ${text}`;
-                el.style.cssText = `
-                    margin-left: 5px;
-                    font-size: 14px;
-                    padding-left: 20px;
-                    color: #a8d8a8;
-                `;
-                return el;
-            };
-
-            if (config.extensions?.tower)  towerContainer.appendChild(makeSubLine('Capture par les tours'));
-            if (config.extensions?.ransom) towerContainer.appendChild(makeSubLine(`Rançon (${PRISONER_BUYBACK_COST} pts)`));
-
-            extensionsSection.appendChild(towerContainer);
-        }
+        const extensionBlocks = [
+            // Base : toujours en jeu (tuiles obligatoires) → ✓ forcé, seule la règle « champs » varie
+            { title: 'Base (Carcassonne)', forceActive: true, rules: [
+                { label: 'Les champs', active: !!config.playFields },
+            ]},
+            { title: "L'Abbé", rules: [
+                { label: 'Meeple Abbé', active: !!ext.abbot },
+            ]},
+            { title: 'Auberges & Cathédrales', rules: [
+                { label: 'Grand Meeple', active: !!ext.largeMeeple },
+                { label: 'Cathédrales',  active: !!ext.cathedrals },
+                { label: 'Auberges',     active: !!ext.inns },
+            ]},
+            { title: 'Marchands & Bâtisseurs', rules: [
+                { label: 'Bâtisseur',     active: !!ext.tradersBuilders },
+                { label: 'Marchandises',  active: !!ext.merchants },
+                { label: 'Meeple Cochon', active: !!ext.pig },
+            ]},
+            { title: 'Princesse & Dragon', rules: [
+                { label: 'Dragon',           active: !!ext.dragon },
+                { label: 'Princesse',        active: !!ext.princess },
+                { label: 'Portail Magique',  active: !!ext.portal },
+                { label: 'Protection Fée',   active: !!ext.fairyProtection },
+                { label: 'Fée : +1pt/tour',  active: !!ext.fairyScoreTurn },
+                { label: 'Fée : +3pts/zone', active: !!ext.fairyScoreZone },
+            ]},
+            { title: 'Tour', rules: [
+                { label: 'Capture par les tours', active: !!ext.tower },
+                // La rançon dépend de la capture : affichée décalée sous elle (comme dans le lobby)
+                { label: `Rançon (${PRISONER_BUYBACK_COST} pts)`, active: !!ext.ransom, indent: true },
+            ]},
+        ];
+        extensionBlocks.forEach(block => {
+            extensionsSection.appendChild(this._createExtensionBlock(block.title, block.rules, block.forceActive ?? null));
+        });
 
         content.appendChild(extensionsSection);
 
@@ -477,6 +314,66 @@ export class ModalUI {
         this.show(modal);
     }
 
+    /**
+     * ✨ NOUVEAU : bloc d'une extension — titre (✓ vert si au moins une règle active, ✗ rouge sinon)
+     * suivi de TOUTES ses règles avec leur propre ✓/✗ (inactives en gris).
+     * @param {string}  title
+     * @param {Array<{label:string, active:boolean, indent?:boolean}>} rules
+     * @param {boolean|null} forceActive — impose l'état du titre (ex. Base), sinon déduit des règles
+     */
+    _createExtensionBlock(title, rules, forceActive = null) {
+        const isActive = forceActive ?? rules.some(r => r.active);
+
+        const container = document.createElement('div');
+        container.style.cssText = `
+            font-family: 'Courier New', monospace;
+            color: #e0e0e0;
+            line-height: 1.6;
+            margin-top: 8px;
+        `;
+
+        container.appendChild(this._createStatusLine(title, isActive, { fontSize: 15, indent: 0 }));
+        rules.forEach(rule => {
+            container.appendChild(this._createStatusLine(rule.label, rule.active, {
+                fontSize: 14,
+                indent: rule.indent ? 2 : 1,
+            }));
+        });
+        return container;
+    }
+
+    /**
+     * ✨ NOUVEAU : une ligne « └─ ✓/✗ libellé » de l'arborescence des extensions.
+     * @param {number} indent — 0 = titre d'extension, 1 = règle, 2 = sous-règle
+     */
+    _createStatusLine(label, active, { fontSize, indent }) {
+        const line = document.createElement('div');
+        line.style.cssText = `
+            margin-left: 5px;
+            font-size: ${fontSize}px;
+            padding-left: ${indent * 20}px;
+            ${indent > 0 && !active ? 'color: #888;' : ''}
+            ${indent === 0 && !active ? 'color: #aaa;' : ''}
+        `;
+
+        const branch = document.createElement('span');
+        branch.textContent = '└─ ';
+        line.appendChild(branch);
+
+        const mark = document.createElement('span');
+        mark.textContent = active ? '✓' : '✗';
+        mark.style.cssText = `color: ${active ? '#2ecc71' : '#e74c3c'}; font-weight: bold;`;
+        line.appendChild(mark);
+
+        const text = document.createElement('span');
+        text.textContent = ` ${label}`;
+        // Règle inactive : italique grisé (même rendu que l'ancien « Les champs (désactivés) »)
+        if (indent > 0 && !active) text.style.fontStyle = 'italic';
+        else if (indent > 0) text.style.color = '#a8d8a8';
+        line.appendChild(text);
+
+        return line;
+    }
 
     /**
      * Créer une croix sticky en haut à droite de la modale
