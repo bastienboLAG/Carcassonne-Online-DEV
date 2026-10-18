@@ -194,18 +194,28 @@ export class SlotsUI {
             return;
         }
 
+        // ✅ FIX : une case libre adjacente à plusieurs tuiles posées (ex: schéma en L) était visitée
+        // une fois par voisin, donc un div.slot était créé à chaque fois dans la même cellule — les
+        // fonds semi-transparents s'additionnaient (gris plus intense). Ce Set mémorise les cases
+        // où un slot existe déjà pour n'en créer qu'un seul par case.
+        const createdSlots = new Set();
+
         for (let coord in this.plateau.placedTiles) {
             const [x, y] = coord.split(',').map(Number);
-            this.generateSlotsAround(x, y, tile);
+            this.generateSlotsAround(x, y, tile, createdSlots);
         }
     }
 
-    generateSlotsAround(x, y, tile) {
+    generateSlotsAround(x, y, tile, createdSlots = new Set()) {
         const directions = [{dx:0, dy:-1}, {dx:1, dy:0}, {dx:0, dy:1}, {dx:-1, dy:0}];
         directions.forEach(({ dx, dy }) => {
             const nx = x + dx, ny = y + dy;
+            // ✅ FIX : slot déjà créé pour cette case depuis un autre voisin → on ne le double pas
+            const slotKey = `${nx},${ny}`;
+            if (createdSlots.has(slotKey)) return;
             if (!this.plateau.isFree(nx, ny)) return;
             if (!this.plateau.canPlaceTile(nx, ny, tile, this.isRiverPhase)) return;
+            createdSlots.add(slotKey);
 
             const slot = document.createElement('div');
             slot.className        = 'slot';
