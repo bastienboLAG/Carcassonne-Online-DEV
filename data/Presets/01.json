@@ -20,10 +20,13 @@
   "ext_fairy_protection": true,
   "ext_fairy_score_turn": true,
   "ext_fairy_score_zone": true,
+  "ext_tower" : true,
+  "ext_ransom": true,
 
 
   "abbot_tiles": true,
   "inns_cathedrals_tiles": true,
   "traders_builders_tiles": true,
-  "tiles_dragon": true
+  "tiles_dragon": true,
+  "tiles_tower" : true
 }

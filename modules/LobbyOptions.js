@@ -120,6 +120,26 @@ function _updateTowerAvailability() {
         cb.disabled = false;
         if (label) { label.style.opacity = ''; label.style.pointerEvents = ''; }
     }
+    // ✨ NOUVEAU : la rançon dépend de la capture (elle-même dépendante des tuiles Tour)
+    _updateRansomAvailability();
+    _updateMasterCheckboxSafe('all-tower');
+    saveLobbyOptions();
+}
+
+// ✨ NOUVEAU : disponibilité de la rançon — dépend de l'option « Capture par les tours »
+// (ext-tower). Sans rançon, les prisonniers ne se libèrent que par échange automatique.
+function _updateRansomAvailability() {
+    const captureOn = _checked('ext-tower');
+    const cb    = _id('ext-ransom');
+    const label = cb?.closest('label');
+    if (!cb) return;
+    if (!captureOn) {
+        cb.checked = false; cb.disabled = true;
+        if (label) { label.style.opacity = '0.4'; label.style.pointerEvents = 'none'; }
+    } else {
+        cb.disabled = false;
+        if (label) { label.style.opacity = ''; label.style.pointerEvents = ''; }
+    }
     _updateMasterCheckboxSafe('all-tower');
     saveLobbyOptions();
 }
@@ -177,8 +197,8 @@ function _onMasterChange(masterId) {
             _updateMerchantsAvailability(); // débloque Marchands si tuiles TB actives
             applyGroup('all-abbot');
             applyGroup('all-tower');        // ✨ NOUVEAU
-            _updateTowerAvailability();     // ✨ NOUVEAU
-            applyGroup('all-tower');        // ✨ NOUVEAU : re-coche si maintenant dispo
+            _updateTowerAvailability();     // ✨ NOUVEAU (débloque aussi la rançon si capture cochée)
+            applyGroup('all-tower');        // ✨ NOUVEAU : re-coche si maintenant dispo (rançon comprise)
             applyGroup('all-inns-cathedrals'); // Cathédrales/Auberges si tuiles actives
             _updateInnsCthdAvailability();
             applyGroup('all-dragon');       // Dragon/Princesse/Portail si tuiles actives
@@ -239,6 +259,11 @@ function _onMasterChange(masterId) {
             _updateTowerAvailability();
             document.querySelectorAll(`input[data-group="${masterId}"]`)
                 .forEach(c => { if (!c.disabled) c.checked = true; });
+            // ✨ NOUVEAU : la rançon n'était pas cochable tant que la capture était décochée —
+            // la débloquer maintenant que la capture est cochée, puis la cocher à son tour
+            _updateRansomAvailability();
+            document.querySelectorAll(`input[data-group="${masterId}"]`)
+                .forEach(c => { if (!c.disabled) c.checked = true; });
             if (tilesTower && !tilesTower.disabled) {
                 tilesTower.dispatchEvent(new Event('change', { bubbles: true }));
             }
@@ -296,6 +321,7 @@ const PRESET_MAP = {
     'ext_fairy_score_zone':   'ext-fairy-score-zone',
     'tiles_tower':            'tiles-tower', // ✨ NOUVEAU
     'ext_tower':              'ext-tower',   // ✨ NOUVEAU
+    'ext_ransom':             'ext-ransom',  // ✨ NOUVEAU — rançon (dépend de ext_tower)
 };
 
 export function applyPreset(preset) {
@@ -319,7 +345,7 @@ export function applyPreset(preset) {
     _updatePigAvailability();
     _updateInnsCthdAvailability();
     _updateDragonAvailability();
-    _updateTowerAvailability(); // ✨ NOUVEAU
+    _updateTowerAvailability(); // ✨ NOUVEAU (inclut la dépendance rançon → capture)
 
     // ✅ FIX : recalculer la coche maître globale "all-extensions" après application
     // d'un preset — elle dépend des 5 sous-coches maîtres, pas d'un data-group direct,
@@ -355,6 +381,7 @@ export function saveLobbyOptions() {
         ext_fairy_score_zone:     _checked('ext-fairy-score-zone'),
         tiles_tower:              _checked('tiles-tower'), // ✨ NOUVEAU
         ext_tower:                _checked('ext-tower'),   // ✨ NOUVEAU
+        ext_ransom:               _checked('ext-ransom'),  // ✨ NOUVEAU
         unplaceable:              document.querySelector('input[name="unplaceable"]:checked')?.value ?? 'reshuffle',
     };
     localStorage.setItem(LS_KEY, JSON.stringify(state));
@@ -385,6 +412,7 @@ export function syncAllOptions() {
         'ext-fairy-score-zone':  _checked('ext-fairy-score-zone'),
         'tiles-tower':           _checked('tiles-tower'), // ✨ NOUVEAU
         'ext-tower':             _checked('ext-tower'),   // ✨ NOUVEAU
+        'ext-ransom':            _checked('ext-ransom'),  // ✨ NOUVEAU
         'unplaceable':           document.querySelector('input[name="unplaceable"]:checked')?.value ?? 'reshuffle',
         'start':                 document.querySelector('input[name="start"]:checked')?.value ?? 'unique',
     };
@@ -520,7 +548,7 @@ export function updateAllAvailability() {
     _updateMerchantsAvailability();
     _updateInnsCthdAvailability();
     _updateDragonAvailability();
-    _updateTowerAvailability(); // ✨ NOUVEAU
+    _updateTowerAvailability(); // ✨ NOUVEAU (inclut la rançon)
     _updateTileCount();
     updateMasterCheckboxes();
 }
@@ -560,6 +588,8 @@ export function initLobbyOptions({ getIsHost, getInLobby, multiplayer }) {
 
     // ✨ NOUVEAU : disponibilité Tour
     _id('tiles-tower')?.addEventListener('change', _updateTowerAvailability);
+    // ✨ NOUVEAU : la rançon dépend de la capture (ext-tower)
+    _id('ext-tower')?.addEventListener('change', _updateRansomAvailability);
     _updateTowerAvailability();
 
     // Coches maîtres
@@ -587,7 +617,7 @@ export function initLobbyOptions({ getIsHost, getInLobby, multiplayer }) {
 
     // Sauvegarde auto à chaque changement
     document.querySelectorAll(
-        '#base-fields, #list-remaining, #use-test-deck, #enable-debug, #ext-abbot, #tiles-abbot, #ext-large-meeple, #ext-cathedrals, #ext-inns, #tiles-inns-cathedrals, #tiles-traders-builders, #ext-builder, #ext-merchants, #ext-pig, #tiles-dragon, #ext-dragon, #ext-princess, #ext-portal, #ext-fairy-protection, #ext-fairy-score-turn, #ext-fairy-score-zone, #tiles-tower, #ext-tower'
+        '#base-fields, #list-remaining, #use-test-deck, #enable-debug, #ext-abbot, #tiles-abbot, #ext-large-meeple, #ext-cathedrals, #ext-inns, #tiles-inns-cathedrals, #tiles-traders-builders, #ext-builder, #ext-merchants, #ext-pig, #tiles-dragon, #ext-dragon, #ext-princess, #ext-portal, #ext-fairy-protection, #ext-fairy-score-turn, #ext-fairy-score-zone, #tiles-tower, #ext-tower, #ext-ransom'
     ).forEach(el => el.addEventListener('change', saveLobbyOptions));
     document.querySelectorAll('input[name="unplaceable"], input[name="start"]')
         .forEach(el => el.addEventListener('change', saveLobbyOptions));

@@ -66,6 +66,11 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   utilisé à la fois par `full-state-sync` (reconnexion) et `host-snapshot` (changement d'hôte). **Tout champ ajouté
   là est couvert par les deux mécanismes.** Les champs transitoires non sérialisés par `gameState.serialize()` qui
   doivent survivre à un rechargement (ex. `_pendingPrisonerExchange`) doivent y être transportés explicitement.
+- **Options du lobby** : toute nouvelle case doit figurer dans **quatre** listes d'ids tenues à la main —
+  `home.js` (`_installHostLobbyOptionSync` pour le temps réel, `currentOptions` pour l'invité qui arrive),
+  `LobbyOptions.syncAllOptions` (preset appliqué par l'hôte) et `LobbyJoin` (`options-sync`, côté invité) —
+  plus `PRESET_MAP`, `saveLobbyOptions` et le sélecteur de sauvegarde auto de `LobbyOptions`. Un id oublié dans
+  `LobbyJoin` fait que l'invité ne reçoit pas l'option à l'arrivée.
 - **Capacité** : 6 joueurs non spectateurs maximum. `'spectator'` n'est jamais une couleur « prise » (spectateurs
   illimités). Un nouvel arrivant sans couleur libre devient spectateur, au lobby (`home.js`, handler `player-info`)
   comme en partie (`ReconnectionManager`, CAS 1 → CAS 2). `game-in-progress` transporte `full` et `reservedNames`
@@ -218,8 +223,11 @@ compteur, état riche comme hauteur+verrouillage+couleur), on range une sous-str
 
 ## 6. Extension Tour
 
-- **Activation** : `tiles-tower` (tuiles, `data/Tower/`) + `ext-tower` (règle), coche maître `all-tower`. `TowerRules`
-  n'existe que si `tileGroups.tower && extensions.tower`.
+- **Activation** : `tiles-tower` (tuiles, `data/Tower/`) + `ext-tower` (« Capture par les tours », règle), coche maître
+  `all-tower`. `TowerRules` n'existe que si `tileGroups.tower && extensions.tower`. **Rançon** : sous-option
+  `ext-ransom` (`extensions.ransom`), **dépendante de `ext-tower`** (décochée et grisée sans elle,
+  `LobbyOptions._updateRansomAvailability`) ; affichée décalée sous la capture dans le lobby, et dans « Règles de
+  cette partie » (`ModalUI`, avec le total de tuiles Tour).
 - **Stock de pièces** : attribué au lancement selon le nombre de joueurs non spectateurs
   (`TowerConfig.TOWER_PIECES_BY_PLAYER_COUNT`, `GameStarter._initGameState`) et **figé** dans
   `gameState.towerPiecesQuota` (sérialisé, champ de premier niveau : constante de partie, pas un état de plateau).
@@ -239,17 +247,20 @@ compteur, état riche comme hauteur+verrouillage+couleur), on range une sous-str
 - **Échange automatique de prisonniers** : après une capture non-auto, si le propriétaire capturé Y détient déjà
   des prisonniers du capturant X : un seul type → résolution automatique (le type revient à X **et** le meeple
   fraîchement capturé retourne toujours à Y, `freshlyCapturedType`) ; plusieurs types → X choisit (modale « Choisir »
-  → panel de Y en mode sélection). Déclenché **à la fin du tour** (§5), jamais immédiatement. L'ordre chronologique
-  de `checkReciprocalCapture` fait de `availableTypes[0]` le prisonnier le plus ancien (règle de résolution
-  automatique). Le rôle visuel des panels pendant le choix (cible assombri avec prisonniers sélectionnables au-dessus,
-  choisisseur assombri sur desktop, autres masqués) est posé par `ScorePanelUI` d'après `playerId`/`chooserId`.
-- **Rachat de prisonnier** (`PRISONER_BUYBACK_COST`) : uniquement **pendant son propre tour** et **une seule fois par
-  tour** (un tour bonus compte comme la suite : `gameState._turnBuybackUsed`, remis à `false` seulement à l'entrée
-  d'un vrai nouveau tour, `home.js` listener `turn-changed`). Bloqué tant qu'un échange est en attente et tant que la
-  capture est « fraîche » (`_freshCaptures`, vidé à chaque `turn-changed`). Revalidé par l'hôte
-  (`executePrisonerBuybackHost`, seule source de vérité). Le rachat modifie le score et `scoreDetail.buybacks` : ces
-  champs sont donc **sauvegardés/restaurés avec les snapshots d'annulation** et transmis dans `postUndoState`, avec
-  `_turnBuybackUsed`.
+  → panel de Y en mode sélection). Déclenché **à la fin du tour** (§5), jamais immédiatement. Indépendant de
+  l'option rançon. L'ordre chronologique de `checkReciprocalCapture` fait de `availableTypes[0]` le prisonnier le plus
+  ancien (règle de résolution automatique). Le rôle visuel des panels pendant le choix (cible assombri avec
+  prisonniers sélectionnables au-dessus, choisisseur assombri sur desktop, autres masqués) est posé par
+  `ScorePanelUI` d'après `playerId`/`chooserId`.
+- **Rachat de prisonnier / rançon** (`PRISONER_BUYBACK_COST`) : **uniquement si `extensions.ransom`** — sans elle, les
+  prisonniers ne se libèrent que par échange automatique (garde dans `TowerUI.setupPrisonerBuyback`, côté UI, **et**
+  `executePrisonerBuybackHost`, côté hôte, seule source de vérité). Puis : **pendant son propre tour** et **une seule
+  fois par tour** (un tour bonus compte comme la suite : `gameState._turnBuybackUsed`, remis à `false` seulement à
+  l'entrée d'un vrai nouveau tour, `home.js` listener `turn-changed`). Bloqué tant qu'un échange est en attente et
+  tant que la capture est « fraîche » (`_freshCaptures`, vidé à chaque `turn-changed`). Le rachat modifie le score et
+  `scoreDetail.buybacks` : ces champs sont donc **sauvegardés/restaurés avec les snapshots d'annulation** et transmis
+  dans `postUndoState`, avec `_turnBuybackUsed`. Le coût affiché dans le lobby (`index.html`) est écrit en dur : à
+  garder aligné sur `TowerConfig.PRISONER_BUYBACK_COST` (la modale de règles, elle, le lit depuis la config).
 - **Undo** : étage, capture, verrouillage et dragon-mange-garde sont annulables (granularité « tout-en-un » : annuler
   après une capture annule aussi l'étage du même tour). `UndoManager.applyLocally` redessine l'état Tour via
   `renderAllTowersFromState`. `_pendingTowerCapture`/`_pendingReciprocalCheck` sont remis à zéro à la restauration.
@@ -299,9 +310,12 @@ Règles à retenir :
    possibles à présenter à l'utilisateur.
 2. **Représentation** : meeple classique (`placedMeeples`, nouveau `type`, poids dans `MeepleUtils`) **ou** état
    persistant (`extraState`, §5).
-3. **Lobby** : case(s) dans `index.html`, `LobbyOptions.js` (dispo, coche maître, `PRESET_MAP`, sauvegarde, compteur
-   de tuiles), synchro `home.js` (`_installHostLobbyOptionSync`, `currentOptions`), liste d'ids de
-   `LobbyJoin` (`options-sync`), `gameConfig` dans le clic « Démarrer », `ModalUI.showGameRules`.
+3. **Lobby** : case(s) dans `index.html` (une sous-option dépendante se range sous sa case parente, désactivée tant
+   que celle-ci est décochée : modèle `ext-ransom`), `LobbyOptions.js` (dispo, coche maître, `PRESET_MAP`,
+   sauvegarde, compteur de tuiles), les listes d'ids de synchro (§2, « Options du lobby »), `gameConfig` dans le
+   clic « Démarrer », `ModalUI.showGameRules` (règles + total de tuiles). Les extensions s'affichent dans le lobby
+   et dans les règles dans l'ordre : Base, Abbé, Auberges & Cathédrales, Marchands & Bâtisseurs, Princesse & Dragon,
+   Tour.
 4. **Tuiles** : `data/{Groupe}/`, chargement dans `Deck.loadAllTiles`, exclusion des zones non meeple dans
    `MeepleCursorsUI.EXCLUDED_ZONE_TYPES`.
 5. **Réseau** : requêtes invité → hôte (`_attachHostCallbacks`), diffusion (`GameSync` + `attach`), `relayTypes` si

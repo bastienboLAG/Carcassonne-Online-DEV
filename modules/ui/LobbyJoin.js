@@ -116,10 +116,13 @@ export class LobbyJoin {
 
                 if (data.type === 'options-sync') {
                     const opts = data.options;
+                    // ✅ FIX : 'tiles-tower' et 'ext-tower' manquaient dans cette liste (un invité qui
+                    // rejoignait ne recevait pas l'état de l'extension Tour) ; ✨ NOUVEAU : 'ext-ransom'
                     ['base-fields','list-remaining','use-test-deck','enable-debug','ext-abbot','tiles-abbot',
                      'ext-large-meeple','ext-cathedrals','ext-inns','tiles-inns-cathedrals','tiles-traders-builders',
                      'ext-builder','ext-merchants','ext-pig','tiles-dragon','ext-dragon','ext-princess','ext-portal',
-                     'ext-fairy-protection','ext-fairy-score-turn','ext-fairy-score-zone'].forEach(id => {
+                     'ext-fairy-protection','ext-fairy-score-turn','ext-fairy-score-zone',
+                     'tiles-tower','ext-tower','ext-ransom'].forEach(id => {
                         const el = document.getElementById(id);
                         if (el && opts[id] !== undefined) el.checked = opts[id];
                     });

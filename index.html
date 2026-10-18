@@ -147,16 +147,6 @@
                 </details>
                 <details>
                     <summary>
-                        <strong>Tour</strong>
-                        <input type="checkbox" id="all-tower" class="ext-master" title="Tout activer/désactiver">
-                    </summary>
-                    <label class="toggle-option">
-                        <input type="checkbox" id="ext-tower" data-group="all-tower">
-                        <span>Capture par les tours</span>
-                    </label>
-                </details>
-                <details>
-                    <summary>
                         <strong>Auberges &amp; Cathédrales</strong>
                         <input type="checkbox" id="all-inns-cathedrals" class="ext-master" title="Tout activer/désactiver">
                     </summary>
@@ -219,6 +209,23 @@
                     <label class="toggle-option" id="ext-fairy-score-zone-label">
                         <input type="checkbox" id="ext-fairy-score-zone" data-group="all-dragon">
                         <span>Points bonus fermeture de zone (Fée)</span>
+                    </label>
+                </details>
+                <details>
+                    <summary>
+                        <strong>Tour</strong>
+                        <input type="checkbox" id="all-tower" class="ext-master" title="Tout activer/désactiver">
+                    </summary>
+                    <label class="toggle-option">
+                        <input type="checkbox" id="ext-tower" data-group="all-tower">
+                        <span>Capture par les tours</span>
+                    </label>
+                    <!-- ✨ NOUVEAU : rançon — décalée (sous-option de la capture, dépend de ext-tower).
+                         Décochée : les prisonniers ne se libèrent que par échange automatique.
+                         Le coût (3 pts) doit rester aligné sur PRISONER_BUYBACK_COST (TowerConfig.js). -->
+                    <label class="toggle-option" id="ext-ransom-label" style="margin-left: 24px;">
+                        <input type="checkbox" id="ext-ransom" data-group="all-tower">
+                        <span>Rançon (3 pts)</span>
                     </label>
                 </details>
             </div>

@@ -21,6 +21,10 @@
  * gameState.extraState.towers/gameState.extraState.prisoners (conteneur générique partagé
  * par toutes les extensions à état persistant non-meeple — voir GameState.js et
  * ARCHITECTURE.md). Tout ce fichier a été mis à jour en conséquence.
+ *
+ * ✨ NOUVEAU : le rachat de prisonnier (rançon) n'est actif que si l'option du lobby
+ * « Rançon » est cochée (gameConfig.extensions.ransom). Sans elle, les prisonniers ne
+ * sont libérés que par l'échange automatique.
  */
 
 // ✅ FIX : tailles pion tour / meeple de verrouillage désormais pilotées par MeepleConfig.js
@@ -1221,6 +1225,9 @@ function setupPrisonerBuyback() {
     scorePanelUI.setBuybackHandler({
         isSelectable: (entry, panelPlayerId) => {
             const gameState = gs();
+            // ✨ NOUVEAU : sans l'option « Rançon » du lobby, aucun rachat — les prisonniers
+            // ne sont libérés que par l'échange automatique.
+            if (!cfg()?.extensions?.ransom) return false;
             // Aucun rachat tant qu'un échange automatique attend sa résolution —
             // évite tout conflit de mutation sur les mêmes prisonniers.
             if (gameState._pendingPrisonerExchange) return false;
@@ -1294,6 +1301,9 @@ function _confirmBuyback(opponentId, meepleType) {
  */
 export function executePrisonerBuybackHost(opponentId, meepleType, buyerId) {
     const gameState = gs();
+    // ✨ NOUVEAU : revalidation hôte de l'option « Rançon » (l'hôte est la seule source de
+    // vérité : une requête d'invité ne doit jamais contourner la règle de la partie)
+    if (!cfg()?.extensions?.ransom) return;
     if (gameState._pendingPrisonerExchange) return; // sécurité : pas de rachat pendant un échange en cours
 
     // ✅ FIX — revalidation hôte (seule source de vérité, ne fait pas confiance au client) :

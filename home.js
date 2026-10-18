@@ -643,7 +643,8 @@ function _installHostLobbyOptionSync() {
     _hostOptionSyncInstalled = true;
 
     // Sync temps réel de toutes les options vers les invités
-    ['base-fields', 'list-remaining', 'use-test-deck', 'enable-debug', 'ext-abbot', 'tiles-abbot', 'ext-large-meeple', 'ext-cathedrals', 'ext-inns', 'tiles-inns-cathedrals', 'tiles-traders-builders', 'ext-builder', 'ext-merchants', 'ext-pig', 'tiles-dragon', 'ext-dragon', 'ext-princess', 'ext-portal', 'ext-fairy-protection', 'ext-fairy-score-turn', 'ext-fairy-score-zone', 'tiles-tower', 'ext-tower'].forEach(id => {
+    // ✨ NOUVEAU : 'ext-ransom' ajouté (rançon, dépend de la capture par les tours)
+    ['base-fields', 'list-remaining', 'use-test-deck', 'enable-debug', 'ext-abbot', 'tiles-abbot', 'ext-large-meeple', 'ext-cathedrals', 'ext-inns', 'tiles-inns-cathedrals', 'tiles-traders-builders', 'ext-builder', 'ext-merchants', 'ext-pig', 'tiles-dragon', 'ext-dragon', 'ext-princess', 'ext-portal', 'ext-fairy-protection', 'ext-fairy-score-turn', 'ext-fairy-score-zone', 'tiles-tower', 'ext-tower', 'ext-ransom'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.addEventListener('change', (e) => {
             multiplayer.broadcast({ type: 'option-change', option: id, value: e.target.checked });
@@ -723,6 +724,7 @@ function _buildHostLobbyHandler() {
                 'ext-fairy-score-zone':  document.getElementById('ext-fairy-score-zone')?.checked  ?? false,
                 'tiles-tower':           document.getElementById('tiles-tower')?.checked           ?? false, // ✨ NOUVEAU
                 'ext-tower':             document.getElementById('ext-tower')?.checked             ?? false, // ✨ NOUVEAU
+                'ext-ransom':            document.getElementById('ext-ransom')?.checked            ?? false, // ✨ NOUVEAU — rançon
                 'start':                 document.querySelector('input[name="start"]:checked')?.value ?? 'unique',
             };
             multiplayer.sendTo(from, { type: 'options-sync', options: currentOptions });
@@ -959,7 +961,10 @@ document.getElementById('start-game-btn').addEventListener('click', async () => 
             fairyProtection: document.getElementById('ext-fairy-protection')?.checked     ?? false,
             fairyScoreTurn:  document.getElementById('ext-fairy-score-turn')?.checked     ?? false,
             fairyScoreZone:  document.getElementById('ext-fairy-score-zone')?.checked     ?? false,
-            tower:           document.getElementById('ext-tower')?.checked               ?? false // ✨ NOUVEAU
+            tower:           document.getElementById('ext-tower')?.checked               ?? false, // ✨ NOUVEAU
+            // ✨ NOUVEAU : rançon (rachat de prisonnier). Sans elle, les prisonniers ne sont libérés que
+            // par échange automatique (cf. TowerUI.setupPrisonerBuyback / executePrisonerBuybackHost).
+            ransom:          document.getElementById('ext-ransom')?.checked              ?? false
         },
         tileGroups: {
             base:  true,

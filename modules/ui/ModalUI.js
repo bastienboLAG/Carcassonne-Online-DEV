@@ -1,3 +1,6 @@
+// ✨ NOUVEAU : coût de la rançon affiché dans les règles de la partie (source unique : TowerConfig)
+import { PRISONER_BUYBACK_COST } from '../rules/TowerConfig.js';
+
 /**
  * ModalUI - Gère l'affichage des modals (tuiles restantes, règles, etc.)
  */
@@ -404,6 +407,40 @@ export class ModalUI {
             extensionsSection.appendChild(dragonContainer);
         }
 
+        // ✨ NOUVEAU : Extension Tour (capture par les tours + rançon)
+        const hasTowerExt = config.tileGroups?.tower || config.extensions?.tower || config.extensions?.ransom;
+        if (hasTowerExt) {
+            const towerContainer = document.createElement('div');
+            towerContainer.style.cssText = `
+                font-family: 'Courier New', monospace;
+                color: #e0e0e0;
+                line-height: 1.6;
+                margin-top: 8px;
+            `;
+
+            const towerLine = document.createElement('div');
+            towerLine.textContent = '└─ ✓ Tour';
+            towerLine.style.cssText = 'margin-left: 5px; font-size: 15px;';
+            towerContainer.appendChild(towerLine);
+
+            const makeSubLine = (text) => {
+                const el = document.createElement('div');
+                el.textContent = `   └─ ✓ ${text}`;
+                el.style.cssText = `
+                    margin-left: 5px;
+                    font-size: 14px;
+                    padding-left: 20px;
+                    color: #a8d8a8;
+                `;
+                return el;
+            };
+
+            if (config.extensions?.tower)  towerContainer.appendChild(makeSubLine('Capture par les tours'));
+            if (config.extensions?.ransom) towerContainer.appendChild(makeSubLine(`Rançon (${PRISONER_BUYBACK_COST} pts)`));
+
+            extensionsSection.appendChild(towerContainer);
+        }
+
         content.appendChild(extensionsSection);
 
         // Section Tuiles
@@ -426,6 +463,10 @@ export class ModalUI {
             }
             if (config.tileGroups?.dragon) {
                 list.push('Princesse & Dragon : +29 tuiles');
+            }
+            // ✨ NOUVEAU : total des tuiles Tour (cohérent avec le compteur du lobby : +18)
+            if (config.tileGroups?.tower) {
+                list.push('Tour : +18 tuiles');
             }
             return list;
         })());
