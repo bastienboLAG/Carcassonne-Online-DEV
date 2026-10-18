@@ -1,4 +1,4 @@
-import { getMeepleSize, getGoodsSize } from '../MeepleConfig.js';
+import { getMeepleSize, getGoodsSize, MEEPLE_CONFIG, GOODS_CONFIG } from '../MeepleConfig.js';
 // ✨ NOUVEAU : aperçu visuel provisoire (mode debug) — voir ScorePanelPreview.js pour le retirer
 import { installScorePanelPreview, removeScorePanelPreview, getScorePanelPreviewExtras } from './ScorePanelPreview.js';
 
@@ -21,7 +21,8 @@ const PREVIEW_COLORS = ['Red', 'Green', 'Yellow', 'Pink', 'Black', 'Blue'];
  *   3. jetons (Blé, Vin, Tissu, Mouton, Roi, Brigand)
  *   4. butin (tuile monastère à gauche, prisonniers à droite)
  * Flux libre avec retour à la ligne ; une rangée sans élément n'est pas rendue. Compteur « ×N »
- * superposé en bas à droite de l'icône (sauf Roi, Brigand, tuile et prisonniers, uniques/individuels).
+ * superposé en bas à droite de la case, tous alignés (sauf Roi, Brigand, tuile et prisonniers). Réserves
+ * (meeples, Tour, structures) grisées à 0 ; jetons accumulés (marchandises, moutons) jamais grisés.
  * Les pièces des extensions futures se branchent via _getPieceExtras().
  *
  * ✨ NOUVEAU : sur mobile, la barre de cartes reste toujours visible et fermée
@@ -614,35 +615,57 @@ export class ScorePanelUI {
     _makeRow(className) {
         const row = document.createElement('div');
         row.className = className;
-        row.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:6px;';
+        row.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;';
         return row;
     }
 
     /**
-     * Chip = icône + compteur « ×N » superposé en bas à droite (absent si count === null).
-     * Grisé (.unavailable, l'icône seulement) quand count <= 0.
+     * ✨ NOUVEAU : hauteur de case commune à tous les chips d'un panneau = plus grande hauteur d'icône
+     * parmi tous les pions affichables (calculée depuis MeepleConfig, donc suit toute modification
+     * de taille). Les icônes restent centrées dans la case ; les compteurs sont ancrés sur son bas,
+     * ce qui les aligne tous quelle que soit la taille de l'icône.
+     */
+    _cellHeight(context) {
+        const types = ['Normal', 'Large', 'Abbot', 'Builder', 'Pig', 'Mayor', 'Wagon', 'Shepherd', 'Ringmaster',
+                       'Barn', 'Bridge', 'Castle', 'Tower', 'Sheep', 'King', 'Robber'];
+        let max = 0;
+        types.forEach(t => {
+            const cfg = MEEPLE_CONFIG[t];
+            if (cfg && cfg[context] !== undefined) max = Math.max(max, Math.round(cfg.h * cfg[context]));
+        });
+        const gScale = GOODS_CONFIG[context === 'panel' ? 'panel' : 'panelMobile'] ?? GOODS_CONFIG.panel;
+        max = Math.max(max, Math.round(GOODS_CONFIG.size.h * gScale));
+        return max;
+    }
+
+    /**
+     * Chip = icône centrée dans une case de hauteur commune + compteur « ×N » superposé en bas à droite
+     * de la case (absent si count === null).
+     * Grisé (.unavailable, l'icône seulement) quand count <= 0, sauf si `greyable` est false
+     * (jetons accumulés : marchandises, moutons — ils gardent leur image et affichent ×0).
      * @param {object} p
      * @param {string} p.type      — clé MeepleConfig (taille)
      * @param {string} p.src
      * @param {string} p.alt
      * @param {number|null} p.count
      * @param {string} p.context
-     * @param {boolean} [p.heightAuto] — conserve le ratio propre à l'image (ex. Tour)
+     * @param {boolean} [p.greyable=true]
      * @param {{width:string,height:string}} [p.size] — remplace la taille MeepleConfig (ex. marchandises)
      */
-    _buildChip({ type, src, alt, count, context, heightAuto = false, size = null }) {
+    _buildChip({ type, src, alt, count, context, greyable = true, size = null }) {
         const wrap = document.createElement('span');
         wrap.className = 'meeple-chip';
-        wrap.style.cssText = 'position:relative;display:inline-flex;';
+        wrap.style.cssText =
+            `position:relative;display:inline-flex;align-items:center;justify-content:center;height:${this._cellHeight(context)}px;`;
 
         const img = document.createElement('img');
         img.src = src;
         img.alt = alt;
         const { width, height } = size ?? getMeepleSize(type, context);
         img.style.width     = width;
-        img.style.height    = heightAuto ? 'auto' : height;
+        img.style.height    = height;
         img.style.objectFit = 'contain';
-        if (count !== null && count <= 0) img.classList.add('unavailable');
+        if (greyable && count !== null && count <= 0) img.classList.add('unavailable');
         wrap.appendChild(img);
 
         if (count !== null) {
@@ -650,7 +673,7 @@ export class ScorePanelUI {
             countEl.className   = 'meeple-chip-count';
             countEl.textContent = `×${count}`;
             countEl.style.cssText =
-                'position:absolute;right:-4px;bottom:-4px;min-width:8px;padding:0 3px;border-radius:7px;' +
+                'position:absolute;right:-4px;bottom:0;min-width:8px;padding:0 3px;border-radius:7px;' +
                 'background:rgba(0,0,0,0.7);color:#fff;font-weight:bold;line-height:13px;text-align:center;' +
                 `font-size:${context === 'panel' ? '10px' : '9px'};pointer-events:none;`;
             wrap.appendChild(countEl);
@@ -733,11 +756,14 @@ export class ScorePanelUI {
         const ext    = this.config?.extensions ?? {};
         const extras = this._getPieceExtras(player);
 
+        // ✨ NOUVEAU : écart entre les rangées (réglable ici)
+        container.style.gap = context === 'panel' ? '8px' : '6px';
+
         // Raccourcis de construction (compteur partout, sauf mention contraire)
         const colored = (type, file, count, alt = type) => this._buildChip({
             type, src: `./assets/Meeples/${colorCap}/${file}`, alt, count, context });
-        const misc = (type, file, count, alt = type) => this._buildChip({
-            type, src: `./assets/Misc/C2/${file}`, alt, count, context });
+        const misc = (type, file, count, alt = type, greyable = true) => this._buildChip({
+            type, src: `./assets/Misc/C2/${file}`, alt, count, context, greyable });
 
         // ── Rangée 1 : meeples ───────────────────────────────────────────
         const meeplesRow = this._makeRow('meeples-row');
@@ -761,11 +787,11 @@ export class ScorePanelUI {
         const structuresRow = this._makeRow('structures-row');
         if (extras.barn   !== undefined) structuresRow.appendChild(colored('Barn', 'Barn.png', extras.barn, 'Grange'));
         if (extras.castle !== undefined) structuresRow.appendChild(misc('Castle', 'Castle.png', extras.castle, 'Forteresse'));
-        // Pièces de Tour — la hauteur reste 'auto' pour préserver le ratio de l'image
+        // Pièces de Tour — dans le panneau la taille est fixe (réglée dans MeepleConfig : Tower)
         if (ext.tower) {
             structuresRow.appendChild(this._buildChip({
                 type: 'Tower', src: './assets/Meeples/Tower01.png', alt: 'Tour',
-                count: player.towerPieces ?? 0, context, heightAuto: true }));
+                count: player.towerPieces ?? 0, context }));
         }
         if (extras.bridge !== undefined) structuresRow.appendChild(this._buildChip({
             type: 'Bridge', src: './assets/Meeples/Bridge.png', alt: 'Pont', count: extras.bridge, context }));
@@ -783,10 +809,10 @@ export class ScorePanelUI {
             ].forEach(({ key, file, alt }) => {
                 tokensRow.appendChild(this._buildChip({
                     type: key, src: `./assets/Misc/C2/${file}`, alt,
-                    count: goods[key] ?? 0, context, size: goodsSize }));
+                    count: goods[key] ?? 0, context, size: goodsSize, greyable: false }));
             });
         }
-        if (extras.sheep !== undefined) tokensRow.appendChild(misc('Sheep', 'Sheep1.png', extras.sheep, 'Mouton'));
+        if (extras.sheep !== undefined) tokensRow.appendChild(misc('Sheep', 'Sheep1.png', extras.sheep, 'Mouton', false)); // jeton : jamais grisé
         // Roi / Brigand : jeton unique partagé, affiché seulement chez le joueur qui le détient, sans compteur
         if (extras.king)   tokensRow.appendChild(misc('King',   'TokenKing.png',   null, 'Roi'));
         if (extras.robber) tokensRow.appendChild(misc('Robber', 'TokenRobber.png', null, 'Brigand'));

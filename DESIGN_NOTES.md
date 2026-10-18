@@ -331,7 +331,7 @@ Aide-mémoire des pièges déjà identifiés ; chaque extension est traitée une
 | Pont | Pièce au centre d'une tuile, modifie la connectivité des bords | Touche `Tile.getEdgeType` / `Board.canPlaceTile`, pas seulement l'affichage — chantier le plus structurant |
 | Forteresse | Modificateur de score attaché à une ville | Probablement `Scoring.js` / `InnsRules.js` plutôt qu'un nouveau pion — à confirmer |
 | Roi, Brigand | Jetons uniques partagés (un seul détenteur à la fois) | Donnée = id du détenteur (pas un compteur) ; à ranger dans `extraState` et à remapper (§4) |
-| Tuile bonus monastère | Tuile unique détenue par un joueur | Idem : id du détenteur dans `extraState` |
+| Tuile bonus monastère | Une tuile par joueur | État par joueur (possédée ou non) à ranger dans `extraState`, remap d'id (§4) |
 | Zone à 3 meeples empilés | Casse « une clé = 0 ou 1 meeple » | Impacte `ZoneMerger.getZoneMeeples`, `MeeplePlacement.canPlace`, `Scoring` : plan dédié avant tout code |
 
 ---
@@ -356,12 +356,15 @@ Aide-mémoire des pièges déjà identifiés ; chaque extension est traitée une
      insécable** (ils passent à la ligne ensemble ou pas du tout) ;
   2. **structures** : Grange, Forteresse, Tour, Pont ;
   3. **jetons** : Blé, Vin, Tissu, Mouton, Roi, Brigand ;
-  4. **butin** : tuile monastère à gauche, prisonniers à droite (toute la largeur s'il n'y a pas de tuile).
+  4. **butin** : tuile monastère (une par joueur) à gauche, prisonniers à droite (toute la largeur s'il n'y a pas de tuile).
 - **Règles d'affichage** : flux libre avec retour à la ligne (pas de colonnes fixes, pas de libellés de rangée, pas
   de séparateur) ; une rangée sans élément n'est **pas rendue** (aucune marge fantôme) ; les icônes ne sont **jamais
-  réduites** pour gagner de la place. Compteur `×N` superposé en bas à droite de l'icône (`_buildChip`), `×0` conservé
-  et icône grisée (`.unavailable`) quand le pion est épuisé. **Sans compteur** : Roi, Brigand (jeton unique, affiché
-  seulement chez son détenteur), tuile monastère (unique) et prisonniers (individuels). Les styles de ces rangées
+  réduites** pour gagner de la place. Chaque chip a une **case de hauteur commune** (`_cellHeight`, calculée depuis
+  `MeepleConfig` : suit toute modification de taille) ; l'icône y est centrée et le compteur `×N` est ancré sur le bas
+  de la case, donc tous alignés (`_buildChip`). `×0` est conservé ; les **réserves** (meeples, Tour, structures) sont
+  grisées (`.unavailable`) à 0, les **jetons accumulés** (marchandises, moutons) ne sont jamais grisés. **Sans
+  compteur** : Roi, Brigand (jetons uniques, affichés seulement chez leur détenteur), tuile monastère (une par
+  joueur) et prisonniers (individuels). Écart entre rangées posé en ligne dans `_buildMeeplesDisplay`. Les styles de ces rangées
   sont posés **en ligne** dans `ScorePanelUI` (comme l'ancienne rangée de marchandises), pas dans `style.css`.
 - **Brancher une nouvelle pièce** : l'ajouter dans la bonne rangée de `_buildMeeplesDisplay`, lire sa donnée réelle
   dans `_getPieceExtras(player)` (point de branchement unique ; clé absente = pièce non affichée), déclarer ses

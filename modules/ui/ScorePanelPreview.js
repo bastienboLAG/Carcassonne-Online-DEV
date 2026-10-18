@@ -23,8 +23,8 @@ const COUNTED = [
 ];
 const UNIQUE = [
     { key: 'king',      label: 'Roi (1er joueur)' },
-    { key: 'robber',    label: 'Brigand (2e joueur)' },
-    { key: 'monastery', label: 'Tuile monastère (1er joueur)' },
+    { key: 'robber',    label: 'Brigand (1er joueur)' },
+    { key: 'monastery', label: 'Tuile monastère (tous)' },
 ];
 
 // État conservé entre les parties (module-level)
@@ -127,8 +127,8 @@ export function removeScorePanelPreview() {
 
 /**
  * Pièces fictives à afficher pour un joueur, ou null si l'aperçu n'est pas installé.
- * @param {number} playerIndex — index du joueur (roi/brigand/tuile ne s'affichent que chez un seul joueur,
- *        comme les pièces uniques réelles)
+ * @param {number} playerIndex — index du joueur (roi et brigand, jetons uniques, ne s'affichent que chez le 1er
+ *        joueur ; la tuile monastère, une par joueur, s'affiche chez tous)
  */
 export function getScorePanelPreviewExtras(playerIndex) {
     if (!_btn) return null;
@@ -137,8 +137,8 @@ export function getScorePanelPreviewExtras(playerIndex) {
         if (_state.counted[key].on) extras[key] = _state.counted[key].count;
     });
     if (_state.unique.king      && playerIndex === 0) extras.king      = true;
-    if (_state.unique.robber    && playerIndex === 1) extras.robber    = true;
-    if (_state.unique.monastery && playerIndex === 0) extras.monastery = true;
+    if (_state.unique.robber    && playerIndex === 0) extras.robber    = true;
+    if (_state.unique.monastery) extras.monastery = true;
     if (_state.prisoners > 0) extras.fakePrisoners = _state.prisoners;
     return extras;
 }
