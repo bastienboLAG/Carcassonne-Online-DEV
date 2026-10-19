@@ -1686,6 +1686,39 @@ h3 .ext-master {
 }
 
 /* ═══════════════════════════════════════════════════════
+   ✅ FIX — LOBBY PC : scrolls indépendants des deux panneaux
+   Avant : la page entière défilait avec un centrage vertical (align-items:center) → quand le
+   panneau de gauche grandissait (liste de joueurs + couleurs après création du groupe), le
+   débordement se répartissait moitié en haut (zone inatteignable par le scroll) : le titre
+   sortait de l'écran. Maintenant : la page du lobby ne défile plus, les deux panneaux sont
+   alignés en haut et chacun défile seul. Le mobile (≤768px) garde son scroll général unique.
+   La règle `body.home-page:has(...)` ne s'applique que tant que le lobby est affiché, pour ne
+   pas modifier la page de jeu (qui réutilise la classe `home-page` sur le body).
+   ═══════════════════════════════════════════════════════ */
+@media (min-width: 769px) {
+    body.home-page:has(> #lobby-page:not([style*="display: none"])) {
+        box-sizing: border-box; /* la hauteur 100% inclut le padding : plus de scroll parasite du body */
+        overflow: hidden;
+    }
+
+    #lobby-page {
+        height: 100%;
+        min-height: 0;
+        padding: 0;             /* le padding de 20px du body suffit comme marge */
+        box-sizing: border-box;
+        align-items: flex-start; /* panneaux collés en haut, plus de centrage vertical */
+        overflow: hidden;        /* plus de scroll général : chaque panneau défile seul */
+    }
+
+    #lobby-page .home-left,
+    #lobby-page .home-right {
+        box-sizing: border-box;
+        max-height: 100%;
+        overflow-y: auto;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════
    ABBÉ — Bouton de rappel sur le plateau
    ═══════════════════════════════════════════════════════ */
 @keyframes abbeRecallPulse {
