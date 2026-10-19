@@ -270,8 +270,7 @@ export class ModalUI {
             ]},
             { title: 'Tour', rules: [
                 { label: 'Capture par les tours', active: !!ext.tower },
-                // La rançon dépend de la capture : affichée décalée sous elle (comme dans le lobby)
-                { label: `Rançon (${PRISONER_BUYBACK_COST} pts)`, active: !!ext.ransom, indent: true },
+                { label: `Rançon (${PRISONER_BUYBACK_COST} pts)`, active: !!ext.ransom },
             ]},
         ];
         extensionBlocks.forEach(block => {
@@ -318,7 +317,7 @@ export class ModalUI {
      * ✨ NOUVEAU : bloc d'une extension — titre (✓ vert si au moins une règle active, ✗ rouge sinon)
      * suivi de TOUTES ses règles avec leur propre ✓/✗ (inactives en gris).
      * @param {string}  title
-     * @param {Array<{label:string, active:boolean, indent?:boolean}>} rules
+     * @param {Array<{label:string, active:boolean}>} rules
      * @param {boolean|null} forceActive — impose l'état du titre (ex. Base), sinon déduit des règles
      */
     _createExtensionBlock(title, rules, forceActive = null) {
@@ -336,7 +335,7 @@ export class ModalUI {
         rules.forEach(rule => {
             container.appendChild(this._createStatusLine(rule.label, rule.active, {
                 fontSize: 14,
-                indent: rule.indent ? 2 : 1,
+                indent: 1,
             }));
         });
         return container;
@@ -344,7 +343,7 @@ export class ModalUI {
 
     /**
      * ✨ NOUVEAU : une ligne « └─ ✓/✗ libellé » de l'arborescence des extensions.
-     * @param {number} indent — 0 = titre d'extension, 1 = règle, 2 = sous-règle
+     * @param {number} indent — 0 = titre d'extension, 1 = règle
      */
     _createStatusLine(label, active, { fontSize, indent }) {
         const line = document.createElement('div');

@@ -220,10 +220,10 @@
                         <input type="checkbox" id="ext-tower" data-group="all-tower">
                         <span>Capture par les tours</span>
                     </label>
-                    <!-- ✨ NOUVEAU : rançon — décalée (sous-option de la capture, dépend de ext-tower).
+                    <!-- ✨ NOUVEAU : rançon — dépend de ext-tower (grisée tant que la capture est décochée).
                          Décochée : les prisonniers ne se libèrent que par échange automatique.
                          Le coût (3 pts) doit rester aligné sur PRISONER_BUYBACK_COST (TowerConfig.js). -->
-                    <label class="toggle-option" id="ext-ransom-label" style="margin-left: 24px;">
+                    <label class="toggle-option" id="ext-ransom-label">
                         <input type="checkbox" id="ext-ransom" data-group="all-tower">
                         <span>Rançon (3 pts)</span>
                     </label>

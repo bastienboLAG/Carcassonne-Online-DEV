@@ -226,8 +226,8 @@ compteur, état riche comme hauteur+verrouillage+couleur), on range une sous-str
 - **Activation** : `tiles-tower` (tuiles, `data/Tower/`) + `ext-tower` (« Capture par les tours », règle), coche maître
   `all-tower`. `TowerRules` n'existe que si `tileGroups.tower && extensions.tower`. **Rançon** : sous-option
   `ext-ransom` (`extensions.ransom`), **dépendante de `ext-tower`** (décochée et grisée sans elle,
-  `LobbyOptions._updateRansomAvailability`) ; affichée décalée sous la capture dans le lobby, et dans « Règles de
-  cette partie » (`ModalUI`, avec le total de tuiles Tour).
+  `LobbyOptions._updateRansomAvailability`) ; listée à la suite de la capture, sans décalage, dans le lobby et dans
+  « Règles de cette partie » (`ModalUI`, avec le total de tuiles Tour).
 - **Stock de pièces** : attribué au lancement selon le nombre de joueurs non spectateurs
   (`TowerConfig.TOWER_PIECES_BY_PLAYER_COUNT`, `GameStarter._initGameState`) et **figé** dans
   `gameState.towerPiecesQuota` (sérialisé, champ de premier niveau : constante de partie, pas un état de plateau).
@@ -310,12 +310,12 @@ Règles à retenir :
    possibles à présenter à l'utilisateur.
 2. **Représentation** : meeple classique (`placedMeeples`, nouveau `type`, poids dans `MeepleUtils`) **ou** état
    persistant (`extraState`, §5).
-3. **Lobby** : case(s) dans `index.html` (une sous-option dépendante se range sous sa case parente, désactivée tant
-   que celle-ci est décochée : modèle `ext-ransom`), `LobbyOptions.js` (dispo, coche maître, `PRESET_MAP`,
-   sauvegarde, compteur de tuiles), les listes d'ids de synchro (§2, « Options du lobby »), `gameConfig` dans le
-   clic « Démarrer », `ModalUI.showGameRules` (règles + total de tuiles). Les extensions s'affichent dans le lobby
-   et dans les règles dans l'ordre : Base, Abbé, Auberges & Cathédrales, Marchands & Bâtisseurs, Princesse & Dragon,
-   Tour.
+3. **Lobby** : case(s) dans `index.html` (une sous-option dépendante se range à la suite de sa case parente, sans
+   décalage, désactivée tant que celle-ci est décochée : modèle `ext-ransom`), `LobbyOptions.js` (dispo, coche maître,
+   `PRESET_MAP`, sauvegarde, compteur de tuiles), les listes d'ids de synchro (§2, « Options du lobby »), `gameConfig`
+   dans le clic « Démarrer », `ModalUI.showGameRules` (bloc de l'extension dans `extensionBlocks` : toutes ses règles
+   y figurent toujours, avec ✓/✗ ; + total de tuiles). Les extensions s'affichent dans le lobby et dans les règles
+   dans l'ordre : Base, Abbé, Auberges & Cathédrales, Marchands & Bâtisseurs, Princesse & Dragon, Tour.
 4. **Tuiles** : `data/{Groupe}/`, chargement dans `Deck.loadAllTiles`, exclusion des zones non meeple dans
    `MeepleCursorsUI.EXCLUDED_ZONE_TYPES`.
 5. **Réseau** : requêtes invité → hôte (`_attachHostCallbacks`), diffusion (`GameSync` + `attach`), `relayTypes` si
