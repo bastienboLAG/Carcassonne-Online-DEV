@@ -1,3 +1,5 @@
+import { stopGameTimer } from './GameTimer.js'; // ✅ FIX : n'était pas importé (le test typeof ci-dessous était toujours faux → chrono jamais arrêté)
+
 /**
  * FinalScoresManager - Gère les scores finaux et la modale associée
  * Extrait de home.js pour alléger le fichier principal
@@ -12,9 +14,20 @@ export class FinalScoresManager {
         this.updateTurnDisplay = updateTurnDisplay;
         this.gameConfig      = gameConfig;
 
-        this.gameEnded       = false;
-        this.finalScoresData = null;
+        // ✨ NOUVEAU : la modale a-t-elle déjà été ouverte automatiquement pour cette fin de partie ?
+        // Posé à true par computeAndApply / receiveFromNetwork (qui l'ouvrent eux-mêmes). Resté à false
+        // pour une fin de partie RESTAURÉE par full-state-sync (reconnexion) : TurnUI.updateTurnDisplay
+        // ouvre alors la modale une seule fois.
+        this.autoModalDone   = false;
     }
+
+    // ✅ FIX : l'état « partie terminée » vit dans gameState.finalScoresData (sérialisé, donc transporté
+    // par full-state-sync / host-snapshot), et non plus dans un champ local de ce manager (recréé à zéro
+    // chez un joueur qui revient). gameEnded et finalScoresData en sont dérivés ; les lecteurs
+    // existants (TurnUI, GameEventSetup) n'ont rien à changer.
+    get finalScoresData() { return this.gameState?.finalScoresData ?? null; }
+    set finalScoresData(v) { if (this.gameState) this.gameState.finalScoresData = v; }
+    get gameEnded() { return !!this.gameState?.finalScoresData; }
 
     /**
      * Calcul et application des scores finaux (appelé par l'hôte)
@@ -25,8 +38,8 @@ export class FinalScoresManager {
         const detailedScores = this.scoring.applyAndGetFinalScores(placedMeeples, this.gameState);
         console.log('💰 Scores finaux détaillés:', detailedScores);
 
-        this.gameEnded       = true;
-        this.finalScoresData = detailedScores;
+        this.finalScoresData = detailedScores; // ✅ FIX : pose gameState.finalScoresData (= partie terminée)
+        this.autoModalDone   = true;
 
         this.eventBus.emit('score-updated');
         this.updateTurnDisplay();
@@ -42,8 +55,8 @@ export class FinalScoresManager {
      */
     receiveFromNetwork(detailedScores, destroyedTilesCount = 0) {
         console.log('🏁 [SYNC] Fin de partie reçue');
-        this.gameEnded       = true;
-        this.finalScoresData = detailedScores;
+        this.finalScoresData = detailedScores; // ✅ FIX : pose gameState.finalScoresData (= partie terminée)
+        this.autoModalDone   = true;
         if (this.gameState) this.gameState.destroyedTilesCount = destroyedTilesCount;
 
         detailedScores.forEach(playerScore => {
@@ -76,7 +89,9 @@ export class FinalScoresManager {
         const isMobile = window.innerWidth < 768;
 
         // Arrêter le timer de partie et afficher le temps final dans la modale
-        if (typeof stopGameTimer === 'function') stopGameTimer();
+        // ✅ FIX : stopGameTimer est désormais importé. Uniquement si la partie est réellement terminée :
+        // la modale de debug (showDebugModal) peut être ouverte en cours de partie sans figer le chrono.
+        if (this.gameEnded) stopGameTimer();
         const timerEl = document.getElementById('game-timer');
         const timerText = timerEl ? timerEl.textContent : '';
         if (timerEl) timerEl.style.display = 'none';

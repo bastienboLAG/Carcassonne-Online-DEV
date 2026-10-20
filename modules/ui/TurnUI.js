@@ -155,6 +155,14 @@ export function updateTurnDisplay() {
     const tuilePosee         = _deps.getTuilePosee();
     const waitingToRedraw    = _deps.getWaitingToRedraw();
 
+    // ✨ NOUVEAU : fin de partie RESTAURÉE (reconnexion après l'écran des scores, via full-state-sync) →
+    // ouvrir la modale des scores automatiquement, une seule fois. Les chemins normaux
+    // (computeAndApply / receiveFromNetwork) ouvrent eux-mêmes la modale et posent autoModalDone.
+    if (finalScoresManager?.gameEnded && !finalScoresManager.autoModalDone) {
+        finalScoresManager.autoModalDone = true;
+        finalScoresManager.showModal(finalScoresManager.finalScoresData);
+    }
+
     const endTurnBtn = document.getElementById('end-turn-btn');
     if (endTurnBtn) {
         if (finalScoresManager?.gameEnded) {

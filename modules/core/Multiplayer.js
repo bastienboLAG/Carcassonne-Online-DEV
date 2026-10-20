@@ -42,6 +42,16 @@ export class Multiplayer {
         if (typeof window !== 'undefined') {
             window.addEventListener('offline', () => { this.lastSelfOutageAt = Date.now(); });
             window.addEventListener('online',  () => { this.lastSelfOutageAt = Date.now(); });
+
+            // ✅ FIX : PeerJS ne notifie pas toujours la fermeture d'un onglet (événement `close` parfois
+            // jamais émis) : l'hôte ne le découvrait que par le heartbeat (~12 s). Un invité qui quitte la
+            // page prévient donc l'hôte tout de suite (best-effort) ; l'hôte exécute alors le même chemin
+            // qu'une fermeture détectée (voir onData / onClose dans _handleConnection). Le heartbeat
+            // reste le filet de sécurité. `persisted` = page mise en cache (bfcache), pas fermée : ignoré.
+            window.addEventListener('pagehide', (e) => {
+                if (e.persisted || this.isHost || !this.hostPeerId) return;
+                this.sendTo(this.hostPeerId, { type: 'page-closing' });
+            });
         }
     }
 
@@ -408,6 +418,17 @@ export class Multiplayer {
                 return;
             }
 
+            // ✅ FIX : un invité annonce qu'il quitte la page (pagehide) → même traitement qu'une
+            // fermeture de connexion détectée, sans attendre le heartbeat. Réservé à l'hôte.
+            if (data.type === 'page-closing') {
+                if (this.isHost) {
+                    console.log(`🚪 Fermeture de page annoncée par ${conn.peer}`);
+                    onClose();
+                    try { conn.close(); } catch (e) {}
+                }
+                return;
+            }
+
             // Dédupliquer les messages broadcast reçus en double
             if (data.msgId) {
                 if (this._recentMsgIds.has(data.msgId)) {
@@ -426,6 +447,10 @@ export class Multiplayer {
         const onClose = () => {
             // ✨ NOUVEAU : connexion remplacée / abandonnée volontairement → événement ignoré
             if (conn._replaced) return;
+            // ✅ FIX : idempotent — `page-closing` puis l'événement `close` tardif de PeerJS (ou
+            // l'inverse) ne doivent déclencher onPlayerLeft qu'une seule fois.
+            if (conn._closeHandled) return;
+            conn._closeHandled = true;
 
             const peerId = conn.peer;
             console.log('👋 Joueur déconnecté:', peerId);

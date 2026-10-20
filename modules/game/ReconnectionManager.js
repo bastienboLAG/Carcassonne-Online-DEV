@@ -416,6 +416,9 @@ export class ReconnectionManager {
         d.setTuileEnMain(null);
         d.setTuilePosee(false);
 
+        // ✅ FIX : gameState.deserialize restaure aussi finalScoresData (= partie terminée) et
+        // destroyedTilesCount ; FinalScoresManager.gameEnded en est dérivé, et TurnUI ouvre la modale
+        // des scores automatiquement au updateTurnDisplay() final.
         gameState.deserialize(data.gameState);
         this._clearBoardDom(); // ✨ NOUVEAU : évite les doublons si la page était déjà en jeu
 
@@ -533,9 +536,12 @@ export class ReconnectionManager {
             if (!tilePreviewUI) return;
             const _liveTuileEnMain = d.getTuileEnMain();
             const _livePosee       = d.getTurnManager()?.tilePlaced ?? _tuilePosee;
-            if (_livePosee)             tilePreviewUI.showBackside();
-            else if (_liveTuileEnMain)  tilePreviewUI.showTile(_liveTuileEnMain);
-            else                        tilePreviewUI.showMessage('En attente...');
+            // ✅ FIX : partie terminée (scores finaux) → verso, comme chez les joueurs qui ont vécu la fin
+            // en direct. Relu à l'exécution (cf. ci-dessus), jamais capturé.
+            const _liveEnded       = !!this._getGameState()?.finalScoresData;
+            if (_livePosee || _liveEnded) tilePreviewUI.showBackside();
+            else if (_liveTuileEnMain)    tilePreviewUI.showTile(_liveTuileEnMain);
+            else                          tilePreviewUI.showMessage('En attente...');
         });
 
         if (slotsUI) slotsUI.tileAvailable = !tuilePosee && !!d.getTuileEnMain();
@@ -616,6 +622,21 @@ export class ReconnectionManager {
             if (!result) return;
             const { player } = result;
             d.afficherToast(`💔 ${player.name} s'est déconnecté.`);
+
+            // ✅ FIX : partie TERMINÉE (scores finaux affichés) → pas de « Partie en pause » (la partie est
+            // finie, l'overlay recouvrait le menu de l'hôte) ni de player-disconnected (qui ferait
+            // afficher la pause chez les invités). Le joueur reste marqué `disconnected` dans gameState
+            // (une reconnexion sur l'écran des scores passe toujours par le CAS 3), mais il est retiré
+            // de `players` — la liste du lobby — pour ne pas réapparaître comme fantôme au retour lobby.
+            if (gameState.finalScoresData) {
+                d.setPlayers(d.getPlayers().filter(p => p.id !== peerId));
+                multiplayer.broadcast({ type: 'players-update', players: d.buildPlayersForBroadcast() });
+                const hmEnd = d.getHeartbeatManager();
+                if (hmEnd) hmEnd._timedOut.add(peerId);
+                d.getEventBus().emit('score-updated');
+                return;
+            }
+
             const gs = d.getGameSync();
             if (gs) gs.syncPlayerDisconnected(peerId, player.name, gameState.currentPlayerIndex);
             const wasCurrent = gameState.players.findIndex(p => p.id === peerId) === gameState.currentPlayerIndex

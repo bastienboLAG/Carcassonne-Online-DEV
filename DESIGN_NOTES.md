@@ -62,10 +62,29 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   - message d'invité qui doit aussi atteindre **les autres invités** : l'ajouter à `relayTypes`
     (`GameSync._handleGameMessage`). Sans cela seuls l'hôte et l'émetteur voient l'action (visible dès 3 joueurs).
 - **Dédup** : `Multiplayer.broadcast` ajoute un `msgId` ; les doublons reçus sont ignorés 5 s.
+- **Détection d'un départ** : PeerJS n'émet pas toujours `close` à la fermeture d'un onglet (observé : jamais émis),
+  et le heartbeat ne le découvre qu'après ~12 s (timeout 10 s + tick 3 s). Un invité qui quitte la page envoie donc
+  `page-closing` (`Multiplayer`, `pagehide` hors bfcache) ; l'hôte l'exécute comme une fermeture détectée
+  (`onClose`, rendu **idempotent** par `conn._closeHandled` : `page-closing` puis `close` tardif ne déclenchent
+  `onPlayerLeft` qu'une fois). Best-effort : le heartbeat reste le filet de sécurité. `page-closing` est intercepté
+  dans `Multiplayer` — il n'atteint jamais les handlers de jeu/lobby, qui voient simplement `onPlayerLeft`.
+- **Fin de partie** : l'état « partie terminée » est `gameState.finalScoresData` (scores détaillés, `null` tant que la
+  partie dure), **sérialisé** donc transporté par `full-state-sync` / `host-snapshot` / `turn-ended`. `FinalScoresManager`
+  n'en garde aucune copie locale : `gameEnded` / `finalScoresData` en sont dérivés (accesseurs). Un joueur qui revient
+  après l'écran des scores retrouve ainsi « Détails des scores », le verso de tuile (relu à l'exécution dans le
+  `requestAnimationFrame` d'`applyFullStateSync`), et la modale s'ouvre seule une fois (`autoModalDone`, géré dans
+  `TurnUI.updateTurnDisplay`). `destroyedTilesCount` est sérialisé pour la même raison. `GameTimer` fige l'instant d'arrêt :
+  la durée envoyée à un joueur qui revient reste la durée finale.
+  **Après la fin**, `handleDisconnect` (`ReconnectionManager`) n'affiche ni pause ni `player-disconnected` : il retire
+  seulement le joueur de `players` (liste du lobby, évite le fantôme au retour lobby) et le garde marqué `disconnected`
+  dans `gameState` (une reconnexion sur l'écran des scores reste le CAS 3). Limite : les autres invités le perdent de
+  leur panneau latéral jusqu'à son retour (où il réapparaît à 0 point côté panneau ; la modale reste exacte).
 - **Paquet d'état complet** : `GameSync.buildFullStateMessage` (arguments via `ReconnectionManager.collectFullStateArgs`),
   utilisé à la fois par `full-state-sync` (reconnexion) et `host-snapshot` (changement d'hôte). **Tout champ ajouté
-  là est couvert par les deux mécanismes.** Les champs transitoires non sérialisés par `gameState.serialize()` qui
-  doivent survivre à un rechargement (ex. `_pendingPrisonerExchange`) doivent y être transportés explicitement.
+  là est couvert par les deux mécanismes.** Tout état de partie qui doit survivre à une reconnexion est de préférence
+  placé dans `gameState` (`serialize`/`deserialize`) plutôt que dans ce paquet. Les champs transitoires non sérialisés par
+  `gameState.serialize()` qui doivent survivre à un rechargement (ex. `_pendingPrisonerExchange`) doivent y être
+  transportés explicitement.
 - **Options du lobby** : toute nouvelle case doit figurer dans **quatre** listes d'ids tenues à la main —
   `home.js` (`_installHostLobbyOptionSync` pour le temps réel, `currentOptions` pour l'invité qui arrive),
   `LobbyOptions.syncAllOptions` (preset appliqué par l'hôte) et `LobbyJoin` (`options-sync`, côté invité) —

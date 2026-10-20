@@ -37,6 +37,13 @@ export class GameState {
         this.destroyedTilesCount = 0;
         this.currentTilePlaced = false;
 
+        // ✅ FIX : scores finaux détaillés (null tant que la partie n'est pas terminée). C'est l'ÉTAT
+        // « partie terminée » : auparavant il vivait uniquement dans FinalScoresManager (instance locale,
+        // recréée à zéro chez un joueur qui revient), donc une reconnexion après l'écran des scores
+        // retombait sur « Terminer mon tour » / « En attente… ». Sérialisé → voyage dans le
+        // full-state-sync et le host-snapshot. FinalScoresManager.gameEnded en est dérivé.
+        this.finalScoresData = null;
+
         // ── Extension Princesse & Dragon ────────────────────────────────
         this.dragonPos = null; // { x, y } | null — position du dragon sur le plateau
 
@@ -327,6 +334,8 @@ export class GameState {
             extraState:         this.extraState, // ✨ NOUVEAU : remplace les anciens champs towers/prisoners séparés
             hasPrisonerBuybacks: this.hasPrisonerBuybacks,
             towerPiecesQuota:   this.towerPiecesQuota, // ✅ FIX : quota figé, doit survivre à reconnexion / changement d'hôte
+            finalScoresData:    this.finalScoresData,    // ✅ FIX : état « partie terminée », doit survivre à une reconnexion
+            destroyedTilesCount: this.destroyedTilesCount, // ✅ FIX : affiché dans la modale des scores finaux
         };
     }
 
@@ -374,5 +383,7 @@ export class GameState {
         };
         this.hasPrisonerBuybacks = data.hasPrisonerBuybacks ?? false;
         this.towerPiecesQuota    = data.towerPiecesQuota    ?? 0; // ✅ FIX
+        this.finalScoresData     = data.finalScoresData     ?? null; // ✅ FIX : partie terminée
+        this.destroyedTilesCount = data.destroyedTilesCount ?? 0;    // ✅ FIX
     }
 }
