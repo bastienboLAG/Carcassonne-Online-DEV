@@ -8,6 +8,9 @@
  *   selector    — sélecteur de meeple
  *
  * Pour ajouter un nouveau type : renseigner w, h et les 4 scales.
+ *
+ * ✨ NOUVEAU : champ optionnel `plateOpacity` (0 à 1, défaut 1 = opaque) — opacité du pion
+ * sur le plateau, lue par getMeepleOpacity(). Utilisé aujourd'hui uniquement par le Dragon.
  */
 export const MEEPLE_CONFIG = {
     'Normal': {
@@ -69,10 +72,12 @@ export const MEEPLE_CONFIG = {
 
     // ── Pions Extension Princesse & Dragon (pas des meeples joueurs) ────
     // Dragon : image paysage 283x156 — affiché centré sur la tuile
-    // scale plate 0.40 → ~113x62px
+    // ✨ NOUVEAU : plateOpacity = transparence du dragon sur le plateau (1 = opaque, 0 = invisible).
+    //   Baisser cette valeur pour laisser voir les routes/villes/champs situés sous le pion.
     'Dragon': {
         w: 283, h: 156,
         plate:       0.60,
+        plateOpacity: 0.75,
         panel:       0.00,
         panelMobile: 0.00,
         selector:    0.20,
@@ -218,6 +223,17 @@ export function getMeepleSize(type, context) {
         width:  `${Math.round(cfg.w * scale)}px`,
         height: `${Math.round(cfg.h * scale)}px`,
     };
+}
+
+/**
+ * ✨ NOUVEAU : opacité d'un pion sur le plateau (champ `plateOpacity`, 1 = opaque par défaut).
+ * @param {string} type - Type de pion (ex: 'Dragon')
+ * @returns {number} valeur entre 0 et 1
+ */
+export function getMeepleOpacity(type) {
+    const value = MEEPLE_CONFIG[type]?.plateOpacity;
+    if (typeof value !== 'number') return 1;
+    return Math.max(0, Math.min(1, value));
 }
 
 /**

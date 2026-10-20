@@ -24,6 +24,8 @@
 // verrouillant une tour (clé "tower-lock:x,y") — voir renderFairyPiece ci-dessous. Import
 // à sens unique (TowerUI.js n'importe rien de ce fichier), aucun cycle introduit.
 import { getTowerLockMeepleAnchor } from './TowerUI.js';
+// ✨ NOUVEAU : opacité du dragon réglable dans MeepleConfig.js (champ plateOpacity)
+import { getMeepleOpacity } from '../MeepleConfig.js';
 
 let _deps = null;
 
@@ -428,6 +430,9 @@ export function renderDragonPiece(x, y) {
     img.style.width     = dw;
     img.style.height    = dh;
     img.style.zIndex    = '60';
+    // ✨ NOUVEAU : transparence réglable dans MeepleConfig.js (Dragon.plateOpacity) pour laisser
+    // voir les routes/villes/champs situés sous le dragon
+    img.style.opacity   = String(getMeepleOpacity('Dragon'));
     img.style.pointerEvents = 'none';
 
     container.appendChild(img);
