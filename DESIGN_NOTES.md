@@ -98,6 +98,17 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   `playerColor` local sur `'spectator'` (`applyFullStateSync`).
 - **Validation hôte** : l'hôte ne fait jamais confiance au client (ex. `getCurrentPlayer()?.id === from` avant
   d'appliquer une requête de tour) ; l'identité fiable est `from`, pas un champ du message.
+- **Limite connue : pas de serveur TURN.** `Multiplayer._peerOptions()` ne déclare que des serveurs STUN (Google).
+  La signalisation (WebSocket vers le serveur cloud PeerJS) passe partout, mais la connexion de jeu (WebRTC/UDP, en
+  direct entre navigateurs) échoue derrière un proxy ou un VPN qui ne transporte pas l'UDP (observé : proxy intégré
+  d'Opera). `joinGame()` n'a pas de timeout et un échec ICE ne produit aucune erreur PeerJS : l'invité reste bloqué sans
+  message (`reconnectTo()`, lui, a un timeout de 4 s). Piste connue, **non retenue pour l'instant** : ajouter un relais
+  TURN gratuit (Open Relay, Cloudflare…), utilisé seulement en dernier recours par ICE, donc sans effet pour les joueurs
+  dont la connexion directe fonctionne. Contreparties : l'identifiant du relais serait forcément public (site statique,
+  quota consommable par un tiers), quota mensuel (estimation : quelques Mo par partie et par joueur concerné, jamais
+  mesurée), fournisseur tiers supplémentaire (à mentionner dans le README), et efficacité sur le proxy d'Opera non
+  vérifiable sans vrai VPN. Un message d'erreur sur timeout a été écarté : il ne détecte pas la cause (un site web ne
+  peut pas savoir si un VPN est utilisé).
 
 ---
 
