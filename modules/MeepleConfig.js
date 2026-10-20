@@ -10,7 +10,8 @@
  * Pour ajouter un nouveau type : renseigner w, h et les 4 scales.
  *
  * ✨ NOUVEAU : champ optionnel `plateOpacity` (0 à 1, défaut 1 = opaque) — opacité du pion
- * sur le plateau, lue par getMeepleOpacity(). Utilisé aujourd'hui uniquement par le Dragon.
+ * sur le plateau, lue par getMeepleOpacity(). Utilisé aujourd'hui par le Dragon et par la Tour
+ * (la valeur de 'Tower' pilote aussi le garde de verrouillage et son cadenas, cf. TowerUI.js).
  */
 export const MEEPLE_CONFIG = {
     'Normal': {
@@ -100,9 +101,12 @@ export const MEEPLE_CONFIG = {
     // plate 1.00 → 90px (taille précédemment codée en dur sur le plateau)
     // panel 0.18 → ~16px (taille précédemment codée en dur dans ScorePanelUI)
     // selector 0.44 → ~40px (taille précédemment codée en dur dans le sélecteur)
+    // ✨ NOUVEAU : plateOpacity = transparence de la tour sur le plateau (1 = opaque). Cette valeur
+    //   s'applique AUSSI au garde qui verrouille la tour et à son cadenas 🔒 (TowerUI.js).
     'Tower': {
         w: 90, h: 90,
         plate:       1.00,
+        plateOpacity: 0.75,
         panel:       0.4,
         panelMobile: 0.35,
         selector:    0.44,
@@ -227,7 +231,7 @@ export function getMeepleSize(type, context) {
 
 /**
  * ✨ NOUVEAU : opacité d'un pion sur le plateau (champ `plateOpacity`, 1 = opaque par défaut).
- * @param {string} type - Type de pion (ex: 'Dragon')
+ * @param {string} type - Type de pion (ex: 'Dragon', 'Tower')
  * @returns {number} valeur entre 0 et 1
  */
 export function getMeepleOpacity(type) {

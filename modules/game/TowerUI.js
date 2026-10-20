@@ -29,7 +29,9 @@
 
 // ✅ FIX : tailles pion tour / meeple de verrouillage désormais pilotées par MeepleConfig.js
 // (au lieu de valeurs en dur), pour être ajustables et cohérentes avec les autres meeples.
-import { getMeepleSize } from '../MeepleConfig.js';
+// ✨ NOUVEAU : getMeepleOpacity — opacité de la tour (et du garde + cadenas) réglable via
+// MEEPLE_CONFIG['Tower'].plateOpacity, comme pour le Dragon.
+import { getMeepleSize, getMeepleOpacity } from '../MeepleConfig.js';
 import { PRISONER_BUYBACK_COST } from '../rules/TowerConfig.js'; // ✨ NOUVEAU — Rachat de prisonnier
 
 let _deps = null;
@@ -403,7 +405,9 @@ export function renderTowerHeight(x, y, height) {
     img.style.width     = towerPlateWidth;
     img.style.height    = 'auto'; // préserve le ratio propre à chaque image de niveau
     img.style.zIndex    = '55';
-    img.style.opacity   = '0.85'; // légère transparence pour limiter le masquage du plateau
+    // ✨ NOUVEAU : transparence réglable dans MeepleConfig.js (Tower.plateOpacity), partagée avec le
+    // garde de verrouillage et son cadenas (renderTowerLockMeeple)
+    img.style.opacity   = String(getMeepleOpacity('Tower'));
     img.style.pointerEvents = 'none';
 
     container.appendChild(img);
@@ -463,14 +467,16 @@ export function renderTowerLockMeeple(x, y, type, color) {
     wrapper.style.width  = lockWidth;
     wrapper.style.height = lockHeight;
 
+    // ✨ NOUVEAU : une seule valeur (MeepleConfig 'Tower'.plateOpacity) pour la tour, le garde et le cadenas
+    const towerOpacity = String(getMeepleOpacity('Tower'));
+
     const img = document.createElement('img');
     img.className = 'tower-lock-meeple-img';
     img.src = `./assets/Meeples/${color}/${type}.png`;
     img.style.display = 'block';
     img.style.width   = '100%';
     img.style.height  = '100%';
-    // ✨ NOUVEAU : même transparence que le pion de tour (0.85), pour cohérence visuelle
-    img.style.opacity = '0.85';
+    img.style.opacity = towerOpacity; // ✨ NOUVEAU : même transparence que le pion de tour (réglable dans MeepleConfig)
     wrapper.appendChild(img);
 
     // ✨ NOUVEAU : cadenas centré sur le meeple (même transparence), pour bien le
@@ -484,7 +490,7 @@ export function renderTowerLockMeeple(x, y, type, color) {
     badge.style.transform  = 'translate(-50%, -50%)';
     badge.style.fontSize   = '14px';
     badge.style.lineHeight = '1';
-    badge.style.opacity    = '0.85';
+    badge.style.opacity    = towerOpacity; // ✨ NOUVEAU : idem
     badge.style.pointerEvents = 'none';
     badge.style.textShadow = '0 0 3px rgba(0,0,0,0.8)';
     wrapper.appendChild(badge);
