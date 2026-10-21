@@ -431,16 +431,17 @@ export function renderTowerHeight(x, y, height) {
         badge.style.left       = `${anchorX}px`;
         badge.style.bottom     = `${anchorBottom}px`; // à la base de la tour
         badge.style.transform  = 'translateX(-50%)';
-        badge.style.minWidth   = '22px';
-        badge.style.padding    = '1px 6px';
+        // ✅ FIX : taille doublée (x2) pour une meilleure lisibilité sur le plateau
+        badge.style.minWidth   = '44px';
+        badge.style.padding    = '2px 12px';
         badge.style.boxSizing  = 'border-box';
-        badge.style.borderRadius = '11px';
+        badge.style.borderRadius = '22px';
         badge.style.background = 'rgba(0,0,0,0.8)';
-        badge.style.border     = '2px solid gold';
+        badge.style.border     = '4px solid gold';
         badge.style.color      = '#fff';
-        badge.style.fontSize   = '13px';
+        badge.style.fontSize   = '26px';
         badge.style.fontWeight = 'bold';
-        badge.style.lineHeight = '16px';
+        badge.style.lineHeight = '32px';
         badge.style.textAlign  = 'center';
         badge.style.zIndex     = '57'; // au-dessus de la tour (55) et du garde de verrouillage (56)
         badge.style.opacity    = String(getMeepleOpacity('Tower')); // même transparence que la tour
