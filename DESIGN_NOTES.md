@@ -77,8 +77,8 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   la durée envoyée à un joueur qui revient reste la durée finale.
   **Après la fin**, `handleDisconnect` (`ReconnectionManager`) n'affiche ni pause ni `player-disconnected` : il retire
   seulement le joueur de `players` (liste du lobby, évite le fantôme au retour lobby) et le garde marqué `disconnected`
-  dans `gameState` (une reconnexion sur l'écran des scores reste le CAS 3). Limite : les autres invités le perdent de
-  leur panneau latéral jusqu'à son retour (où il réapparaît à 0 point côté panneau ; la modale reste exacte).
+  dans `gameState` (une reconnexion sur l'écran des scores reste le CAS 3). Limite : les autres invités le perdent
+  de leur panneau latéral jusqu'à son retour (où il réapparaît à 0 point côté panneau ; la modale reste exacte).
 - **Paquet d'état complet** : `GameSync.buildFullStateMessage` (arguments via `ReconnectionManager.collectFullStateArgs`),
   utilisé à la fois par `full-state-sync` (reconnexion) et `host-snapshot` (changement d'hôte). **Tout champ ajouté
   là est couvert par les deux mécanismes.** Tout état de partie qui doit survivre à une reconnexion est de préférence
@@ -266,6 +266,12 @@ compteur, état riche comme hauteur+verrouillage+couleur), on range une sous-str
   garde son stock. Spectateurs : aucune pièce.
 - **Pose d'étage** : sur une tuile à zone `tower` non verrouillée ; consomme une pièce et la **phase meeple** du tour
   (`undoManager.markMeeplePlaced(x, y, -1, null)`), puis nettoie tous les curseurs (`hideAllCursors`).
+- **Hauteur illimitée, rendu plafonné** : `height` n'a aucun plafond (maximum théorique = stock total de pièces, 30
+  à 5-6 joueurs) et la portée de capture suit toujours la hauteur réelle. Seules les images s'arrêtent à
+  `Tower10` : au-delà de 10 étages, `TowerUI.renderTowerHeight` garde `Tower10` et ajoute un badge numérique
+  (`.tower-height-badge`, hauteur réelle) à la base de la tour, avec la même transparence que la tour
+  (`MeepleConfig` `Tower`.`plateOpacity`). Tout code qui efface les pions de tour doit aussi effacer ce badge
+  (`renderAllTowersFromState`).
 - **Capture** : après un étage, cibles sur la tuile + 4 directions en **ligne continue** jusqu'à distance = hauteur
   (`getCaptureTargets`). Auto-capture → retour en réserve ; capture d'un adversaire → prisonnier
   (`extraState.prisoners[capturant]`). Bâtisseurs/Cochons orphelins du meeple capturé sont rendus (même algorithme

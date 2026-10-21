@@ -34,6 +34,10 @@
 import { getMeepleSize, getMeepleOpacity } from '../MeepleConfig.js';
 import { PRISONER_BUYBACK_COST } from '../rules/TowerConfig.js'; // ✨ NOUVEAU — Rachat de prisonnier
 
+// ✨ NOUVEAU : hauteur maximale pour laquelle une image dédiée existe (Tower01..Tower10).
+// Au-delà, l'image reste Tower10 et un badge numérique indique la hauteur réelle (voir renderTowerHeight).
+const TOWER_MAX_IMAGE_HEIGHT = 10;
+
 let _deps = null;
 
 function gs()   { return _deps.getGameState(); }
@@ -368,6 +372,11 @@ export function applyFloorPlaced(x, y, height, playerId, towerPieces) {
  * rend la taille du pion tour ajustable via le fichier de config, comme les autres
  * meeples. La hauteur reste en 'auto' pour préserver le ratio propre à chaque
  * image de niveau (Tower01..Tower10 n'ont pas toutes le même ratio).
+ * ✨ NOUVEAU : au-delà de 10 étages (jusqu'à 30 au maximum théorique), l'image reste
+ * Tower10 et un badge numérique (.tower-height-badge) affiche la hauteur réelle à la base
+ * de la tour, avec la même transparence que la tour (MeepleConfig 'Tower'.plateOpacity).
+ * La hauteur logique (extraState.towers[].height) et la portée de capture ne sont jamais
+ * plafonnées : seul le rendu l'est.
  */
 export function renderTowerHeight(x, y, height) {
     const boardEl = document.getElementById('board');
@@ -389,11 +398,12 @@ export function renderTowerHeight(x, y, height) {
     }
 
     container.querySelector('.tower-piece')?.remove();
+    container.querySelector('.tower-height-badge')?.remove(); // ✨ NOUVEAU : redessiné ci-dessous si nécessaire
 
     // ✅ FIX : position réelle de la zone tower (rotée) au lieu du centre fixe 104/104
     const { left: anchorX, bottom: anchorBottom } = _getTowerAnchor(x, y);
 
-    const clampedHeight = Math.min(height, 10);
+    const clampedHeight = Math.min(height, TOWER_MAX_IMAGE_HEIGHT);
     const img = document.createElement('img');
     img.className = 'tower-piece';
     img.src = `./assets/Meeples/Tower${String(clampedHeight).padStart(2, '0')}.png`;
@@ -411,6 +421,32 @@ export function renderTowerHeight(x, y, height) {
     img.style.pointerEvents = 'none';
 
     container.appendChild(img);
+
+    // ✨ NOUVEAU : badge de hauteur réelle au-delà de la dernière image disponible (11 → 30)
+    if (height > TOWER_MAX_IMAGE_HEIGHT) {
+        const badge = document.createElement('div');
+        badge.className   = 'tower-height-badge';
+        badge.textContent = String(height);
+        badge.style.position   = 'absolute';
+        badge.style.left       = `${anchorX}px`;
+        badge.style.bottom     = `${anchorBottom}px`; // à la base de la tour
+        badge.style.transform  = 'translateX(-50%)';
+        badge.style.minWidth   = '22px';
+        badge.style.padding    = '1px 6px';
+        badge.style.boxSizing  = 'border-box';
+        badge.style.borderRadius = '11px';
+        badge.style.background = 'rgba(0,0,0,0.8)';
+        badge.style.border     = '2px solid gold';
+        badge.style.color      = '#fff';
+        badge.style.fontSize   = '13px';
+        badge.style.fontWeight = 'bold';
+        badge.style.lineHeight = '16px';
+        badge.style.textAlign  = 'center';
+        badge.style.zIndex     = '57'; // au-dessus de la tour (55) et du garde de verrouillage (56)
+        badge.style.opacity    = String(getMeepleOpacity('Tower')); // même transparence que la tour
+        badge.style.pointerEvents = 'none';
+        container.appendChild(badge);
+    }
 
     // Repositionner le meeple de verrouillage (s'il existe) une fois la hauteur réelle de l'image connue
     const reposition = () => _positionLockMeepleOverTower(container, img);
@@ -513,9 +549,10 @@ export function renderTowerLockMeeple(x, y, type, color) {
  *     jamais redessinées à la reconnexion alors que gameState.extraState.towers l'était déjà
  *     via gameState.deserialize() (bug corrigé au passage).
  * Coût négligeable si l'extension Tour n'est pas utilisée (towers vide).
+ * ✨ NOUVEAU : efface aussi le badge de hauteur (.tower-height-badge), redessiné par renderTowerHeight.
  */
 export function renderAllTowersFromState() {
-    document.querySelectorAll('.tower-piece, .tower-lock-meeple').forEach(el => el.remove());
+    document.querySelectorAll('.tower-piece, .tower-lock-meeple, .tower-height-badge').forEach(el => el.remove());
     const towers = gs()?.extraState?.towers ?? {};
     Object.entries(towers).forEach(([key, tower]) => {
         const [x, y] = key.split(',').map(Number);
