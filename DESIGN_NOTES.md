@@ -16,6 +16,7 @@
 8. Check-list d'une nouvelle extension
 9. Extensions à venir
 10. Panneaux joueurs (spectateurs, barre mobile, rangées de pions)
+11. Pistes envisagées, non commencées (plein écran mobile / PWA)
 
 ---
 
@@ -424,3 +425,37 @@ Aide-mémoire des pièges déjà identifiés ; chaque extension est traitée une
   coché au lobby) pour afficher des pièces **fictives** et juger l'agencement. Purement visuel : aucun impact sur
   `gameState`, le réseau ou l'undo. Pour le retirer : supprimer le fichier, puis l'import, l'appel dans le
   constructeur/`destroy()` et la ligne `getScorePanelPreviewExtras` de `_getPieceExtras` dans `ScorePanelUI.js`.
+
+---
+
+## 11. Pistes envisagées, non commencées (plein écran mobile / PWA)
+
+Sujet évoqué, **volontairement reporté** : agrandir le jeu sur mobile en masquant la barre d'adresse du navigateur.
+Rien n'est implémenté. Deux pistes retenues, à traiter seulement sur demande de l'utilisateur (plan d'abord) :
+
+- **Mode PWA (installation sur l'écran d'accueil)** — seule solution valable sur **iPhone ET Android**. Un simple
+  raccourci créé depuis Chrome **ne suffit pas** (il s'ouvre avec la barre d'adresse) : il faut un fichier de
+  description (`manifest`, avec `display: standalone` ou `fullscreen`, icônes 192/512 px, couleurs, éventuellement
+  `orientation`), les balises `<meta>` Apple dans `index.html`, et sur Android un **service worker minimal sans aucune
+  mise en cache** (requis par Chrome pour proposer « Installer l'application »). Sans cache, une mise à jour du site
+  est récupérée à chaque lancement comme aujourd'hui ; le seul point différent : pas de bouton « actualiser » dans une
+  PWA, le joueur doit fermer complètement l'appli puis la rouvrir. Le contrôle `APP_VERSION` (`version.js`) continue de
+  refuser une version différente à la connexion ; options d'amélioration envisagées mais non retenues : message de
+  refus rappelant de fermer/rouvrir l'appli, ou détection automatique d'une nouvelle version.
+- **Bouton « Plein écran » dans le menu en jeu, Android uniquement** — via la Fullscreen API. Contraintes
+  structurantes à garder en tête :
+  - elle exige un **geste de l'utilisateur sur son propre appareil** : l'hôte qui clique sur « Démarrer la partie »
+    ne peut **pas** y faire passer les invités (le démarrage leur arrive par message réseau) ; chacun doit activer le
+    mode lui-même (bouton, ou clic sur « Rejoindre » côté invité) ;
+  - elle est **indisponible sur iPhone** (Safari iOS) : le bouton ne doit s'afficher que si
+    `document.documentElement.requestFullscreen` existe ;
+  - elle fait double emploi avec la PWA si celle-ci est mise en place.
+- **Réglages d'affichage mobile associés (indépendants du plein écran)** : `#game-page` utilise `100vh`, qui sur
+  mobile inclut la zone de la barre d'adresse (barre du bas potentiellement rognée) → l'unité `100dvh` serait plus
+  fiable ; `overscroll-behavior: none` sur le plateau éviterait le « tirer pour actualiser » d'Android pendant le
+  déplacement vertical. `viewport-fit=cover` + `env(safe-area-inset-*)` seraient à ajouter pour les encoches en mode
+  installé (seul `safe-area-inset-bottom` est utilisé aujourd'hui).
+- **Points de compatibilité vérifiés avec l'existant** : sortir du plein écran ne déclenche rien côté réseau ; le
+  handler `popstate` (« Voulez-vous vraiment quitter la partie ? ») intercepte déjà le bouton retour Android ; une
+  PWA passe plus souvent en arrière-plan, mais heartbeat, reconnexion et `host-snapshot` (§3) restent valables sans
+  adaptation.
