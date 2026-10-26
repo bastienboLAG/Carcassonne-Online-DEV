@@ -12,4 +12,4 @@
  * zzz=ajout mineur
  */
 
-export const APP_VERSION = '1.04.01.001';
+export const APP_VERSION = '1.04.01.002';

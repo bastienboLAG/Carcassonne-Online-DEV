@@ -17,6 +17,8 @@
 9. Extensions à venir
 10. Panneaux joueurs (spectateurs, barre mobile, rangées de pions)
 11. Pistes envisagées, non commencées (plein écran mobile / PWA)
+12. Points à corriger ou à surveiller (non traités)
+13. À faire en toute fin de développement
 
 ---
 
@@ -63,6 +65,14 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   - message d'invité qui doit aussi atteindre **les autres invités** : l'ajouter à `relayTypes`
     (`GameSync._handleGameMessage`). Sans cela seuls l'hôte et l'émetteur voient l'action (visible dès 3 joueurs).
 - **Dédup** : `Multiplayer.broadcast` ajoute un `msgId` ; les doublons reçus sont ignorés 5 s.
+- **Rotation de la tuile en main** : le message `tile-rotated` porte la rotation **absolue** (l'invité l'envoie à
+  partir de son état local, l'hôte la relaie à tous). **Règle** : tout affichage doit se **recaler sur cette valeur
+  absolue** (jamais « angle courant + 90° »), car un même message peut arriver deux fois — un invité qui clique
+  deux fois avant le retour du premier écho envoie deux fois la même valeur. L'angle CSS reste cumulé (toujours dans
+  le même sens, pour que l'animation de 0,3 s ne tourne pas à l'envers) mais congruent à la valeur reçue ; un message
+  en double ne change rien (`GameSyncCallbacks.onTileRotated`). Limite connue : deux clics très rapprochés d'un invité
+  ne produisent qu'**une** rotation (le protocole est absolu et l'état local n'a pas encore bougé) ; l'hôte, lui,
+  applique chaque clic localement.
 - **Détection d'un départ** : PeerJS n'émet pas toujours `close` à la fermeture d'un onglet (observé : jamais émis),
   et le heartbeat ne le découvre qu'après ~12 s (timeout 10 s + tick 3 s). Un invité qui quitte la page envoie donc
   `page-closing` (`Multiplayer`, `pagehide` hors bfcache) ; l'hôte l'exécute comme une fermeture détectée
@@ -189,6 +199,15 @@ synchro des options installée **une seule fois**) et `_activateHostLobby()`. Un
 - Un ancien hôte dont la page est fermée/rechargée n'est pas joignable par le sondage : il doit saisir le nouveau code.
 - Pour comparer des logs `[MIGRATION]` de deux appareils, ne pas se fier aux horloges (dérives de dizaines de
   secondes) : recouper par un événement commun.
+- **Poids du snapshot** : mesuré en partie réelle (6 joueurs, ~180 tuiles), `host-snapshot` pèse ~136 Ko en moyenne
+  (jusqu'à ~240 Ko), diffusé à chaque fin de tour à **chaque** invité ; avec `tile-placed` (~34 Ko, registre de zones
+  inclus) et `score-update` (~38 Ko), l'hôte envoie de l'ordre de 1 Mo par tour. L'essentiel vient de la pioche
+  (`deck.tiles` : chaque exemplaire répète toutes les zones de sa tuile) et du registre de zones. **Piste
+  d'optimisation, à faire avec précaution** : n'envoyer que l'ordre de la pioche (ids) + une table des définitions de
+  tuiles, ou ne renvoyer la pioche que lorsqu'elle change. Précautions : le snapshot est le socle du changement d'hôte
+  et de la reconnexion (§2) ; tout allègement doit rester restaurable à l'identique par `applyFullStateSync`, et être
+  testé en promotion d'hôte, en reconnexion et après une repioche (tuile implaçable / dragon). Priorité faible : aucune
+  coupure observée ne suivait ces envois.
 
 ---
 
@@ -459,3 +478,49 @@ Rien n'est implémenté. Deux pistes retenues, à traiter seulement sur demande 
   handler `popstate` (« Voulez-vous vraiment quitter la partie ? ») intercepte déjà le bouton retour Android ; une
   PWA passe plus souvent en arrière-plan, mais heartbeat, reconnexion et `host-snapshot` (§3) restent valables sans
   adaptation.
+- **Maintien de l'écran allumé (Screen Wake Lock API, `navigator.wakeLock`)** — idée évoquée, **reportée** : le
+  temps de savoir si elle intéresse les joueurs mobiles. Contexte : sur mobile, un écran qui se verrouille suspend la
+  page (heartbeat muet, désenregistrement du serveur PeerJS) ; un hôte en attente du tour d'un autre joueur y est
+  particulièrement exposé. Hypothèse non prouvée à ce jour (voir §12, logs réseau à ajouter pour la confirmer).
+
+---
+
+## 12. Points à corriger ou à surveiller (non traités)
+
+Liste d'anomalies repérées dans des logs de partie réelle (6 joueurs, ~3 h), **sans correction pour l'instant**.
+Retirer l'entrée dès qu'elle est corrigée ; si le correctif établit une règle durable, la formuler dans la section
+concernée (pas ici).
+
+1. **`TurnUI.updateTurnDisplay` plante quand `currentPlayerIndex` est hors du tableau des joueurs.** Observé après
+   la fin de partie : des joueurs partis font raccourcir `gameState.players` (handler `players-update` de
+   `ReconnectionManager.initInGameNetworkHandler`), mais `currentPlayerIndex` n'est pas recalé ;
+   `getCurrentPlayer()` renvoie `undefined` et `.id` lève un `TypeError` (`TurnUI.js`, ligne `currentPlayer.id`).
+   Bénin (fin de partie), mais l'erreur est répétée à chaque `players-update`. Pistes : garde dans
+   `updateTurnDisplay`, et/ou recalage de l'index dans le handler.
+2. **Bruit de logs au retour lobby** : `ERROR Règle "builders" non trouvée`, `WARN … n'est pas active`,
+   `WARN … déjà enregistrée, écrasement`. Cause : `destroyGameModules` appelle `ruleRegistry.disable()` sur des
+   règles jamais activées (extension décochée) et le registre persiste d'une partie à l'autre, donc `register`
+   écrase. Sans effet sur le jeu. Piste : ne pas journaliser en erreur la désactivation d'une règle absente.
+3. **Double notification `player-disconnected` pour un même départ** (observé : un joueur, deux notifications à ~2 s
+   d'écart avant `game-resumed`, ce qui réaffiche brièvement « Partie en pause »). Cause non établie (seul un log
+   d'invité était disponible). Piste : rendre `handleDisconnect` idempotent pour un joueur déjà marqué `disconnected`.
+4. **À vérifier — rotation absente du `full-state-sync` pour la tuile d'un invité.** `collectFullStateArgs` envoie, pour
+   un tour d'invité, `getCurrentTileForPlayer()` (objet de pioche sans rotation courante) : le log montre
+   `tuileEnMain: {"id":"base-12","rotation":null}`. Un joueur qui se resynchronise en cours de tour reverrait donc la
+   tuile à 0° même si elle a été tournée. À confirmer en lisant le chemin complet avant de corriger.
+
+---
+
+## 13. À faire en toute fin de développement
+
+Rien à faire tant que le développement des extensions et le débogage sont en cours : ces éléments restent utiles.
+
+- **Nettoyage des commentaires** : les marqueurs `// ✅ FIX`, `// ✨ NOUVEAU` et les commentaires d'historique
+  accumulés dans le code (ainsi que les en-têtes de fichiers qui racontent l'évolution plutôt que le rôle) seront
+  à élaguer, en ne gardant que les commentaires qui expliquent un « pourquoi » encore valable.
+- **Nettoyage des logs** : réduire les `console.log` (très nombreux, y compris des messages réseau complets) et
+  l'`EventBus` en mode debug (`eventBus.setDebug(true)` dans `home.js`).
+- **Logger maison de `index.html`** : il est **conservé complet** pour l'instant (export 📥, utile au débogage). Il
+  stocke toutes les lignes en mémoire, messages réseau complets compris (un `host-snapshot` pèse ~240 Ko, l'export
+  d'une partie de 3 h atteint ~70 Mo) : à alléger (tronquer les gros messages, ou le retirer) avant une diffusion
+  large, notamment pour les joueurs mobiles.

@@ -63,7 +63,17 @@ export class GameSyncCallbacks {
 
         gs.onTileRotated = (rotation) => {
             const img = document.getElementById('current-tile-img');
-            if (img) { const d = parseInt(img.style.transform.match(/rotate\((\d+)deg\)/)?.[1] || '0'); img.style.transform = `rotate(${d + 90}deg)`; }
+            if (img) {
+                // ✅ FIX : l'image se recale sur la rotation ABSOLUE reçue au lieu d'ajouter 90° à son angle
+                // courant. Un invité qui clique deux fois avant le retour du 1er écho envoie deux fois la
+                // même valeur (ex. 270, 270) : l'état prenait 270 mais l'image recevait +90° deux fois →
+                // affichage faux (jusqu'au prochain tile-drawn). On garde un angle cumulé qui tourne
+                // toujours dans le même sens (animation CSS de 0,3 s : pas de rotation à l'envers) mais
+                // congruent à la valeur reçue ; un message en double (delta = 0) ne fait plus rien.
+                const current = parseInt(img.style.transform.match(/rotate\((\d+)deg\)/)?.[1] || '0');
+                const delta   = (((rotation - current) % 360) + 360) % 360;
+                if (delta !== 0) img.style.transform = `rotate(${current + delta}deg)`;
+            }
             this.eventBus.emit('tile-rotated', { rotation });
         };
 
