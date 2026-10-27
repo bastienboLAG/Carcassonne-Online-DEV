@@ -79,6 +79,30 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   (`onClose`, rendu **idempotent** par `conn._closeHandled` : `page-closing` puis `close` tardif ne déclenchent
   `onPlayerLeft` qu'une fois). Best-effort : le heartbeat reste le filet de sécurité. `page-closing` est intercepté
   dans `Multiplayer` — il n'atteint jamais les handlers de jeu/lobby, qui voient simplement `onPlayerLeft`.
+  `handleDisconnect` (`ReconnectionManager`) est **idempotent** : un joueur déjà `disconnected` ou `kicked` est ignoré
+  (évite une seconde notification `player-disconnected` et un second « Partie en pause » pour le même départ).
+- **Signalisation PeerJS ≠ lien de données** : chaque pair a deux liens — la WebSocket vers le serveur PeerJS public
+  (« broker » : sert seulement à se trouver par id et à établir les connexions) et la connexion WebRTC directe vers
+  l'hôte (tout le jeu y passe). Une erreur du broker (`network`, `server-error`, `disconnected`) **n'implique pas** que
+  l'hôte soit perdu. **Règle** : `Multiplayer.joinGame` ne déclenche `onHostDisconnected` sur une telle erreur que si
+  `isHostLinkAlive()` est faux (connexion fermée, ou aucune donnée reçue de l'hôte depuis 7 s — l'hôte envoie un ping de
+  heartbeat toutes les 3 s) ; sinon la reprise d'hôte fermerait volontairement (`reconnectTo`) une connexion saine et
+  provoquerait une fausse pause chez l'hôte. Dans tous les cas, `_installSignalingKeepAlive` (hôte **et** invités,
+  idempotent par peer) rappelle `peer.reconnect()` tant que la signalisation est perdue, pour rester joignable par id.
+  Contrepartie : si une vraie perte de l'hôte coïncide avec une erreur du broker, la détection passe par la fermeture de
+  sa connexion ou par le heartbeat (jusqu'à ~10 s).
+- **Logs de diagnostic `[NET]`** (`Multiplayer.js`, aucune logique de jeu, à joindre à tout rapport de coupure) : événements
+  PeerJS (signalisation perdue/rétablie, erreurs, fermeture), par connexion (ouverture, fermeture avec l'âge du dernier
+  message et « abandonnée volontairement » le cas échéant, états ICE/WebRTC), `online`/`offline` du navigateur, visibilité de
+  la page (`cachée` / `visible`), type de réseau quand `navigator.connection` existe (Chrome/Edge/Opera ; absent sur
+  Safari/iPhone et Firefox ; `effectiveType` mesure la qualité et ne distingue pas 4G de 5G). Un seul minuteur de 2 s
+  signale un **retard du minuteur** (page suspendue : écran verrouillé, arrière-plan) et un **silence > 5 s** sur une
+  connexion (avec la durée à la reprise). Les pings de heartbeat portent un horodatage (`t`) que le pong renvoie (`to` = émetteur) :
+  un temps de réponse > 500 ms est journalisé. Le coût en jeu est négligeable (événementiel, quelques octets par heartbeat).
+- **`players-update` côté invité** (`initInGameNetworkHandler`) filtre et complète `gameState.players` : le handler
+  recale `currentPlayerIndex` sur l'**objet** joueur courant (pas sur son id, qui peut être remappé dans le même handler)
+  et le ramène dans les bornes — sinon il pointe hors tableau (`getCurrentPlayer()` indéfini) ou sur un autre joueur.
+  `TurnUI.updateTurnDisplay` tolère en outre un joueur courant introuvable.
 - **Fin de partie** : l'état « partie terminée » est `gameState.finalScoresData` (scores détaillés, `null` tant que la
   partie dure), **sérialisé** donc transporté par `full-state-sync` / `host-snapshot` / `turn-ended`. `FinalScoresManager`
   n'en garde aucune copie locale : `gameEnded` / `finalScoresData` en sont dérivés (accesseurs). Un joueur qui revient
@@ -95,7 +119,9 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   là est couvert par les deux mécanismes.** Tout état de partie qui doit survivre à une reconnexion est de préférence
   placé dans `gameState` (`serialize`/`deserialize`) plutôt que dans ce paquet. Les champs transitoires non sérialisés par
   `gameState.serialize()` qui doivent survivre à un rechargement (ex. `_pendingPrisonerExchange`) doivent y être
-  transportés explicitement.
+  transportés explicitement. Pour le tour d'un **invité**, la tuile en main est lue dans le **miroir de l'hôte**
+  (`getTuileEnMain`, tenu à jour par `tile-drawn` et `tile-rotated`) lorsqu'il s'agit de la même tuile que
+  `getCurrentTileForPlayer` : l'objet de pioche brut n'a pas de rotation courante (`collectFullStateArgs`).
 - **Options du lobby** : toute nouvelle case doit figurer dans **quatre** listes d'ids tenues à la main —
   `home.js` (`_installHostLobbyOptionSync` pour le temps réel, `currentOptions` pour l'invité qui arrive),
   `LobbyOptions.syncAllOptions` (preset appliqué par l'hôte) et `LobbyJoin` (`options-sync`, côté invité) —
@@ -134,7 +160,7 @@ Livré **en partie et au lobby**. Constantes (délai de grâce, sondage, balayag
   devient le **nouveau code de partie** ; on ne récupère jamais l'ancien code.
 - **Snapshot** : à chaque `syncTurnEnd`, l'hôte diffuse `host-snapshot` = paquet d'état complet + `hostId` +
   `candidates` (successeurs, ordre de `gameState.players`, hors spectateurs/déconnectés/exclus).
-- **Détection (invité)** : fermeture de la connexion de `hostPeerId`, erreur réseau PeerJS, ou heartbeat muet →
+- **Détection (invité)** : fermeture de la connexion de `hostPeerId`, erreur de signalisation PeerJS **seulement si le lien de données n'est plus vivant** (§2), ou heartbeat muet →
   `ReconnectionManager._notifyHostLost` → `HostMigration.onHostLost`. Sans snapshot : ancienne reconnexion en boucle.
 - **Élection déterministe sans communication** : chaque invité parcourt `[hostId, ...candidates]`, tente de rejoindre
   chaque cible pendant le délai de grâce (`Multiplayer.reconnectTo`, même peer/même id), et se **promeut** en arrivant
@@ -153,7 +179,7 @@ Livré **en partie et au lobby**. Constantes (délai de grâce, sondage, balayag
 
 Si c'est l'hôte qui perd internet (`offline`, ou `ReconnectionManager._isHostIsolated()`), il passe en **mode
 isolement** (`onSelfIsolated`) : overlay, aucun joueur marqué déconnecté, reconnexion à la signalisation sous le même
-id (`ensurePeerReady`, `_installHostKeepAlive`). Deux issues :
+id (`ensurePeerReady`, `_installSignalingKeepAlive`). Deux issues :
 1. il revient avant la fin de la grâce des invités → ils le rejoignent (CAS 5) ; seule une connexion **nouvelle**
    compte (`_staleConns`/`_guestAlive` : une ancienne connexion morte mais « ouverte » est ignorée) ;
 2. sinon le **nouvel hôte** sonde l'ancien id (`_probeOldHost`, `notifyPeer`) et lui envoie `host-moved` + nouveau
@@ -481,33 +507,17 @@ Rien n'est implémenté. Deux pistes retenues, à traiter seulement sur demande 
 - **Maintien de l'écran allumé (Screen Wake Lock API, `navigator.wakeLock`)** — idée évoquée, **reportée** : le
   temps de savoir si elle intéresse les joueurs mobiles. Contexte : sur mobile, un écran qui se verrouille suspend la
   page (heartbeat muet, désenregistrement du serveur PeerJS) ; un hôte en attente du tour d'un autre joueur y est
-  particulièrement exposé. Hypothèse non prouvée à ce jour (voir §12, logs réseau à ajouter pour la confirmer).
+  particulièrement exposé. Hypothèse non prouvée à ce jour : les logs `[NET]` (§2 : `page cachée`, `minuteur en retard`) la confirmeraient ou l'infirmeraient lors d'une prochaine partie.
 
 ---
 
 ## 12. Points à corriger ou à surveiller (non traités)
 
-Liste d'anomalies repérées dans des logs de partie réelle (6 joueurs, ~3 h), **sans correction pour l'instant**.
-Retirer l'entrée dès qu'elle est corrigée ; si le correctif établit une règle durable, la formuler dans la section
-concernée (pas ici).
+Aucun point en attente.
 
-1. **`TurnUI.updateTurnDisplay` plante quand `currentPlayerIndex` est hors du tableau des joueurs.** Observé après
-   la fin de partie : des joueurs partis font raccourcir `gameState.players` (handler `players-update` de
-   `ReconnectionManager.initInGameNetworkHandler`), mais `currentPlayerIndex` n'est pas recalé ;
-   `getCurrentPlayer()` renvoie `undefined` et `.id` lève un `TypeError` (`TurnUI.js`, ligne `currentPlayer.id`).
-   Bénin (fin de partie), mais l'erreur est répétée à chaque `players-update`. Pistes : garde dans
-   `updateTurnDisplay`, et/ou recalage de l'index dans le handler.
-2. **Bruit de logs au retour lobby** : `ERROR Règle "builders" non trouvée`, `WARN … n'est pas active`,
-   `WARN … déjà enregistrée, écrasement`. Cause : `destroyGameModules` appelle `ruleRegistry.disable()` sur des
-   règles jamais activées (extension décochée) et le registre persiste d'une partie à l'autre, donc `register`
-   écrase. Sans effet sur le jeu. Piste : ne pas journaliser en erreur la désactivation d'une règle absente.
-3. **Double notification `player-disconnected` pour un même départ** (observé : un joueur, deux notifications à ~2 s
-   d'écart avant `game-resumed`, ce qui réaffiche brièvement « Partie en pause »). Cause non établie (seul un log
-   d'invité était disponible). Piste : rendre `handleDisconnect` idempotent pour un joueur déjà marqué `disconnected`.
-4. **À vérifier — rotation absente du `full-state-sync` pour la tuile d'un invité.** `collectFullStateArgs` envoie, pour
-   un tour d'invité, `getCurrentTileForPlayer()` (objet de pioche sans rotation courante) : le log montre
-   `tuileEnMain: {"id":"base-12","rotation":null}`. Un joueur qui se resynchronise en cours de tour reverrait donc la
-   tuile à 0° même si elle a été tournée. À confirmer en lisant le chemin complet avant de corriger.
+Format : anomalie repérée dans des logs de partie réelle, **sans correction pour l'instant** — symptôme, cause (ou
+« à vérifier »), piste. Retirer l'entrée dès qu'elle est corrigée ; si le correctif établit une règle durable, la
+formuler dans la section concernée (pas ici).
 
 ---
 

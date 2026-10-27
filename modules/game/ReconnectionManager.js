@@ -354,9 +354,17 @@ export class ReconnectionManager {
         const gameState = this._getGameState();
         const _cp = gameState.getCurrentPlayer();
         const _isHostTurn = _cp?.id === this.multiplayer.playerId;
+        // ✅ FIX : pour le tour d'un INVITÉ, getCurrentTileForPlayer() renvoie l'objet brut de la pioche,
+        // qui n'a pas de rotation courante (le full-state partait avec `rotation: null`, donc la tuile
+        // réapparaissait à 0° chez le joueur qui se resynchronise). L'hôte garde un « miroir » de la tuile
+        // de l'invité dans tuileEnMain (tile-drawn + tile-rotated) : on l'utilise s'il s'agit bien de la
+        // même tuile, pour transporter la rotation courante.
+        const _forPlayer = d.getCurrentTileForPlayer();
+        const _mirrored  = d.getTuileEnMain();
+        const _guestTile = (_forPlayer && _mirrored && _mirrored.id === _forPlayer.id) ? _mirrored : _forPlayer;
         const _tuilePayload = _isHostTurn
-            ? (d.getTuileEnMain() ?? (gameState.currentTilePlaced ? null : d.getCurrentTileForPlayer()))
-            : (gameState.currentTilePlaced ? null : d.getCurrentTileForPlayer());
+            ? (d.getTuileEnMain() ?? (gameState.currentTilePlaced ? null : _forPlayer))
+            : (gameState.currentTilePlaced ? null : _guestTile);
         return {
             gameState,
             deck:          d.getDeck(),
@@ -592,6 +600,15 @@ export class ReconnectionManager {
 
             if (d.getVoluntaryLeaves().has(peerId)) {
                 d.getVoluntaryLeaves().delete(peerId);
+                return;
+            }
+
+            // ✅ FIX : idempotent — un joueur déjà marqué déconnecté (ou exclu) n'est pas re-traité. Un même
+            // départ pouvait être signalé deux fois (observé : deux `player-disconnected` à ~2 s d'écart
+            // avant `game-resumed`), ce qui réaffichait « Partie en pause » chez tout le monde.
+            const alreadyGone = gameState.players.find(p => p.id === peerId);
+            if (alreadyGone && (alreadyGone.disconnected || alreadyGone.kicked)) {
+                console.log(`ℹ️ [HOST] Départ de ${alreadyGone.name} déjà traité — ignoré`);
                 return;
             }
 
@@ -845,6 +862,10 @@ export class ReconnectionManager {
             if (data.type === 'players-update') {
                 const gameState = this._getGameState(); if (!gameState) return;
                 d.setPlayers(data.players);
+                // ✅ FIX : mémoriser le joueur courant par RÉFÉRENCE d'objet (pas par id : l'id peut être remappé
+                // dans ce même handler) — le filtre ci-dessous retire des joueurs et décale les indices, donc
+                // currentPlayerIndex pouvait pointer hors du tableau (TypeError dans TurnUI) ou sur un autre joueur.
+                const currentPlayerObj = gameState.getCurrentPlayer();
                 const incomingIds = new Set(data.players.map(p => p.id));
                 gameState.players = gameState.players.filter(gp =>
                     incomingIds.has(gp.id) || ((gp.disconnected || gp.kicked) && gp.color !== 'spectator')
@@ -886,6 +907,13 @@ export class ReconnectionManager {
                         if (p.disconnected !== undefined) existingById.disconnected = !!p.disconnected;
                     }
                 });
+                // ✅ FIX : recaler currentPlayerIndex sur le joueur courant d'origine (s'il est toujours là),
+                // sinon au minimum le ramener dans les bornes du tableau.
+                if (currentPlayerObj) {
+                    const _idx = gameState.players.indexOf(currentPlayerObj);
+                    if (_idx !== -1) gameState.currentPlayerIndex = _idx;
+                }
+                if (gameState.currentPlayerIndex >= gameState.players.length) gameState.currentPlayerIndex = 0;
                 d.getEventBus().emit('score-updated');
                 const sp = d.getScorePanelUI(); if (sp) sp.updateMobile();
                 d.updateTurnDisplay();

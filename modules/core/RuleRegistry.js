@@ -16,8 +16,11 @@ export class RuleRegistry {
      * @param {Object} config - Configuration pour la règle
      */
     register(name, RuleClass, config = {}) {
-        if (this.rules.has(name)) {
-            console.warn(`⚠️ Règle "${name}" déjà enregistrée, écrasement`);
+        // ✅ FIX : le registre survit d'une partie à l'autre — réenregistrer une règle désactivée est
+        // normal (nouvelle partie). On ne signale l'écrasement que s'il remplace une règle encore ACTIVE
+        // (vrai conflit).
+        if (this.rules.has(name) && this.activeRules.has(name)) {
+            console.warn(`⚠️ Règle "${name}" déjà active, écrasement`);
         }
 
         const ruleInstance = new RuleClass(this.eventBus, config);
@@ -33,8 +36,9 @@ export class RuleRegistry {
      * @param {Object} ruleInstance - Instance déjà créée
      */
     registerInstance(name, ruleInstance) {
-        if (this.rules.has(name)) {
-            console.warn(`⚠️ Règle "${name}" déjà enregistrée, écrasement`);
+        // ✅ FIX : même raison que register() — écrasement signalé seulement si la règle est encore active
+        if (this.rules.has(name) && this.activeRules.has(name)) {
+            console.warn(`⚠️ Règle "${name}" déjà active, écrasement`);
         }
         this.rules.set(name, ruleInstance);
         console.log(`📝 Règle "${name}" enregistrée (instance)`);
@@ -80,15 +84,10 @@ export class RuleRegistry {
     disable(name) {
         const rule = this.rules.get(name);
         
-        if (!rule) {
-            console.error(`❌ Règle "${name}" non trouvée`);
-            return false;
-        }
-
-        if (!this.activeRules.has(name)) {
-            console.warn(`⚠️ Règle "${name}" n'est pas active`);
-            return true;
-        }
+        // ✅ FIX : désactiver une règle jamais enregistrée (extension décochée) ou déjà inactive est un
+        // no-op normal (le retour au lobby les désactive toutes systématiquement) : ni erreur ni warning.
+        if (!rule) return true;
+        if (!this.activeRules.has(name)) return true;
 
         // Appeler la méthode unregister() de la règle
         if (typeof rule.unregister === 'function') {
