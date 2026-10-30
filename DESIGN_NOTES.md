@@ -91,6 +91,12 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   idempotent par peer) rappelle `peer.reconnect()` tant que la signalisation est perdue, pour rester joignable par id.
   Contrepartie : si une vraie perte de l'hôte coïncide avec une erreur du broker, la détection passe par la fermeture de
   sa connexion ou par le heartbeat (jusqu'à ~10 s).
+- **Départ annoncé de l'hôte** : un invité qui quitte la page prévient l'hôte (`page-closing`) ; symétriquement, l'**hôte**
+  qui quitte la page (fermeture ou rechargement, `pagehide` hors bfcache) diffuse `host-leaving` (best-effort).
+  `Multiplayer` l'intercepte (il n'atteint jamais les handlers de jeu/lobby) et pose `hostLeaving` (remis à `false` à
+  chaque connexion à un hôte) : `HostMigration` saute alors le délai de grâce — une page qui ferme ou se recharge
+  ne revient jamais sous le même id (un rechargement crée un nouveau peer), l'attendre est inutile. Sans annonce
+  (coupure réseau, onglet tué), le délai de grâce reste appliqué.
 - **Logs de diagnostic `[NET]`** (`Multiplayer.js`, aucune logique de jeu, à joindre à tout rapport de coupure) : événements
   PeerJS (signalisation perdue/rétablie, erreurs, fermeture), par connexion (ouverture, fermeture avec l'âge du dernier
   message et « abandonnée volontairement » le cas échéant, états ICE/WebRTC), `online`/`offline` du navigateur, visibilité de
@@ -159,13 +165,22 @@ Livré **en partie et au lobby**. Constantes (délai de grâce, sondage, balayag
 - Id PeerJS = code à 6 chiffres, **pour les invités aussi** (`Multiplayer._openGuestPeer`). L'id d'un invité promu
   devient le **nouveau code de partie** ; on ne récupère jamais l'ancien code.
 - **Snapshot** : à chaque `syncTurnEnd`, l'hôte diffuse `host-snapshot` = paquet d'état complet + `hostId` +
-  `candidates` (successeurs, ordre de `gameState.players`, hors spectateurs/déconnectés/exclus).
+  `candidates` (successeurs, ordre de `gameState.players`, hors spectateurs/déconnectés/exclus). Il est aussi
+  **rediffusé à chaque arrivée ou retour d'un joueur** (cas 1 à 5 de `initInGameNetworkHandler`, via
+  `gameSync.onTurnEndSynced?.({ afterJoin: true })`) pour que personne ne reste sans snapshot et que les ids soient à
+  jour. Comme le snapshot restaure « le début du tour », cette rediffusion n'a lieu que si le tour n'est pas entamé
+  (`!currentTilePlaced`, pas de phase dragon) ; sinon elle est différée (celui de la fin de tour suivra).
 - **Détection (invité)** : fermeture de la connexion de `hostPeerId`, erreur de signalisation PeerJS **seulement si le lien de données n'est plus vivant** (§2), ou heartbeat muet →
   `ReconnectionManager._notifyHostLost` → `HostMigration.onHostLost`. Sans snapshot : ancienne reconnexion en boucle.
 - **Élection déterministe sans communication** : chaque invité parcourt `[hostId, ...candidates]`, tente de rejoindre
   chaque cible pendant le délai de grâce (`Multiplayer.reconnectTo`, même peer/même id), et se **promeut** en arrivant
   à son propre id. Un succès exige la confirmation `game-in-progress` de la cible. Un invité **hors ligne** n'élit
-  personne : il attend le retour du réseau (`_waitOnline`).
+  personne : il attend le retour du réseau (`_waitOnline`). Si l'hôte a annoncé son départ (`host-leaving`, §2), la
+  première cible (l'ancien hôte) est sautée.
+- **Invité sans snapshot** (arrivé tuile déjà posée juste avant la chute de l'hôte) : il ne connaît ni les successeurs
+  ni le nouveau code et ne peut participer à aucune élection. Il garde l'ancienne reconnexion (réessai de l'ancien code,
+  utile si l'hôte revient) mais **renonce au bout de `NO_SNAPSHOT_GIVE_UP_MS`** : retour au lobby avec un message
+  l'invitant à redemander le code (`_armNoSnapshotGiveUp`, sans effet si le lien vers l'hôte est revenu).
 - **Promotion** (`_promote`, bloc **synchrone**) : adapte le snapshot (ancien hôte `disconnected`+`kicked`, son tour
   sauté, la tuile déjà piochée passe au suivant), `isHost=true` partout (`home.js`, `gameSync.isHost`,
   `turnManager.isHost`, `prepareHostTakeover`), `applyFullStateSync`, puis réinstalle tout ce qu'un hôte doit avoir
@@ -216,6 +231,10 @@ synchro des options installée **une seule fois**) et `_activateHostLobby()`. Un
   l'applique (y compris pour le remettre à `false`, nécessaire au CAS 5).
 - **Heartbeat** : `receivePong` retire un pair de `_timedOut` côté invité (sinon une 2ᵉ perte du même hôte n'est
   jamais détectée). Le heartbeat est partagé avec le lobby.
+- **Snapshot stocké et remap d'id** : un `player-id-remapped` reçu doit aussi corriger le snapshot STOCKÉ
+  (`HostMigration._remapSnapshot` : joueurs, `extraState`, fée, meeples, échange en attente et surtout `candidates`) ;
+  sinon, à la promotion, le vieux snapshot écrasait le remap appliqué à l'état vivant et l'élection attendait des
+  ids morts. Un nouveau snapshot reçu remplace l'ancien (ids déjà à jour).
 
 ### Limites connues
 
@@ -225,6 +244,10 @@ synchro des options installée **une seule fois**) et `_activateHostLobby()`. Un
 - Un ancien hôte dont la page est fermée/rechargée n'est pas joignable par le sondage : il doit saisir le nouveau code.
 - Pour comparer des logs `[MIGRATION]` de deux appareils, ne pas se fier aux horloges (dérives de dizaines de
   secondes) : recouper par un événement commun.
+- Un joueur qui arrive alors que le tour est déjà entamé n'a pas de snapshot avant la fin de ce tour (voir « Invité
+  sans snapshot ») : si l'hôte tombe dans cet intervalle, il est renvoyé au lobby au bout de `NO_SNAPSHOT_GIVE_UP_MS`.
+- Le sondage de l'ancien hôte (`_probeOldHost`, jusqu'à 15 min) provoque des `peer-unavailable` attendus : ils ne sont
+  plus journalisés (`Multiplayer`, keep-alive et `joinGame`).
 - **Poids du snapshot** : mesuré en partie réelle (6 joueurs, ~180 tuiles), `host-snapshot` pèse ~136 Ko en moyenne
   (jusqu'à ~240 Ko), diffusé à chaque fin de tour à **chaque** invité ; avec `tile-placed` (~34 Ko, registre de zones
   inclus) et `score-update` (~38 Ko), l'hôte envoie de l'ordre de 1 Mo par tour. L'essentiel vient de la pioche
@@ -248,9 +271,9 @@ meeple, d'un prisonnier, d'une tour verrouillée, de la fée…) → il faut le 
 - **Hors de `gameState`** : `UndoManager.remapPlayerId` (snapshots d'annulation) et `placedMeeples[].playerId`.
   `home.js` `_remapPlayerEverywhere` regroupe les trois.
 - **Hôte** : CAS 3 de `initInGameNetworkHandler` l'appelle puis diffuse `player-id-remapped { oldId, newId }` ;
-  **invités** : `GameSync.onPlayerIdRemapped` → `GameSyncCallbacks` → `_remapPlayerEverywhere`.
+  **invités** : `GameSync.onPlayerIdRemapped` → `GameSyncCallbacks` → `_remapPlayerEverywhere` ; le snapshot de changement d'hôte stocké est remappé en parallèle (§3).
 
-**Règle** : tout id de joueur stocké hors de `players` doit être ajouté à `remapPlayerId` / `remapExtraStateIds`.
+**Règle** : tout id de joueur stocké hors de `players` doit être ajouté à `remapPlayerId` / `remapExtraStateIds` (qui servent aussi à `HostMigration._remapSnapshot`).
 
 ---
 

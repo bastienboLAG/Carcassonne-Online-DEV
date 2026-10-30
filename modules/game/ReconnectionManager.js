@@ -738,6 +738,10 @@ export class ReconnectionManager {
                     d.getEventBus().emit('score-updated');
                     const spSame = d.getScorePanelUI(); if (spSame) { spSame.update(); spSame.updateMobile(); }
                     d.updateTurnDisplay();
+                    // ✅ FIX : tout joueur qui (re)vient doit posséder un snapshot de changement d'hôte à jour (sinon,
+                    // si l'hôte tombe avant la fin du tour, il ne peut participer à aucune élection). Différé par
+                    // HostMigration si le tour est déjà entamé (voir broadcastSnapshot).
+                    d.getGameSync()?.onTurnEndSynced?.({ afterJoin: true });
                     console.log(`🔄 Reconnexion joueur (même id): ${name} (${from})`);
                     return;
                 }
@@ -856,6 +860,9 @@ export class ReconnectionManager {
                     d.afficherToast(`👁 ${name} observe la partie.`);
                     console.log(`👁 Retour spectateur: ${name}`);
                 }
+                // ✅ FIX : cas 1 à 4 — snapshot de changement d'hôte à jour pour tous, dont le nouvel arrivant
+                // (voir le cas 5 plus haut et HostMigration.broadcastSnapshot).
+                d.getGameSync()?.onTurnEndSynced?.({ afterJoin: true });
                 return;
             }
 

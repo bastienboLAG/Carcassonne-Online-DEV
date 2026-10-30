@@ -33,6 +33,10 @@ export class Multiplayer {
         // Sert à ne déclencher onHostDisconnected que pour la fermeture de CETTE connexion
         // (et pas pour celle d'une ancienne connexion périmée après un changement d'hôte).
         this.hostPeerId = null;
+        // ✨ NOUVEAU : l'hôte a-t-il annoncé qu'il quitte la page (message `host-leaving`) ? Dans ce cas la
+        // reprise d'hôte saute le délai de grâce (voir HostMigration.onHostLost). Remis à false à chaque
+        // connexion à un (nouvel) hôte.
+        this.hostLeaving = false;
         this._listening = false; // ✨ NOUVEAU : l'écoute des connexions entrantes est-elle active ?
 
         // ✨ NOUVEAU : dernier instant où CET appareil a changé d'état réseau (événements
@@ -56,7 +60,14 @@ export class Multiplayer {
             // qu'une fermeture détectée (voir onData / onClose dans _handleConnection). Le heartbeat
             // reste le filet de sécurité. `persisted` = page mise en cache (bfcache), pas fermée : ignoré.
             window.addEventListener('pagehide', (e) => {
-                if (e.persisted || this.isHost || !this.hostPeerId) return;
+                if (e.persisted) return;
+                // ✨ NOUVEAU : l'HÔTE qui quitte la page (fermeture / rechargement) prévient ses invités (best-effort) :
+                // sa page ne reviendra pas sous le même id, inutile de lui laisser le délai de grâce de la reprise d'hôte.
+                if (this.isHost) {
+                    if (this.connections.length > 0) this.broadcast({ type: 'host-leaving' });
+                    return;
+                }
+                if (!this.hostPeerId) return;
                 this.sendTo(this.hostPeerId, { type: 'page-closing' });
             });
 
@@ -256,6 +267,7 @@ export class Multiplayer {
      */
     async joinGame(hostId, preferredId = null) {
         this.hostPeerId = hostId;
+        this.hostLeaving = false; // ✨ NOUVEAU : nouvelle connexion à un hôte
         // ✨ NOUVEAU : l'invité s'enregistre sous un code à 6 chiffres (réessai si collision)
         const peer = await this._openGuestPeer(preferredId);
         this.peer = peer;
@@ -271,6 +283,9 @@ export class Multiplayer {
             let _joinResolved = false;
 
             peer.on('error', (err) => {
+                // ✅ FIX : une fois la jonction établie, `peer-unavailable` ne concerne jamais cette connexion (il vient
+                // d'une tentative vers un AUTRE pair : sondage de l'ancien hôte, reconnectTo) — ignoré ici.
+                if (_joinResolved && err?.type === 'peer-unavailable') return;
                 console.error('❌ Erreur de connexion:', err);
                 if (_joinResolved) {
                     // Connexion déjà établie : erreur réseau → déconnexion hôte
@@ -347,6 +362,7 @@ export class Multiplayer {
     async reconnectTo(hostId, timeoutMs = 4000) {
         await this.ensurePeerReady();
         this.hostPeerId = hostId;
+        this.hostLeaving = false; // ✨ NOUVEAU : nouvelle tentative vers un (nouvel) hôte
 
         this.connections.forEach(c => { c._replaced = true; try { c.close(); } catch (e) {} });
         this.connections = [];
@@ -388,6 +404,7 @@ export class Multiplayer {
         this._connectedPeers.clear();
         this.isHost = true;
         this.hostPeerId = null;
+        this.hostLeaving = false;
         this.onHostDisconnected = null;
     }
 
@@ -442,7 +459,9 @@ export class Multiplayer {
             setTimeout(retry, 1000);
         });
         peer.on('close', () => this._netLog('peer PeerJS fermé / détruit'));
-        peer.on('error', (err) => this._netLog(`erreur PeerJS type=${err?.type} (${err?.message ?? ''})`));
+        // `peer-unavailable` est attendu (sondage de l'ancien hôte, tentatives pendant le délai de grâce) et déjà
+        // traité par les appelants : on ne le journalise pas ici (il remplissait le log toutes les ~4 s).
+        peer.on('error', (err) => { if (err?.type !== 'peer-unavailable') this._netLog(`erreur PeerJS type=${err?.type} (${err?.message ?? ''})`); });
     }
 
     /**
@@ -552,6 +571,16 @@ export class Multiplayer {
                     if (rtt > 500) this._netLog(`temps de réponse élevé avec ${conn.peer} : ${rtt} ms`);
                 }
                 if (this.onHeartbeatPong) this.onHeartbeatPong(conn.peer);
+                return;
+            }
+
+            // ✨ NOUVEAU : l'hôte annonce qu'il quitte la page → drapeau lu par HostMigration (pas de délai de grâce).
+            // Intercepté ici : n'atteint jamais les handlers de jeu/lobby. Uniquement de la part de MON hôte.
+            if (data.type === 'host-leaving') {
+                if (!this.isHost && conn.peer === this.hostPeerId) {
+                    this.hostLeaving = true;
+                    this._netLog(`l'hôte ${conn.peer} annonce qu'il quitte la page`);
+                }
                 return;
             }
 
