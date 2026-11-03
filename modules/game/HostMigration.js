@@ -3,15 +3,20 @@
  *
  * Principe :
  *  - L'hôte diffuse à chaque fin de tour un SNAPSHOT complet (même contenu qu'un
- *    full-state-sync + hostId + liste ordonnée des successeurs possibles).
+ *    full-state-sync + hostId + liste ordonnée des successeurs possibles). Il en rediffuse aussi un
+ *    à chaque arrivée / retour d'un joueur (si le tour n'est pas encore entamé), pour que personne
+ *    ne reste sans snapshot.
  *  - Si un invité perd l'hôte (fermeture de connexion, erreur réseau ou heartbeat muet), il
- *    tente d'abord de le rejoindre pendant un délai de grâce, puis parcourt les successeurs
- *    dans l'ordre : pour chacun, il tente de le rejoindre pendant un délai de grâce ; s'il
- *    arrive à son propre tour dans la liste, il se promeut hôte.
+ *    tente d'abord de le rejoindre pendant un délai de grâce (toujours appliqué en partie ; sauté au lobby si l'hôte a annoncé son départ),
+ *    puis parcourt les successeurs dans l'ordre : pour chacun, il tente de le rejoindre pendant un
+ *    délai de grâce ; s'il arrive à son propre tour dans la liste, il se promeut hôte.
  *  - Le nouvel hôte a pour code de partie son propre id réseau (6 chiffres, cf. Multiplayer).
  *    Aucune tentative de récupérer l'ancien code (un seul numéro à la fois).
  *  - L'état restauré est celui du DÉBUT du tour en cours (le dernier snapshot). Si l'ancien
  *    hôte jouait, son tour est sauté et la tuile déjà piochée passe au joueur suivant.
+ *  - Un joueur qui n'a AUCUN snapshot (arrivé juste avant la chute de l'hôte, tour déjà entamé) ne
+ *    peut pas participer à l'élection : il retente l'ancien code puis renonce au bout de
+ *    NO_SNAPSHOT_GIVE_UP_MS (retour au lobby avec un message).
  *
  * Ancien hôte (option B) :
  *  - s'il est lui-même isolé (hors ligne / serveur de signalisation perdu), il le détecte
@@ -20,8 +25,8 @@
  *    signalisation sous le MÊME id, aucune pause ni exclusion de joueur ;
  *  - s'il retrouve internet avant la fin du délai de grâce des invités, ceux-ci le rejoignent
  *    (CAS 5) et la partie continue chez lui ;
- *  - sinon le nouvel hôte le prévient (`host-moved`, sondage par son ancien id) : il quitte
- *    son rôle d'hôte et rejoint automatiquement la partie avec le nouveau code et son pseudo.
+ *  - sinon le nouvel hôte le prévient (`host-moved`, sondage par son ancien id) : il quitte son
+ *    rôle d'hôte et rejoint automatiquement la partie avec le nouveau code et son pseudo.
  *
  * Lobby (lot 2) : même mécanique, sans snapshot — les invités connaissent déjà la liste des
  *  joueurs. Hôte qui QUITTE le salon : il désigne un successeur (`lobby-host-transfer`, ordre de
@@ -32,6 +37,8 @@
  * du peer) : la liste des successeurs du snapshot reste valable, et le nouvel hôte les
  * retrouve via le CAS 5 de ReconnectionManager.initInGameNetworkHandler (même id).
  */
+
+import { remapExtraStateIds } from '../GameState.js'; // ✨ NOUVEAU : remap des ids dans un snapshot reçu
 
 // Délai de grâce : temps laissé à un hôte injoignable (puis à chaque successeur) pour revenir
 // avant de passer au suivant. S'ajoute au délai de détection du heartbeat (HeartbeatManager, 10 s).
@@ -44,6 +51,7 @@ const PROBE_INTERVAL_MS = 3000;       // nouvel hôte : pause entre deux tentati
 const PROBE_MAX_MS      = 15 * 60000; // nouvel hôte : abandon du sondage de l'ancien hôte
 const LOBBY_SWEEP_MS = 40000;  // nouvel hôte de lobby : retire de la liste les invités qui ne sont pas revenus
 const ISOLATION_RESTORED_WAIT_MS = 90000; // ancien hôte reconnecté au réseau : attente max d'invités/notification
+const NO_SNAPSHOT_GIVE_UP_MS = 60000; // ✨ NOUVEAU : invité sans snapshot : abandon de la reconnexion « classique »
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 const isInactive = (p) => p.color === 'spectator' || p.disconnected === true || p.kicked === true;
@@ -66,6 +74,7 @@ export class HostMigration {
         this._mode = 'game';       // 'game' | 'lobby'
         this._lobbyHello = false;  // lobby : le (nouvel) hôte a-t-il répondu à notre player-info ?
         this._listenersInstalled = false;
+        this._giveUpTimer = null;  // ✨ NOUVEAU : abandon de la reconnexion classique (invité sans snapshot)
     }
 
     /** Remise à zéro (retour au lobby, nouvelle partie). */
@@ -74,6 +83,7 @@ export class HostMigration {
         this._snapshot = null;
         this._state = 'idle';
         this._isolated = false;
+        if (this._giveUpTimer) { clearTimeout(this._giveUpTimer); this._giveUpTimer = null; }
     }
 
     /**
@@ -84,9 +94,21 @@ export class HostMigration {
         const d  = this._d;
         const gs = d.getGameSync();
         if (!gs) return;
+        // ✅ FIX : un nouveau snapshot remplace l'ancien — les ids qu'il contient sont à jour
         gs.onHostSnapshot  = (data) => { if (!d.getIsHost()) this._snapshot = data; };
-        gs.onTurnEndSynced = () => { if (d.getIsHost()) this.broadcastSnapshot(); };
+        // `opts.afterJoin` : snapshot demandé par l'arrivée d'un joueur (voir broadcastSnapshot)
+        gs.onTurnEndSynced = (opts) => { if (d.getIsHost()) this.broadcastSnapshot(opts); };
         gs.onHostMoved     = (data, from) => this.onHostMoved(data, from);
+
+        // ✅ FIX : un joueur qui revient sous un nouvel id (`player-id-remapped`) doit aussi être remappé dans le
+        // snapshot STOCKÉ (ids des joueurs et liste des successeurs) : sinon, à la promotion, le vieux snapshot
+        // écrasait le remap déjà appliqué à l'état vivant, et l'élection attendait des ids morts. Enveloppe le
+        // callback posé par GameSyncCallbacks.attach (appelé juste avant install()).
+        const prevRemap = gs.onPlayerIdRemapped;
+        gs.onPlayerIdRemapped = (oldId, newId) => {
+            this._remapSnapshot(oldId, newId);
+            if (prevRemap) prevRemap(oldId, newId);
+        };
 
         // Hôte : perte de réseau de l'appareil = c'est MOI qui suis isolé (détection immédiate,
         // avant que les invités ne « se déconnectent » un par un)
@@ -105,12 +127,23 @@ export class HostMigration {
     // Hôte : diffusion du snapshot
     // ─────────────────────────────────────────────────────────────
 
-    broadcastSnapshot() {
+    /**
+     * @param {{afterJoin?: boolean}} [opts] — `afterJoin` : appelé après l'arrivée / le retour d'un joueur. Le
+     *   snapshot restaure « le début du tour en cours » ; pris tuile déjà posée, il ferait reprendre la partie
+     *   en plein milieu du tour (et bloquerait le tour suivant si l'ancien hôte jouait). On ne le diffuse donc
+     *   que si le tour n'est pas entamé ; sinon il est différé (celui de la fin de tour, envoyé à tous, suivra).
+     */
+    broadcastSnapshot(opts = {}) {
         const d  = this._d;
         const rm = d.getReconnectionManager();
         const gs = d.getGameSync();
         const gameState = d.getGameState();
         if (!rm || !gs || !gameState || !d.getIsHost()) return;
+
+        if (opts?.afterJoin && (gameState.currentTilePlaced || gameState.dragonPhase?.active)) {
+            console.log('📸 [MIGRATION] Snapshot après arrivée différé : tour déjà entamé (diffusé à la fin du tour)');
+            return;
+        }
 
         const hostId = d.getMultiplayer().playerId;
         // Successeurs possibles, dans l'ordre de la liste des joueurs (déterministe chez tous)
@@ -127,6 +160,38 @@ export class HostMigration {
         } catch (err) {
             console.error('❌ [MIGRATION] Échec du snapshot:', err);
         }
+    }
+
+    /**
+     * ✅ FIX : remplace un id de joueur dans le snapshot STOCKÉ (données brutes reçues du réseau) — joueurs,
+     * joueurs déconnectés, extraState, fée, meeples posés, échange de prisonniers en attente et surtout
+     * `candidates` (liste des successeurs utilisée par l'élection). Même périmètre que GameState.remapPlayerId,
+     * appliqué aux données sérialisées.
+     */
+    _remapSnapshot(oldId, newId) {
+        const snap = this._snapshot;
+        if (!snap || !oldId || !newId || oldId === newId) return;
+        const g = snap.gameState;
+        if (g) {
+            (g.players ?? []).forEach(p => { if (p.id === oldId) p.id = newId; });
+            const dp = g.disconnectedPlayers;
+            if (dp && dp[oldId]) {
+                const entry = dp[oldId];
+                if (entry.player && entry.player.id === oldId) entry.player.id = newId;
+                dp[newId] = entry;
+                delete dp[oldId];
+            }
+            remapExtraStateIds(g.extraState, oldId, newId);
+            if (g.fairyState?.ownerId === oldId) g.fairyState.ownerId = newId;
+        }
+        Object.values(snap.placedMeeples ?? {}).forEach(m => { if (m.playerId === oldId) m.playerId = newId; });
+        const pe = snap.pendingPrisonerExchange;
+        if (pe) {
+            if (pe.chooserId  === oldId) pe.chooserId  = newId;
+            if (pe.opponentId === oldId) pe.opponentId = newId;
+        }
+        snap.candidates = (snap.candidates ?? []).map(id => id === oldId ? newId : id);
+        console.log(`🔧 [MIGRATION] Snapshot stocké : id ${oldId} → ${newId} (successeurs: ${snap.candidates.join(', ') || '(aucun)'})`);
     }
 
     /**
@@ -172,15 +237,20 @@ export class HostMigration {
 
         const snap = this._snapshot;
         if (!snap) {
-            // Aucun snapshot (partie tout juste démarrée) : ancien comportement
-            console.warn('⚠️ [MIGRATION] Hôte perdu sans snapshot — reconnexion classique');
+            // Aucun snapshot (arrivé juste avant la chute de l'hôte, tour déjà entamé) : ancien comportement
+            // (réessayer l'ancien code), mais plus indéfiniment — voir _armNoSnapshotGiveUp.
+            console.warn(`⚠️ [MIGRATION] Hôte perdu sans snapshot — reconnexion classique (abandon dans ${NO_SNAPSHOT_GIVE_UP_MS / 1000} s si l'hôte ne revient pas)`);
             rm?.startAutoReconnect();
+            this._armNoSnapshotGiveUp();
             return;
         }
 
         this._state = 'running';
         this._mode = 'game';
         const runId = ++this._runId;
+        // En PARTIE, le délai de grâce est TOUJOURS appliqué, même si l'hôte a annoncé son départ (`host-leaving`) :
+        // décision produit — une fermeture d'onglet par erreur ne doit pas faire perdre la main trop vite
+        // (voir DESIGN_NOTES §3). Seul le lobby saute le délai (onLobbyHostLost).
         console.warn(`🚨 [MIGRATION] Hôte perdu (${snap.hostId}) — délai de grâce ${HOST_GRACE_MS} ms, successeurs: ${snap.candidates.join(', ') || '(aucun)'}`);
 
         rm.stopAutoReconnect();
@@ -189,6 +259,31 @@ export class HostMigration {
             console.error('❌ [MIGRATION] Erreur inattendue:', err);
             this._state = 'idle';
         });
+    }
+
+    /**
+     * ✨ NOUVEAU : invité SANS snapshot — il ne peut participer à aucune élection et ne connaît pas le nouveau
+     * code. La reconnexion classique (vers l'ancien code) ne réussit que si l'hôte revient ; sinon, au bout de
+     * NO_SNAPSHOT_GIVE_UP_MS, on rend la main au joueur (lobby + message) au lieu de boucler indéfiniment.
+     */
+    _armNoSnapshotGiveUp() {
+        const d  = this._d;
+        const mp = d.getMultiplayer();
+        if (this._giveUpTimer) clearTimeout(this._giveUpTimer);
+        const runId = this._runId;
+        this._giveUpTimer = setTimeout(() => {
+            this._giveUpTimer = null;
+            if (runId !== this._runId || d.getIsHost() || !d.getGameState()) return;
+            if (mp.isHostLinkAlive()) {
+                console.log('✅ [MIGRATION] Reconnecté à l\'hôte pendant la reconnexion classique');
+                return;
+            }
+            console.error('❌ [MIGRATION] Aucun snapshot et hôte toujours injoignable — retour au lobby');
+            const rm = d.getReconnectionManager();
+            rm?.stopAutoReconnect();
+            rm?.hideReconnectOverlay();
+            d.returnToInitialLobby("Partie perdue : l'hôte n'est plus joignable et aucun nouvel hôte n'a pu être désigné. Demandez le nouveau code aux autres joueurs.");
+        }, NO_SNAPSHOT_GIVE_UP_MS);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -210,7 +305,8 @@ export class HostMigration {
         const hostId = mp.hostPeerId;
         if (!hostId) return;
         console.warn(`🚨 [MIGRATION][LOBBY] Hôte du salon perdu (${hostId})`);
-        this._startLobbyRun({ hostId, candidates: this._lobbyCandidates(hostId), skipHost: false });
+        // ✨ NOUVEAU : si l'hôte a annoncé son départ (`host-leaving`), pas de délai de grâce
+        this._startLobbyRun({ hostId, candidates: this._lobbyCandidates(hostId), skipHost: !!mp.hostLeaving });
     }
 
     /** Invité au lobby : l'hôte annonce qu'il quitte le salon et désigne ses successeurs. */
