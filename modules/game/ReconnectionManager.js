@@ -55,6 +55,10 @@ export class ReconnectionManager {
         this._onHostIsolated = deps.onHostIsolated ?? null;
 
         this.gamePaused         = false;
+        // ✅ FIX : pseudo du joueur qui a causé la pause. Seul son retour la lève : sans cela, après un
+        // changement d'hôte, le premier invité qui se reconnecte (CAS 5) levait la pause alors que
+        // l'ancien hôte était toujours absent.
+        this.pausedFor          = null;
         this.pauseTimerInterval = null;
         this.pauseTimerEnd      = null;
         this._autoReconnectTimer = null;
@@ -71,6 +75,7 @@ export class ReconnectionManager {
     pauseGame(disconnectedName) {
         if (!this._isHost || this.gamePaused) return;
         this.gamePaused = true;
+        this.pausedFor  = disconnectedName;
         if (this.gameSync) this.gameSync.syncGamePaused(disconnectedName, 0);
         this._showPauseOverlay(disconnectedName);
     }
@@ -78,6 +83,7 @@ export class ReconnectionManager {
     resumeGame(reason = 'reconnected') {
         if (!this.gamePaused) return;
         this.gamePaused = false;
+        this.pausedFor  = null;
         clearInterval(this.pauseTimerInterval);
         this.pauseTimerInterval = null;
         this.pauseTimerEnd      = null;
@@ -88,6 +94,7 @@ export class ReconnectionManager {
     excludeDisconnectedPlayer(disconnectedName) {
         if (!this._isHost) return;
         this.gamePaused = false;
+        this.pausedFor  = null;
         this._hidePauseOverlay();
 
         const gameState = this._gameState;
@@ -97,6 +104,14 @@ export class ReconnectionManager {
                 const wasCurrentPlayer  = (idx === gameState.currentPlayerIndex);
                 const peerId            = gameState.players[idx].id;
                 const isSpectatorPlayer = gameState.players[idx]?.color === 'spectator';
+
+                // ✅ FIX : aucune tuile ne doit être perdue. Si le joueur exclu n'avait pas encore posé la tuile
+                // de son tour, elle est rejouée par le joueur suivant au lieu d'en piocher une autre (la sienne
+                // disparaissait définitivement du jeu). Capturée AVANT toute mutation de l'état.
+                const tileWasPlaced = !!gameState.currentTilePlaced;
+                const heldTile = (wasCurrentPlayer && !tileWasPlaced)
+                    ? (this._sd?.getCurrentTileForPlayer?.() ?? null)
+                    : null;
 
                 // ✅ FIX NOUVEAU : si le joueur exclu est celui qui devait choisir un
                 // prisonnier à récupérer (échange automatique en attente), résoudre
@@ -132,8 +147,16 @@ export class ReconnectionManager {
                 if (this.turnManager) {
                     this.turnManager.updateTurnState();
                     if (wasCurrentPlayer) {
-                        const _t = this._hostDrawAndSend();
-                        if (_t) this.turnManager.receiveYourTurn(_t.id);
+                        // Le tour recommence pour le joueur suivant : la tuile du tour précédent n'est plus « posée »
+                        gameState.currentTilePlaced = false;
+                        let _t = null;
+                        if (heldTile) {
+                            _t = heldTile; // ✅ FIX : tuile du joueur exclu rejouée telle quelle
+                            this.turnManager.receiveYourTurn(_t.id);
+                        } else {
+                            _t = this._hostDrawAndSend();
+                            if (_t) this.turnManager.receiveYourTurn(_t.id);
+                        }
                         if (this.gameSync) this.gameSync.syncTurnEnd(false, _t?.id ?? null);
                     }
                     this.eventBus.emit('turn-changed', {
@@ -161,7 +184,7 @@ export class ReconnectionManager {
         const peer = this.multiplayer.peer;
         // Fenêtre de 25 s après une coupure de l'hôte lui-même (signalisation perdue/rétablie,
         // événements offline/online) : le heartbeat peut encore « timeout » des invités à cause
-        // de MA coupure, juste après le retour du réseau (timeout 10 s + marge).
+        // de MA coupure, juste après le retour du réseau (timeout 5 s + marge).
         const recentOutage = Date.now() - (this.multiplayer.lastSelfOutageAt || 0) < 25000;
         return (typeof navigator !== 'undefined' && navigator.onLine === false)
             || !!peer?.disconnected || !!peer?.destroyed || recentOutage;
@@ -329,6 +352,7 @@ export class ReconnectionManager {
         this.pauseTimerInterval = null;
         this.pauseTimerEnd      = null;
         this.gamePaused         = false;
+        this.pausedFor          = null;
         this._hidePauseOverlay();
         this.hideReconnectOverlay();
     }
@@ -387,6 +411,18 @@ export class ReconnectionManager {
         const args = this.collectFullStateArgs();
         console.log('📤 [SYNC] sendFullStateTo', targetPeerId, '— currentPlayer:', args.gameState.getCurrentPlayer()?.name, '— tuileEnMain envoyée:', args.tuileEnMain?.id ?? null, '— currentTilePlaced:', args.gameState.currentTilePlaced);
         this.gameSync.syncFullState(targetPeerId, args);
+        // ✅ FIX : `game-paused` est diffusé une seule fois, à la création de la pause. Un invité qui se
+        // (re)connecte ensuite (ex. après un changement d'hôte, où la pause est posée avant que les invités
+        // ne soient connectés) ne la verrait jamais : on la lui renvoie avec son état. Envoyé APRÈS le
+        // full-state pour que l'overlay ne soit pas masqué par la resynchronisation.
+        if (this.gamePaused && this.pausedFor) {
+            this.multiplayer.sendTo(targetPeerId, {
+                type: 'game-paused',
+                disconnectedName: this.pausedFor,
+                timeoutMs: 0,
+                playerId: this.multiplayer.playerId
+            });
+        }
     }
 
     /**
@@ -732,7 +768,8 @@ export class ReconnectionManager {
                     const hmSame = d.getHeartbeatManager();
                     if (hmSame) { hmSame._connectedPeers = multiplayer._connectedPeers; hmSame._lastPong[from] = Date.now(); hmSame._timedOut.delete(from); }
                     this.sendFullStateTo(from);
-                    if (this.gamePaused) d.resumeGame('reconnected');
+                    // ✅ FIX : la pause n'est levée que par le retour du joueur qui l'a causée
+                    if (this.gamePaused && this.pausedFor === name) d.resumeGame('reconnected');
                     d.afficherToast(`✅ ${name} s'est reconnecté !`);
                     multiplayer.broadcast({ type: 'players-update', players: d.buildPlayersForBroadcast() });
                     d.getEventBus().emit('score-updated');
@@ -835,7 +872,8 @@ export class ReconnectionManager {
                     const hm = d.getHeartbeatManager();
                     if (hm) { hm._connectedPeers = multiplayer._connectedPeers; hm._lastPong[from] = Date.now(); hm._timedOut.delete(oldPeerId); delete hm._lastPong[oldPeerId]; }
                     this.sendFullStateTo(from);
-                    if (this.gamePaused) d.resumeGame('reconnected');
+                    // ✅ FIX : la pause n'est levée que par le retour du joueur qui l'a causée
+                    if (this.gamePaused && this.pausedFor === name) d.resumeGame('reconnected');
                     d.afficherToast(`✅ ${name} s'est reconnecté !`);
                     multiplayer.broadcast({ type: 'players-update', players: d.buildPlayersForBroadcast() });
                     multiplayer.broadcast({ type: 'player-id-remapped', oldId: oldPeerId, newId: from });

@@ -74,29 +74,33 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   ne produisent qu'**une** rotation (le protocole est absolu et l'état local n'a pas encore bougé) ; l'hôte, lui,
   applique chaque clic localement.
 - **Détection d'un départ** : PeerJS n'émet pas toujours `close` à la fermeture d'un onglet (observé : jamais émis),
-  et le heartbeat ne le découvre qu'après ~12 s (timeout 10 s + tick 3 s). Un invité qui quitte la page envoie donc
+  et le heartbeat ne le découvre qu'après ~7 s (ping toutes les 2 s, timeout 5 s : deux pongs manqués d'affilée).
+  Un invité qui quitte la page envoie donc
   `page-closing` (`Multiplayer`, `pagehide` hors bfcache) ; l'hôte l'exécute comme une fermeture détectée
   (`onClose`, rendu **idempotent** par `conn._closeHandled` : `page-closing` puis `close` tardif ne déclenchent
   `onPlayerLeft` qu'une fois). Best-effort : le heartbeat reste le filet de sécurité. `page-closing` est intercepté
   dans `Multiplayer` — il n'atteint jamais les handlers de jeu/lobby, qui voient simplement `onPlayerLeft`.
   `handleDisconnect` (`ReconnectionManager`) est **idempotent** : un joueur déjà `disconnected` ou `kicked` est ignoré
   (évite une seconde notification `player-disconnected` et un second « Partie en pause » pour le même départ).
+  **Réglage du heartbeat** : le timeout doit rester supérieur à **deux** intervalles de ping, sinon un seul pong
+  manqué ou en retard (réseau mobile instable, onglet en arrière-plan aux minuteurs ralentis) déclenche une fausse
+  alerte. Il est partagé avec le lobby et avec la détection des invités par l'hôte.
 - **Signalisation PeerJS ≠ lien de données** : chaque pair a deux liens — la WebSocket vers le serveur PeerJS public
   (« broker » : sert seulement à se trouver par id et à établir les connexions) et la connexion WebRTC directe vers
   l'hôte (tout le jeu y passe). Une erreur du broker (`network`, `server-error`, `disconnected`) **n'implique pas** que
   l'hôte soit perdu. **Règle** : `Multiplayer.joinGame` ne déclenche `onHostDisconnected` sur une telle erreur que si
   `isHostLinkAlive()` est faux (connexion fermée, ou aucune donnée reçue de l'hôte depuis 7 s — l'hôte envoie un ping de
-  heartbeat toutes les 3 s) ; sinon la reprise d'hôte fermerait volontairement (`reconnectTo`) une connexion saine et
-  provoquerait une fausse pause chez l'hôte. Dans tous les cas, `_installSignalingKeepAlive` (hôte **et** invités,
+  heartbeat toutes les 2 s) ; sinon la signalisation est simplement rétablie. Dans tous les cas, `_installSignalingKeepAlive` (hôte **et** invités,
   idempotent par peer) rappelle `peer.reconnect()` tant que la signalisation est perdue, pour rester joignable par id.
   Contrepartie : si une vraie perte de l'hôte coïncide avec une erreur du broker, la détection passe par la fermeture de
-  sa connexion ou par le heartbeat (jusqu'à ~10 s).
+  sa connexion ou par le heartbeat (jusqu'à ~7 s).
 - **Départ annoncé de l'hôte** : un invité qui quitte la page prévient l'hôte (`page-closing`) ; symétriquement, l'**hôte**
   qui quitte la page (fermeture ou rechargement, `pagehide` hors bfcache) diffuse `host-leaving` (best-effort).
   `Multiplayer` l'intercepte (il n'atteint jamais les handlers de jeu/lobby) et pose `hostLeaving` (remis à `false` à
-  chaque connexion à un hôte) : `HostMigration` saute alors le délai de grâce — une page qui ferme ou se recharge
-  ne revient jamais sous le même id (un rechargement crée un nouveau peer), l'attendre est inutile. Sans annonce
-  (coupure réseau, onglet tué), le délai de grâce reste appliqué.
+  chaque connexion à un hôte) : `HostMigration` saute alors le délai de grâce, **en partie comme au lobby** — une page
+  fermée ou rechargée ne revient jamais sous le même id (un rechargement crée un nouveau peer), l'attendre est inutile.
+  Sans annonce (coupure réseau, onglet tué), le délai de grâce reste appliqué : le peer de l'hôte peut se reconnecter
+  sous le même id.
 - **Logs de diagnostic `[NET]`** (`Multiplayer.js`, aucune logique de jeu, à joindre à tout rapport de coupure) : événements
   PeerJS (signalisation perdue/rétablie, erreurs, fermeture), par connexion (ouverture, fermeture avec l'âge du dernier
   message et « abandonnée volontairement » le cas échéant, états ICE/WebRTC), `online`/`offline` du navigateur, visibilité de
@@ -128,6 +132,11 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   transportés explicitement. Pour le tour d'un **invité**, la tuile en main est lue dans le **miroir de l'hôte**
   (`getTuileEnMain`, tenu à jour par `tile-drawn` et `tile-rotated`) lorsqu'il s'agit de la même tuile que
   `getCurrentTileForPlayer` : l'objet de pioche brut n'a pas de rotation courante (`collectFullStateArgs`).
+- **Pause de partie** : l'hôte la pose (`ReconnectionManager.pauseGame`, qui mémorise `pausedFor` = pseudo du joueur
+  absent) et la diffuse (`game-paused`). Deux règles : (1) **seul le retour du joueur `pausedFor` la lève** (CAS 3 et 5) —
+  le retour d'un autre joueur ne doit pas la lever ; (2) `game-paused` n'est diffusé qu'une fois, donc
+  `sendFullStateTo` le **renvoie** à tout invité qui se (re)synchronise tant que la pause est active (cas d'une pause
+  posée avant que les invités ne soient connectés : promotion d'hôte).
 - **Options du lobby** : toute nouvelle case doit figurer dans **quatre** listes d'ids tenues à la main —
   `home.js` (`_installHostLobbyOptionSync` pour le temps réel, `currentOptions` pour l'invité qui arrive),
   `LobbyOptions.syncAllOptions` (preset appliqué par l'hôte) et `LobbyJoin` (`options-sync`, côté invité) —
@@ -175,17 +184,32 @@ Livré **en partie et au lobby**. Constantes (délai de grâce, sondage, balayag
 - **Élection déterministe sans communication** : chaque invité parcourt `[hostId, ...candidates]`, tente de rejoindre
   chaque cible pendant le délai de grâce (`Multiplayer.reconnectTo`, même peer/même id), et se **promeut** en arrivant
   à son propre id. Un succès exige la confirmation `game-in-progress` de la cible. Un invité **hors ligne** n'élit
-  personne : il attend le retour du réseau (`_waitOnline`). Si l'hôte a annoncé son départ (`host-leaving`, §2), la
-  première cible (l'ancien hôte) est sautée.
+  personne : il attend le retour du réseau (`_waitOnline`).
+- **Délai de grâce** : il n'a de sens que si l'hôte peut revenir **sous le même id**, c'est-à-dire après une coupure
+  réseau ou une mise en veille (son peer se reconnecte à la signalisation). Une page fermée ou rechargée ne revient
+  jamais sous le même id. **Règle** : si l'hôte a annoncé son départ (`host-leaving`, §2), la première cible (l'ancien
+  hôte) est **sautée**, en partie comme au lobby ; sinon la grâce s'applique (`HOST_GRACE_MS`, 20 s). Les invités
+  détectant la panne à des instants différents (jusqu'à ~7 s d'écart), ne pas descendre la grâce **des successeurs**
+  sous cet écart : un successeur abandonné trop tôt laisserait deux invités se croire hôtes.
 - **Invité sans snapshot** (arrivé tuile déjà posée juste avant la chute de l'hôte) : il ne connaît ni les successeurs
   ni le nouveau code et ne peut participer à aucune élection. Il garde l'ancienne reconnexion (réessai de l'ancien code,
   utile si l'hôte revient) mais **renonce au bout de `NO_SNAPSHOT_GIVE_UP_MS`** : retour au lobby avec un message
   l'invitant à redemander le code (`_armNoSnapshotGiveUp`, sans effet si le lien vers l'hôte est revenu).
-- **Promotion** (`_promote`, bloc **synchrone**) : adapte le snapshot (ancien hôte `disconnected`+`kicked`, son tour
-  sauté, la tuile déjà piochée passe au suivant), `isHost=true` partout (`home.js`, `gameSync.isHost`,
-  `turnManager.isHost`, `prepareHostTakeover`), `applyFullStateSync`, puis réinstalle tout ce qu'un hôte doit avoir
-  (`attachGameSyncCallbacks`, `initInGameNetworkHandler`, menu, `prepareHostLobby`) et **en dernier**
-  `startAccepting()`.
+- **Promotion** (`_promote`, bloc **synchrone**) : adapte le snapshot, `isHost=true` partout (`home.js`,
+  `gameSync.isHost`, `turnManager.isHost`, `prepareHostTakeover`), `applyFullStateSync`, puis réinstalle tout ce
+  qu'un hôte doit avoir (`attachGameSyncCallbacks`, `initInGameNetworkHandler`, menu, `prepareHostLobby`) et **en
+  dernier** `startAccepting()`.
+- **Ancien hôte = joueur déconnecté, pas exclu** : dans le snapshot adapté il est marqué `disconnected` (avec une
+  entrée `disconnectedPlayers`, même forme que `GameState.markDisconnected`), **sans** `kicked`, et **son tour n'est
+  pas sauté**. Le nouvel hôte pose une **« Partie en pause »** (§2) avec le bouton « Continuer sans lui ». Il garde la
+  tuile qu'il avait en main (snapshot). S'il revient avec le même pseudo → **CAS 3** : il retrouve son tour et sa tuile
+  et la pause est levée. Sinon la table l'exclut (`excludeDisconnectedPlayer`). Un ancien hôte **spectateur** est
+  simplement retiré (ni tour ni pause). Un échange de prisonniers en attente dont il est le choisisseur reste en
+  attente (il choisira à son retour ; s'il est exclu, il est résolu automatiquement avant son retrait).
+- **Aucune tuile ne doit être perdue** : à l'exclusion d'un joueur dont c'est le tour **et qui n'a pas posé sa tuile**,
+  `excludeDisconnectedPlayer` fait rejouer **cette même tuile** par le joueur suivant (`getCurrentTileForPlayer`)
+  au lieu d'en piocher une autre ; on ne pioche que si la tuile avait déjà été posée. Vaut pour toute exclusion, pas
+  seulement après une migration. La repioche d'une tuile implaçable reste couverte par le snapshot (règle plus bas).
 - **État restauré = début du tour en cours** : tout ce qui a eu lieu depuis est perdu.
 - Les autres invités gardent leur id réseau → traités en **CAS 5** de `initInGameNetworkHandler` (même id,
   réactivation + `sendFullStateTo`). L'ancien hôte qui revient avec le même pseudo passe par le **CAS 3**.
@@ -198,7 +222,8 @@ id (`ensurePeerReady`, `_installSignalingKeepAlive`). Deux issues :
 1. il revient avant la fin de la grâce des invités → ils le rejoignent (CAS 5) ; seule une connexion **nouvelle**
    compte (`_staleConns`/`_guestAlive` : une ancienne connexion morte mais « ouverte » est ignorée) ;
 2. sinon le **nouvel hôte** sonde l'ancien id (`_probeOldHost`, `notifyPeer`) et lui envoie `host-moved` + nouveau
-   code ; l'ancien hôte quitte son rôle et rejoint automatiquement (`_rejoinAsGuest`, même pseudo → CAS 3).
+   code ; l'ancien hôte quitte son rôle et rejoint automatiquement (`_rejoinAsGuest`, même pseudo → CAS 3, qui lui
+   rend son tour s'il est encore en pause).
 
 Après un isolement, `_scheduleSweep` signale déconnectés les invités qui ne sont pas revenus. La fenêtre
 `recentOutage` de `_isHostIsolated` évite d'accuser des invités à cause de **sa propre** coupure.
@@ -225,6 +250,9 @@ synchro des options installée **une seule fois**) et `_activateHostLobby()`. Un
 - **`Multiplayer.onXxx` / `peer.on(...)`** : rester cohérent avec `isHost` qui peut passer à `true` en cours de vie
   du peer.
 - **Variables « hôte » dans `home.js` hors `gameState`** (ex. `currentTileForPlayer`) : les réaffecter dans `_promote`.
+- **`getVoluntaryLeaves`** : n'y inscrire un id que si sa fermeture de connexion doit être avalée. La promotion
+  n'en a pas besoin (les connexions abandonnées sont marquées `_replaced`) ; une entrée oubliée avalerait la prochaine
+  vraie déconnexion de cet id.
 - **Un spectateur** qui se reconnecte doit envoyer `isSpectator` selon sa couleur, sinon il est traité comme nouveau
   joueur. `rejoin-rejected` reçu en partie est géré par `gameSync.onRejoinRejected` (`home.js`).
 - **État « déconnecté »** : `buildPlayersForBroadcast()` joint `disconnected` à `players-update` ; le handler invité
@@ -241,13 +269,19 @@ synchro des options installée **une seule fois**) et `_activateHostLobby()`. Un
 - Phase dragon en cours non snapshotée (restauration à la fin du dernier tour complet).
 - Si l'id d'un successeur change à la promotion (id déjà pris, très rare), les autres le cherchent sous l'ancien.
 - Pas de persistance : si **tous** les joueurs quittent, la partie est perdue.
-- Un ancien hôte dont la page est fermée/rechargée n'est pas joignable par le sondage : il doit saisir le nouveau code.
+- Un ancien hôte dont la page est fermée/rechargée n'est pas joignable par le sondage : il doit saisir le nouveau code
+  (donné par un autre joueur). Tant qu'il ne revient pas, la table reste en pause ou l'exclut.
+- Une seule pause à la fois : si un second joueur se déconnecte pendant une pause, son retour ne la lève pas
+  (seul `pausedFor` le fait) ; le retour du premier la lève même si le second est encore absent.
 - Pour comparer des logs `[MIGRATION]` de deux appareils, ne pas se fier aux horloges (dérives de dizaines de
   secondes) : recouper par un événement commun.
 - Un joueur qui arrive alors que le tour est déjà entamé n'a pas de snapshot avant la fin de ce tour (voir « Invité
   sans snapshot ») : si l'hôte tombe dans cet intervalle, il est renvoyé au lobby au bout de `NO_SNAPSHOT_GIVE_UP_MS`.
 - Le sondage de l'ancien hôte (`_probeOldHost`, jusqu'à 15 min) provoque des `peer-unavailable` attendus : ils ne sont
   plus journalisés (`Multiplayer`, keep-alive et `joinGame`).
+- **Heartbeat et onglets cachés** : un onglet resté longtemps en arrière-plan voit ses minuteurs ralentis par le
+  navigateur ; avec un timeout de 5 s, il peut être jugé muet à tort (puis revient par le CAS 3/5). À surveiller avec
+  les logs `[NET]` (`minuteur en retard`).
 - **Poids du snapshot** : mesuré en partie réelle (6 joueurs, ~180 tuiles), `host-snapshot` pèse ~136 Ko en moyenne
   (jusqu'à ~240 Ko), diffusé à chaque fin de tour à **chaque** invité ; avec `tile-placed` (~34 Ko, registre de zones
   inclus) et `score-update` (~38 Ko), l'hôte envoie de l'ordre de 1 Mo par tour. L'essentiel vient de la pioche

@@ -1,6 +1,6 @@
 /**
  * HeartbeatManager - Détecte les pertes de connexion silencieuses
- * Envoie un ping toutes les 3 s, alerte après 10 s sans réponse (3 pings perdus d'affilée).
+ * Envoie un ping toutes les 2 s, alerte après 5 s sans réponse (2 pings perdus d'affilée).
  * Même valeur dans les deux sens : un invité qui juge l'hôte perdu, et l'hôte qui juge un invité
  * parti. Les fausses alertes de l'hôte après SA PROPRE coupure sont filtrées ailleurs
  * (ReconnectionManager._isHostIsolated) ; ce délai alimente HostMigration (HOST_GRACE_MS).
@@ -12,8 +12,10 @@ export class HeartbeatManager {
         this._interval      = null;
         this._lastPong      = {}; // { peerId: timestamp }
         this._timedOut      = new Set(); // peers déjà signalés
-        this._PING_INTERVAL = 3000;  // 3 s
-        this._TIMEOUT       = 10000; // 10 s (auparavant 30 s)
+        // ✅ FIX : détection plus rapide (auparavant ping 3 s / timeout 10 s). Le timeout reste
+        // supérieur à 2 intervalles : un seul pong manqué ou en retard ne déclenche pas d'alerte.
+        this._PING_INTERVAL = 2000;  // 2 s
+        this._TIMEOUT       = 5000;  // 5 s
     }
 
     start() {

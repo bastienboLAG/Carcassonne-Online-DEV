@@ -7,18 +7,22 @@
  *    à chaque arrivée / retour d'un joueur (si le tour n'est pas encore entamé), pour que personne
  *    ne reste sans snapshot.
  *  - Si un invité perd l'hôte (fermeture de connexion, erreur réseau ou heartbeat muet), il
- *    tente d'abord de le rejoindre pendant un délai de grâce (toujours appliqué en partie ; sauté au lobby si l'hôte a annoncé son départ),
- *    puis parcourt les successeurs dans l'ordre : pour chacun, il tente de le rejoindre pendant un
- *    délai de grâce ; s'il arrive à son propre tour dans la liste, il se promeut hôte.
+ *    tente d'abord de le rejoindre pendant un délai de grâce (sauté si l'hôte a annoncé son départ,
+ *    `host-leaving` : une page fermée ou rechargée ne revient jamais sous le même id), puis parcourt
+ *    les successeurs dans l'ordre : pour chacun, il tente de le rejoindre pendant un délai de grâce ;
+ *    s'il arrive à son propre tour dans la liste, il se promeut hôte.
  *  - Le nouvel hôte a pour code de partie son propre id réseau (6 chiffres, cf. Multiplayer).
  *    Aucune tentative de récupérer l'ancien code (un seul numéro à la fois).
- *  - L'état restauré est celui du DÉBUT du tour en cours (le dernier snapshot). Si l'ancien
- *    hôte jouait, son tour est sauté et la tuile déjà piochée passe au joueur suivant.
+ *  - L'état restauré est celui du DÉBUT du tour en cours (le dernier snapshot).
  *  - Un joueur qui n'a AUCUN snapshot (arrivé juste avant la chute de l'hôte, tour déjà entamé) ne
  *    peut pas participer à l'élection : il retente l'ancien code puis renonce au bout de
  *    NO_SNAPSHOT_GIVE_UP_MS (retour au lobby avec un message).
  *
  * Ancien hôte (option B) :
+ *  - il est traité comme un invité DÉCONNECTÉ (et non exclu) : « Partie en pause » chez tous, avec
+ *    le bouton « Continuer sans lui ». Son tour n'est pas sauté : s'il revient (même pseudo → CAS 3
+ *    de ReconnectionManager) il retrouve son tour et sa tuile en main ; sinon la table l'exclut
+ *    (la tuile en main est alors rejouée par le joueur suivant, jamais perdue) ;
  *  - s'il est lui-même isolé (hors ligne / serveur de signalisation perdu), il le détecte
  *    (ReconnectionManager._isHostIsolated) au lieu de croire que ses invités sont partis : mode
  *    « isolement » (onSelfIsolated) — overlay de reconnexion, reconnexion au serveur de
@@ -41,7 +45,7 @@
 import { remapExtraStateIds } from '../GameState.js'; // ✨ NOUVEAU : remap des ids dans un snapshot reçu
 
 // Délai de grâce : temps laissé à un hôte injoignable (puis à chaque successeur) pour revenir
-// avant de passer au suivant. S'ajoute au délai de détection du heartbeat (HeartbeatManager, 10 s).
+// avant de passer au suivant. S'ajoute au délai de détection du heartbeat (HeartbeatManager, 5 s).
 export const HOST_GRACE_MS = 20000;
 
 const RETRY_DELAY_MS   = 1000;  // pause entre deux tentatives de connexion
@@ -248,10 +252,12 @@ export class HostMigration {
         this._state = 'running';
         this._mode = 'game';
         const runId = ++this._runId;
-        // En PARTIE, le délai de grâce est TOUJOURS appliqué, même si l'hôte a annoncé son départ (`host-leaving`) :
-        // décision produit — une fermeture d'onglet par erreur ne doit pas faire perdre la main trop vite
-        // (voir DESIGN_NOTES §3). Seul le lobby saute le délai (onLobbyHostLost).
-        console.warn(`🚨 [MIGRATION] Hôte perdu (${snap.hostId}) — délai de grâce ${HOST_GRACE_MS} ms, successeurs: ${snap.candidates.join(', ') || '(aucun)'}`);
+        // ✅ FIX : si l'hôte a annoncé son départ (`host-leaving`, page fermée ou rechargée), il ne reviendra
+        // jamais sous le même id : on saute le délai de grâce, en partie comme au lobby. Sans annonce
+        // (coupure réseau, onglet tué), le délai de grâce reste appliqué : son peer peut se reconnecter
+        // sous le même id. Valeur relue à chaque perte (le snapshot, lui, peut survivre à plusieurs pertes).
+        snap.skipHost = !!d.getMultiplayer().hostLeaving;
+        console.warn(`🚨 [MIGRATION] Hôte perdu (${snap.hostId}) — ${snap.skipHost ? 'départ annoncé, pas de délai de grâce' : `délai de grâce ${HOST_GRACE_MS} ms`}, successeurs: ${snap.candidates.join(', ') || '(aucun)'}`);
 
         rm.stopAutoReconnect();
         rm._showReconnectOverlay();
@@ -507,20 +513,30 @@ export class HostMigration {
         }
         const oldIdx = gsd.players.findIndex(p => p.id === oldHostId);
         const oldHostName = oldIdx !== -1 ? gsd.players[oldIdx].name : null;
+        // ✅ FIX : l'ancien hôte est traité comme un invité DÉCONNECTÉ (et non plus exclu) : « Partie en pause »,
+        // son tour N'EST PAS sauté et la tuile qu'il avait en main reste la sienne. À son retour (même pseudo →
+        // CAS 3) il reprend son tour ; si la table l'exclut, excludeDisconnectedPlayer rejoue sa tuile.
+        // Même structure que GameState.markDisconnected (copie du joueur AVANT de le marquer déconnecté).
+        let pauseName = null;
         if (oldIdx !== -1) {
-            gsd.players[oldIdx].disconnected = true;
-            gsd.players[oldIdx].kicked = true; // il pourra revenir comme invité (CAS 3, même pseudo)
-            if (gsd.currentPlayerIndex === oldIdx) {
-                // Son tour est sauté : la tuile déjà piochée (incluse dans le snapshot) passe au suivant
-                const len = gsd.players.length;
-                let next = oldIdx, n = 0;
-                do { next = (next + 1) % len; n++; } while (n < len && isInactive(gsd.players[next]));
-                gsd.currentPlayerIndex = next;
+            const oldP = gsd.players[oldIdx];
+            if (oldP.color === 'spectator') {
+                // Un spectateur n'a ni tour ni tuile : simplement retiré (comme handleDisconnect)
+                gsd.players.splice(oldIdx, 1);
+                if (oldIdx < gsd.currentPlayerIndex) gsd.currentPlayerIndex--;
+                if (gsd.currentPlayerIndex >= gsd.players.length) gsd.currentPlayerIndex = 0;
+            } else {
+                gsd.disconnectedPlayers = gsd.disconnectedPlayers ?? {};
+                gsd.disconnectedPlayers[oldHostId] = { player: { ...oldP }, index: oldIdx, disconnectedAt: Date.now() };
+                oldP.disconnected = true;
+                pauseName = oldP.name;
             }
         }
 
         // Rôle d'hôte
-        d.getVoluntaryLeaves().add(oldHostId); // la fermeture tardive de l'ancien canal ne doit pas déclencher de pause
+        // (l'ancienne connexion vers l'ancien hôte est abandonnée par prepareHostTakeover avec `_replaced` :
+        // sa fermeture tardive est ignorée, inutile de passer par getVoluntaryLeaves — qui avalerait la
+        // prochaine vraie déconnexion de cet id)
         d.setIsHost(true);
         d.setGameCode(myId);
         const gs = d.getGameSync();
@@ -529,19 +545,19 @@ export class HostMigration {
         if (tm) tm.isHost = true;
         mp.prepareHostTakeover();
 
-        // Liste des joueurs du lobby : retirer l'ancien hôte, marquer le nouveau
+        // Liste des joueurs du lobby : marquer le nouvel hôte ; l'ancien reste listé (comme tout joueur
+        // déconnecté) s'il est en pause — le CAS 3 le retrouve par son ancien id.
         d.setPlayers(d.getPlayers()
-            .filter(p => p.id !== oldHostId)
-            .map(p => p.id === myId ? { ...p, isHost: true } : p));
+            .filter(p => p.id !== oldHostId || pauseName)
+            .map(p => p.id === myId ? { ...p, isHost: true }
+                    : p.id === oldHostId ? { ...p, isHost: false } : p));
 
         // Restaurer l'état de début de tour
         this._resetTurnTransientState(); // ✨ NOUVEAU : état du tour avorté (remet aussi l'UndoManager à zéro)
         rm.applyFullStateSync(snap);
-        // ✨ NOUVEAU : si l'ancien hôte était le joueur qui devait choisir un prisonnier à récupérer
-        // (échange automatique en attente, restauré par applyFullStateSync), plus personne ne peut
-        // répondre : résolution automatique avec son prisonnier le plus ancien — comme pour une
-        // exclusion (ReconnectionManager.excludeDisconnectedPlayer).
-        d.resolvePendingPrisonerExchange?.(oldHostId);
+        // L'éventuel échange de prisonniers en attente (restauré par applyFullStateSync) dont l'ancien hôte
+        // est le choisisseur reste en attente : il pourra choisir à son retour, et s'il est exclu,
+        // excludeDisconnectedPlayer le résout (prisonnier le plus ancien) avant de retirer le joueur.
         const tileId = snap.tuileEnMain?.id;
         const tileData = tileId ? d.getDeck().tiles.find(t => t.id === tileId) : null;
         d.setCurrentTileForPlayer(tileData ?? null);
@@ -554,6 +570,10 @@ export class HostMigration {
         // ✨ NOUVEAU (lot 2) : handler lobby hôte, synchro des options, callbacks du salon — pour
         // que « Retour lobby » fonctionne chez ce nouvel hôte (non activés : la partie garde sa chaîne)
         d.prepareHostLobby();
+
+        // Pause : l'ancien hôte est injoignable. Les invités la reçoivent au fil de leur reconnexion
+        // (ReconnectionManager.sendFullStateTo renvoie `game-paused` tant que la pause est active).
+        if (pauseName) rm.pauseGame(pauseName);
 
         // Enfin, accepter les connexions
         mp.startAccepting();
@@ -771,7 +791,7 @@ export class HostMigration {
     /**
      * ✨ NOUVEAU : message `host-moved` reçu par l'ANCIEN hôte (qui se croit encore hôte).
      * Il rejoint alors la partie comme invité, avec le nouveau code et son pseudo (le nouvel
-     * hôte le reconnaît : CAS 3, joueur exclu de même pseudo).
+     * hôte le reconnaît : CAS 3, joueur déconnecté de même pseudo).
      */
     onHostMoved(data, from) {
         const d  = this._d;
