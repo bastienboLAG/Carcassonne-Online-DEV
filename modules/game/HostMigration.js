@@ -476,6 +476,8 @@ export class HostMigration {
         // Rattaché à un NOUVEAU hôte en partie : son état est celui du début de tour (rollback)
         if (!sameHost && this._mode === 'game') this._resetTurnTransientState();
         d.setGameCode(hostId);
+        // ✅ FIX : la modale « Partie en pause » reçue pendant la reconnexion affiche l'ancien code : la redessiner
+        d.getReconnectionManager()?.refreshPauseOverlay();
         this._state = 'idle';
         if (sameHost) d.afficherToast('✅ Reconnecté à l\'hôte.');
         else d.afficherToast(`🔄 Nouvel hôte — nouveau code de partie : ${hostId}`);

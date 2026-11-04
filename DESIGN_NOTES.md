@@ -132,11 +132,18 @@ premier plan, parfois plusieurs tours plus tard, alors que les messages réseau,
   transportés explicitement. Pour le tour d'un **invité**, la tuile en main est lue dans le **miroir de l'hôte**
   (`getTuileEnMain`, tenu à jour par `tile-drawn` et `tile-rotated`) lorsqu'il s'agit de la même tuile que
   `getCurrentTileForPlayer` : l'objet de pioche brut n'a pas de rotation courante (`collectFullStateArgs`).
-- **Pause de partie** : l'hôte la pose (`ReconnectionManager.pauseGame`, qui mémorise `pausedFor` = pseudo du joueur
-  absent) et la diffuse (`game-paused`). Deux règles : (1) **seul le retour du joueur `pausedFor` la lève** (CAS 3 et 5) —
-  le retour d'un autre joueur ne doit pas la lever ; (2) `game-paused` n'est diffusé qu'une fois, donc
-  `sendFullStateTo` le **renvoie** à tout invité qui se (re)synchronise tant que la pause est active (cas d'une pause
-  posée avant que les invités ne soient connectés : promotion d'hôte).
+- **Pause de partie** : l'hôte la pose (`ReconnectionManager.pauseGame`) et la diffuse (`game-paused`). La liste des
+  joueurs **en attente** n'est jamais mémorisée : elle est **déduite de `gameState`** (`_waitingNames` : `disconnected`
+  sans `kicked`, hors spectateurs), donc identique chez l'hôte et chez les invités. Règles : (1) la pause ne se lève que
+  lorsque cette liste est vide — toute modification (retour, exclusion, nouvelle déconnexion) passe par
+  `reevaluatePause`, qui lève la pause ou redessine la modale (chez l'hôte, et chez les invités via un nouveau
+  `game-paused`) ; (2) `reevaluatePause` s'appelle **après** le broadcast de `players-update`, car les invités relisent
+  leur état local pour dessiner la modale ; (3) `game-paused` n'est diffusé qu'à la création/mise à jour, donc
+  `sendFullStateTo` le **renvoie** à tout invité qui se (re)synchronise tant que quelqu'un est en attente (pause posée
+  avant que les invités ne soient connectés : promotion d'hôte) ; (4) la modale lit le code de partie et la liste **à
+  chaque affichage** et expose un bouton « Copier le code » ; un changement de code la redessine
+  (`refreshPauseOverlay`, appelé par `HostMigration._finish`) — sans cela un invité gardait l'ancien code, la modale
+  étant construite avant la fin de sa reconnexion au nouvel hôte. Les pseudos y sont échappés (`_esc`).
 - **Options du lobby** : toute nouvelle case doit figurer dans **quatre** listes d'ids tenues à la main —
   `home.js` (`_installHostLobbyOptionSync` pour le temps réel, `currentOptions` pour l'invité qui arrive),
   `LobbyOptions.syncAllOptions` (preset appliqué par l'hôte) et `LobbyJoin` (`options-sync`, côté invité) —
@@ -271,8 +278,6 @@ synchro des options installée **une seule fois**) et `_activateHostLobby()`. Un
 - Pas de persistance : si **tous** les joueurs quittent, la partie est perdue.
 - Un ancien hôte dont la page est fermée/rechargée n'est pas joignable par le sondage : il doit saisir le nouveau code
   (donné par un autre joueur). Tant qu'il ne revient pas, la table reste en pause ou l'exclut.
-- Une seule pause à la fois : si un second joueur se déconnecte pendant une pause, son retour ne la lève pas
-  (seul `pausedFor` le fait) ; le retour du premier la lève même si le second est encore absent.
 - Pour comparer des logs `[MIGRATION]` de deux appareils, ne pas se fier aux horloges (dérives de dizaines de
   secondes) : recouper par un événement commun.
 - Un joueur qui arrive alors que le tour est déjà entamé n'a pas de snapshot avant la fin de ce tour (voir « Invité

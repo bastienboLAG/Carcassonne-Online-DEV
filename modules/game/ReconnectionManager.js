@@ -54,11 +54,10 @@ export class ReconnectionManager {
         // serveur de signalisation perdu) au moment où ses invités « se déconnectent ».
         this._onHostIsolated = deps.onHostIsolated ?? null;
 
+        // ✅ FIX : la pause est un simple drapeau ; la liste des joueurs EN ATTENTE n'est plus mémorisée (un seul
+        // pseudo ne suffisait pas) mais déduite de gameState (_waitingNames) : elle est ainsi identique chez
+        // l'hôte et chez les invités, et la pause ne se lève que lorsque plus personne n'est en attente.
         this.gamePaused         = false;
-        // ✅ FIX : pseudo du joueur qui a causé la pause. Seul son retour la lève : sans cela, après un
-        // changement d'hôte, le premier invité qui se reconnecte (CAS 5) levait la pause alors que
-        // l'ancien hôte était toujours absent.
-        this.pausedFor          = null;
         this.pauseTimerInterval = null;
         this.pauseTimerEnd      = null;
         this._autoReconnectTimer = null;
@@ -72,10 +71,36 @@ export class ReconnectionManager {
 
     // ── Pause ────────────────────────────────────────────────────────────────
 
+    /**
+     * ✅ FIX : joueurs actuellement en attente de reconnexion (déconnectés, ni exclus ni spectateurs), déduits de
+     * gameState — source commune à l'hôte et aux invités (players-update, player-disconnected, full-state).
+     */
+    _waitingNames() {
+        const gs = this._gameState;
+        if (!gs) return [];
+        return gs.players
+            .filter(p => p.disconnected && !p.kicked && p.color !== 'spectator')
+            .map(p => p.name);
+    }
+
+    /**
+     * ✅ FIX : à appeler (hôte) dès que la liste des joueurs en attente a pu changer — retour, exclusion,
+     * nouvelle déconnexion. Lève la pause si plus personne n'attend ; sinon redessine la modale chez
+     * l'hôte et la fait redessiner chez les invités (`game-paused` → _showPauseOverlay relit gameState).
+     * À appeler APRÈS le broadcast de players-update : les invités relisent leur état local.
+     */
+    reevaluatePause(reason = 'reconnected') {
+        if (!this._isHost || !this.gamePaused) return;
+        const names = this._waitingNames();
+        if (names.length === 0) { this.resumeGame(reason); return; }
+        this._showPauseOverlay(names[0]);
+        if (this.gameSync) this.gameSync.syncGamePaused(names[0], 0);
+    }
+
     pauseGame(disconnectedName) {
-        if (!this._isHost || this.gamePaused) return;
+        if (!this._isHost) return;
+        if (this.gamePaused) { this.reevaluatePause(); return; } // ✅ FIX : une pause existe déjà → mise à jour de la liste
         this.gamePaused = true;
-        this.pausedFor  = disconnectedName;
         if (this.gameSync) this.gameSync.syncGamePaused(disconnectedName, 0);
         this._showPauseOverlay(disconnectedName);
     }
@@ -83,7 +108,6 @@ export class ReconnectionManager {
     resumeGame(reason = 'reconnected') {
         if (!this.gamePaused) return;
         this.gamePaused = false;
-        this.pausedFor  = null;
         clearInterval(this.pauseTimerInterval);
         this.pauseTimerInterval = null;
         this.pauseTimerEnd      = null;
@@ -93,9 +117,8 @@ export class ReconnectionManager {
 
     excludeDisconnectedPlayer(disconnectedName) {
         if (!this._isHost) return;
-        this.gamePaused = false;
-        this.pausedFor  = null;
-        this._hidePauseOverlay();
+        // ✅ FIX : l'exclusion d'UN joueur ne lève plus la pause : elle est réévaluée plus bas
+        // (reevaluatePause) et reste active tant que d'autres joueurs sont en attente.
 
         const gameState = this._gameState;
         if (gameState) {
@@ -142,7 +165,7 @@ export class ReconnectionManager {
                 this._setPlayers(this._getPlayers().filter(p => p.id !== peerId));
                 this.multiplayer.broadcast({ type: 'players-update', players: this._buildPlayersForBroadcast() });
 
-                if (this.gameSync) this.gameSync.syncGameResumed('timeout');
+                this.reevaluatePause('timeout');
 
                 if (this.turnManager) {
                     this.turnManager.updateTurnState();
@@ -165,7 +188,7 @@ export class ReconnectionManager {
                     });
                 }
             } else {
-                if (this.gameSync) this.gameSync.syncGameResumed('timeout');
+                this.reevaluatePause('timeout');
             }
         }
         this._afficherToast(`👋 ${disconnectedName} a été exclu(e) de la partie.`);
@@ -247,7 +270,20 @@ export class ReconnectionManager {
 
     // ── Overlays ─────────────────────────────────────────────────────────────
 
-    _showPauseOverlay(name) {
+    /** Échappe un pseudo avant de l'insérer dans du HTML (les pseudos viennent des autres joueurs). */
+    _esc(text) {
+        return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+
+    /**
+     * ✅ FIX : (re)dessine la modale de pause. `name` n'est qu'un repli si gameState ne liste encore personne.
+     * Le contenu (joueurs en attente, code de partie) est relu à CHAQUE affichage : voir refreshPauseOverlay.
+     */
+    _showPauseOverlay(name = null) {
+        let names = this._waitingNames();
+        if (names.length === 0 && name) names = [name];
+        if (names.length === 0) return;
+
         let overlay = document.getElementById('pause-overlay');
         if (!overlay) {
             overlay = document.createElement('div');
@@ -260,31 +296,58 @@ export class ReconnectionManager {
             document.body.appendChild(overlay);
         }
 
-        const hostBtn = this._isHost
-            ? `<button id="exclude-player-btn" style="
-                margin-top:20px; padding:10px 24px; font-size:15px; font-weight:bold;
+        const code = this._gameCode;
+        const who = names.length === 1
+            ? `<p style="margin:0 0 8px;color:#aaa;font-size:15px;"><strong style="color:#fff">${this._esc(names[0])}</strong> s'est déconnecté(e).</p>`
+            : `<p style="margin:0 0 4px;color:#aaa;font-size:15px;">Joueurs déconnectés :</p>
+               <p style="margin:0 0 8px;font-size:15px;">${names.map(n => `<strong style="color:#fff">${this._esc(n)}</strong>`).join(', ')}</p>`;
+        const codeHtml = code
+            ? `<p style="margin:12px 0 0;font-size:13px;color:#aaa;">Code de la partie : <strong style="color:#fff;letter-spacing:2px;">${this._esc(code)}</strong></p>
+               <button id="pause-copy-code-btn" style="margin-top:8px;padding:6px 14px;font-size:13px;font-weight:bold;background:#3498db;color:#fff;border:none;border-radius:6px;cursor:pointer;">📋 Copier le code</button>`
+            : '';
+        const hostBtns = this._isHost
+            ? names.map((n, i) => `<button class="exclude-player-btn" data-i="${i}" style="
+                display:block; width:100%; margin-top:${i === 0 ? 20 : 10}px; padding:10px 24px; font-size:15px; font-weight:bold;
                 background:#e74c3c; color:#fff; border:none; border-radius:8px; cursor:pointer;">
-                Continuer sans ${name}
-              </button>`
+                Continuer sans ${this._esc(n)}
+              </button>`).join('')
             : '';
 
         overlay.innerHTML = `
             <div style="background:rgba(30,40,55,0.97);border-radius:16px;padding:32px 40px;text-align:center;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.5);">
                 <div style="font-size:48px;margin-bottom:12px;">⏸</div>
                 <h2 style="margin:0 0 8px;font-size:22px;">Partie en pause</h2>
-                <p style="margin:0 0 8px;color:#aaa;font-size:15px;"><strong style="color:#fff">${name}</strong> s'est déconnecté(e).</p>
+                ${who}
                 <p style="margin:0 0 4px;color:#aaa;font-size:13px;">En attente de reconnexion…</p>
-                ${this._gameCode ? `<p style="margin:12px 0 0;font-size:13px;color:#aaa;">Code de la partie : <strong style="color:#fff;letter-spacing:2px;">${this._gameCode}</strong></p>` : ''}
-                ${hostBtn}
+                ${codeHtml}
+                ${hostBtns}
             </div>
         `;
         overlay.style.display = 'flex';
 
-        if (this._isHost) {
-            document.getElementById('exclude-player-btn')?.addEventListener('click', () => {
-                this.excludeDisconnectedPlayer(name);
+        const copyBtn = overlay.querySelector('#pause-copy-code-btn');
+        if (copyBtn) {
+            copyBtn.addEventListener('click', () => {
+                // Code relu au clic (il peut avoir changé depuis l'affichage)
+                navigator.clipboard.writeText(String(this._gameCode)).then(() => {
+                    copyBtn.textContent = '✅ Copié !';
+                    setTimeout(() => { copyBtn.textContent = '📋 Copier le code'; }, 2000);
+                });
             });
         }
+        overlay.querySelectorAll('.exclude-player-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.excludeDisconnectedPlayer(names[Number(btn.dataset.i)]));
+        });
+    }
+
+    /**
+     * ✅ FIX : redessine la modale de pause si elle est affichée. À appeler quand le code de partie change
+     * (HostMigration._finish) : la modale d'un invité était construite avec l'ancien code, avant la fin de
+     * sa reconnexion au nouvel hôte, et n'était jamais redessinée.
+     */
+    refreshPauseOverlay() {
+        const overlay = document.getElementById('pause-overlay');
+        if (overlay && overlay.style.display !== 'none') this._showPauseOverlay();
     }
 
     _hidePauseOverlay() {
@@ -352,7 +415,6 @@ export class ReconnectionManager {
         this.pauseTimerInterval = null;
         this.pauseTimerEnd      = null;
         this.gamePaused         = false;
-        this.pausedFor          = null;
         this._hidePauseOverlay();
         this.hideReconnectOverlay();
     }
@@ -415,10 +477,11 @@ export class ReconnectionManager {
         // (re)connecte ensuite (ex. après un changement d'hôte, où la pause est posée avant que les invités
         // ne soient connectés) ne la verrait jamais : on la lui renvoie avec son état. Envoyé APRÈS le
         // full-state pour que l'overlay ne soit pas masqué par la resynchronisation.
-        if (this.gamePaused && this.pausedFor) {
+        const _waiting = this.gamePaused ? this._waitingNames() : [];
+        if (_waiting.length > 0) {
             this.multiplayer.sendTo(targetPeerId, {
                 type: 'game-paused',
-                disconnectedName: this.pausedFor,
+                disconnectedName: _waiting[0],
                 timeoutMs: 0,
                 playerId: this.multiplayer.playerId
             });
@@ -768,10 +831,11 @@ export class ReconnectionManager {
                     const hmSame = d.getHeartbeatManager();
                     if (hmSame) { hmSame._connectedPeers = multiplayer._connectedPeers; hmSame._lastPong[from] = Date.now(); hmSame._timedOut.delete(from); }
                     this.sendFullStateTo(from);
-                    // ✅ FIX : la pause n'est levée que par le retour du joueur qui l'a causée
-                    if (this.gamePaused && this.pausedFor === name) d.resumeGame('reconnected');
                     d.afficherToast(`✅ ${name} s'est reconnecté !`);
                     multiplayer.broadcast({ type: 'players-update', players: d.buildPlayersForBroadcast() });
+                    // ✅ FIX : après players-update (les invités relisent leur état) — la pause ne se lève que si
+                    // plus personne n'est en attente, sinon la modale est mise à jour
+                    this.reevaluatePause('reconnected');
                     d.getEventBus().emit('score-updated');
                     const spSame = d.getScorePanelUI(); if (spSame) { spSame.update(); spSame.updateMobile(); }
                     d.updateTurnDisplay();
@@ -872,11 +936,10 @@ export class ReconnectionManager {
                     const hm = d.getHeartbeatManager();
                     if (hm) { hm._connectedPeers = multiplayer._connectedPeers; hm._lastPong[from] = Date.now(); hm._timedOut.delete(oldPeerId); delete hm._lastPong[oldPeerId]; }
                     this.sendFullStateTo(from);
-                    // ✅ FIX : la pause n'est levée que par le retour du joueur qui l'a causée
-                    if (this.gamePaused && this.pausedFor === name) d.resumeGame('reconnected');
                     d.afficherToast(`✅ ${name} s'est reconnecté !`);
                     multiplayer.broadcast({ type: 'players-update', players: d.buildPlayersForBroadcast() });
                     multiplayer.broadcast({ type: 'player-id-remapped', oldId: oldPeerId, newId: from });
+                    this.reevaluatePause('reconnected'); // ✅ FIX : voir CAS 5
                     eventBus.emit('score-updated');
                     if (scorePanelUI) { scorePanelUI.update(); scorePanelUI.updateMobile(); }
                     d.updateTurnDisplay();
