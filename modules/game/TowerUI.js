@@ -1168,7 +1168,8 @@ function _playerColorCap(playerId) {
  * ✨ NOUVEAU : construit (ou vide) la ligne de pions de la modale d'échange — le meeple
  * récupéré par le joueur qui capture (sa couleur) ⇄ le meeple qui retourne à l'adversaire
  * (couleur de l'adversaire). Créée dynamiquement entre le texte et les boutons, donc sans
- * modification d'index.html. Vide (masquée) tant que l'échange n'est pas résolu.
+ * modification d'index.html. Pendant l'attente du choix, un « ? » doré remplace le pion
+ * du capturant (pas encore connu) ; le pion de l'adversaire est déjà affiché.
  * @private
  */
 function _renderPrisonerExchangeVisual(modal, chosenType, chooserId, opponentId, freshlyCapturedType) {
@@ -1182,7 +1183,10 @@ function _renderPrisonerExchangeVisual(modal, chosenType, chooserId, opponentId,
         else modal.querySelector('.modal-content')?.appendChild(visual);
     }
     visual.innerHTML = '';
-    if (!chosenType) { visual.style.display = 'none'; return; }
+    // ✨ NOUVEAU : pendant l'attente du choix (chosenType absent), le meeple que le capturant va
+    // récupérer est inconnu → gros « ? » doré à sa place ; le pion qui retourne à l'adversaire,
+    // lui, est déjà connu (freshlyCapturedType). Rien à afficher si on ne sait ni l'un ni l'autre.
+    if (!chosenType && !freshlyCapturedType) { visual.style.display = 'none'; return; }
     visual.style.display = 'flex';
 
     const makePiece = (type, ownerId) => {
@@ -1195,7 +1199,19 @@ function _renderPrisonerExchangeVisual(modal, chosenType, chooserId, opponentId,
         return img;
     };
 
-    visual.appendChild(makePiece(chosenType, chooserId));
+    // Même emprise qu'un pion normal pour que la mise en page ne bouge pas quand le « ? »
+    // est remplacé par le vrai pion à la résolution.
+    const makeQuestionMark = () => {
+        const { width, height } = getMeepleSize('Normal', 'plate');
+        const box = document.createElement('div');
+        box.textContent = '?';
+        box.setAttribute('aria-label', 'Choix en attente');
+        box.style.cssText = `width:${width};height:${height};display:flex;align-items:center;justify-content:center;` +
+            'font-size:56px;font-weight:bold;line-height:1;color:gold;text-shadow:0 0 6px rgba(0,0,0,0.6);';
+        return box;
+    };
+
+    visual.appendChild(chosenType ? makePiece(chosenType, chooserId) : makeQuestionMark());
     if (freshlyCapturedType) {
         const arrow = document.createElement('span');
         arrow.textContent = '⇄';
@@ -1221,8 +1237,9 @@ function _renderPrisonerExchangeVisual(modal, chosenType, chooserId, opponentId,
  * ✅ FIX : le texte ne décrivait jusqu'ici qu'un seul sens de l'échange (X récupère chez Y),
  * jamais le retour symétrique et systématique du meeple que X vient tout juste de capturer
  * chez Y (freshlyCapturedType) — pourtant bien appliqué (cf. applyPrisonerExchangeResolved).
- * ✨ NOUVEAU : une fois l'échange résolu, les deux pions échangés (couleur + type) sont
- * affichés sous le texte (_renderPrisonerExchangeVisual).
+ * ✨ NOUVEAU : les deux pions échangés (couleur + type) sont affichés sous le texte
+ * (_renderPrisonerExchangeVisual) ; tant que le choix n'est pas fait, un « ? » doré tient lieu
+ * du pion que le capturant récupérera.
  * @private
  */
 function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenType = null, availableTypes = null, freshlyCapturedType = null }) {
