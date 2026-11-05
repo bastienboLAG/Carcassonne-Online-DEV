@@ -75,12 +75,16 @@ export class ReconnectionManager {
      * ✅ FIX : joueurs actuellement en attente de reconnexion (déconnectés, ni exclus ni spectateurs), déduits de
      * gameState — source commune à l'hôte et aux invités (players-update, player-disconnected, full-state).
      */
-    _waitingNames() {
+    _waitingPlayers() {
         const gs = this._gameState;
         if (!gs) return [];
         return gs.players
             .filter(p => p.disconnected && !p.kicked && p.color !== 'spectator')
-            .map(p => p.name);
+            .map(p => ({ name: p.name, color: p.color }));
+    }
+
+    _waitingNames() {
+        return this._waitingPlayers().map(p => p.name);
     }
 
     /**
@@ -280,9 +284,19 @@ export class ReconnectionManager {
      * Le contenu (joueurs en attente, code de partie) est relu à CHAQUE affichage : voir refreshPauseOverlay.
      */
     _showPauseOverlay(name = null) {
-        let names = this._waitingNames();
-        if (names.length === 0 && name) names = [name];
-        if (names.length === 0) return;
+        let entries = this._waitingPlayers();
+        if (entries.length === 0 && name) entries = [{ name, color: null }];
+        if (entries.length === 0) return;
+        const names = entries.map(e => e.name);
+
+        // Pseudo précédé du meeple de sa couleur (si connue)
+        const chip = (e) => {
+            const colorCap = e.color ? e.color.charAt(0).toUpperCase() + e.color.slice(1) : null;
+            const icon = colorCap
+                ? `<img src="./assets/Meeples/${this._esc(colorCap)}/Normal.png" alt="" style="width:20px;height:21px;object-fit:contain;vertical-align:middle;margin-right:4px;">`
+                : '';
+            return `<span style="white-space:nowrap;">${icon}<strong style="color:#fff">${this._esc(e.name)}</strong></span>`;
+        };
 
         let overlay = document.getElementById('pause-overlay');
         if (!overlay) {
@@ -298,9 +312,9 @@ export class ReconnectionManager {
 
         const code = this._gameCode;
         const who = names.length === 1
-            ? `<p style="margin:0 0 8px;color:#aaa;font-size:15px;"><strong style="color:#fff">${this._esc(names[0])}</strong> s'est déconnecté(e).</p>`
+            ? `<p style="margin:0 0 8px;color:#aaa;font-size:15px;">${chip(entries[0])} s'est déconnecté(e).</p>`
             : `<p style="margin:0 0 4px;color:#aaa;font-size:15px;">Joueurs déconnectés :</p>
-               <p style="margin:0 0 8px;font-size:15px;">${names.map(n => `<strong style="color:#fff">${this._esc(n)}</strong>`).join(', ')}</p>`;
+               <p style="margin:0 0 8px;font-size:15px;">${entries.map(chip).join(', ')}</p>`;
         const codeHtml = code
             ? `<p style="margin:12px 0 0;font-size:13px;color:#aaa;">Code de la partie : <strong style="color:#fff;letter-spacing:2px;">${this._esc(code)}</strong></p>
                <button id="pause-copy-code-btn" style="margin-top:8px;padding:6px 14px;font-size:13px;font-weight:bold;background:#3498db;color:#fff;border:none;border-radius:6px;cursor:pointer;">📋 Copier le code</button>`

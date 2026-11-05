@@ -9,7 +9,7 @@
  * V.1.xx.yy.zzz
  * xx=numéro d'extension en cours (03 pour dragon, 04 pour tour, etc.)
  * yy=ajout majeur
- * zzz=ajout mineur
+ * zzz=ajout mineur/correction de bug
  */
 
-export const APP_VERSION = '1.04.01.002';
+export const APP_VERSION = '1.04.02.001';
