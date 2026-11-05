@@ -1126,17 +1126,83 @@ function handlePrisonerChoiceConfirm(chosenType) {
 /**
  * ✨ Échange automatique de prisonniers
  * Libellés français courts pour les types de meeples, utilisés dans le texte de la modale.
+ * ✅ FIX : un fermier capturé est en réalité un meeple normal (idem pour le grand fermier) —
+ * une fois prisonnier, la distinction "fermier" n'existe plus dans l'état de jeu. La mention
+ * "fermier" ne doit donc jamais apparaître dans les textes (Farmer/Large-Farmer → libellés
+ * de Normal/Large).
  * @private
  */
 const _MEEPLE_LABELS = {
     Normal: 'meeple',
-    Farmer: 'fermier',
+    Farmer: 'meeple',
     Large: 'grand meeple',
-    'Large-Farmer': 'grand fermier',
+    'Large-Farmer': 'grand meeple',
     Abbot: 'abbé',
 };
 function _meepleLabel(type) {
     return _MEEPLE_LABELS[type] ?? type;
+}
+
+/**
+ * ✨ NOUVEAU : sprite à afficher pour un type de meeple capturé. Le sprite Farmer est dessiné
+ * couché (posture "dans le champ") — un prisonnier est toujours montré debout (Normal/Large),
+ * même règle que ScorePanelUI._buildPrisonerChip.
+ * @private
+ */
+function _meepleSpriteType(type) {
+    if (type === 'Farmer') return 'Normal';
+    if (type === 'Large-Farmer') return 'Large';
+    return type;
+}
+
+/**
+ * ✨ NOUVEAU : couleur capitalisée d'un joueur (pour les chemins ./assets/Meeples/{Couleur}/).
+ * @private
+ */
+function _playerColorCap(playerId) {
+    const color = gs().players.find(p => p.id === playerId)?.color ?? 'black';
+    return color.charAt(0).toUpperCase() + color.slice(1);
+}
+
+/**
+ * ✨ NOUVEAU : construit (ou vide) la ligne de pions de la modale d'échange — le meeple
+ * récupéré par le joueur qui capture (sa couleur) ⇄ le meeple qui retourne à l'adversaire
+ * (couleur de l'adversaire). Créée dynamiquement entre le texte et les boutons, donc sans
+ * modification d'index.html. Vide (masquée) tant que l'échange n'est pas résolu.
+ * @private
+ */
+function _renderPrisonerExchangeVisual(modal, chosenType, chooserId, opponentId, freshlyCapturedType) {
+    let visual = document.getElementById('prisoner-exchange-visual');
+    if (!visual) {
+        visual = document.createElement('div');
+        visual.id = 'prisoner-exchange-visual';
+        visual.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:24px;margin:0 0 20px;';
+        const buttons = modal.querySelector('.modal-buttons');
+        if (buttons) buttons.parentNode.insertBefore(visual, buttons);
+        else modal.querySelector('.modal-content')?.appendChild(visual);
+    }
+    visual.innerHTML = '';
+    if (!chosenType) { visual.style.display = 'none'; return; }
+    visual.style.display = 'flex';
+
+    const makePiece = (type, ownerId) => {
+        const spriteType = _meepleSpriteType(type);
+        const img = document.createElement('img');
+        img.src = `./assets/Meeples/${_playerColorCap(ownerId)}/${spriteType}.png`;
+        img.alt = _meepleLabel(type);
+        const { width, height } = getMeepleSize(spriteType, 'plate');
+        img.style.cssText = `width:${width};height:${height};object-fit:contain;display:block;`;
+        return img;
+    };
+
+    visual.appendChild(makePiece(chosenType, chooserId));
+    if (freshlyCapturedType) {
+        const arrow = document.createElement('span');
+        arrow.textContent = '⇄';
+        arrow.style.cssText = 'font-size:32px;color:gold;line-height:1;';
+        visual.appendChild(arrow);
+        visual.appendChild(makePiece(freshlyCapturedType, opponentId));
+    }
 }
 
 /**
@@ -1155,6 +1221,8 @@ function _meepleLabel(type) {
  * ✅ FIX : le texte ne décrivait jusqu'ici qu'un seul sens de l'échange (X récupère chez Y),
  * jamais le retour symétrique et systématique du meeple que X vient tout juste de capturer
  * chez Y (freshlyCapturedType) — pourtant bien appliqué (cf. applyPrisonerExchangeResolved).
+ * ✨ NOUVEAU : une fois l'échange résolu, les deux pions échangés (couleur + type) sont
+ * affichés sous le texte (_renderPrisonerExchangeVisual).
  * @private
  */
 function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenType = null, availableTypes = null, freshlyCapturedType = null }) {
@@ -1178,6 +1246,9 @@ function showPrisonerExchangeModal({ needsChoice, chooserId, opponentId, chosenT
     } else {
         text.textContent = `Échange de prisonniers : ${chooserName} doit choisir lequel de ses meeples récupérer auprès de ${opponentName}${freshPart}. La partie reprendra une fois son choix fait.`;
     }
+
+    // ✨ NOUVEAU : pions colorés des deux meeples échangés (uniquement une fois résolu)
+    _renderPrisonerExchangeVisual(modal, chosenType, chooserId, opponentId, freshlyCapturedType);
 
     // ✅ FIX : voir commentaire de fonction — "Fermer" uniquement une fois l'échange résolu
     chooseBtn.style.display = needsChoice ? '' : 'none';
