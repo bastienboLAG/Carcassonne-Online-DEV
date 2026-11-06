@@ -150,11 +150,18 @@ function _updateAllExtensionsMaster() {
     const subMasters = ['all-base', 'all-abbot', 'all-tower', 'all-inns-cathedrals', 'all-traders-builders', 'all-dragon'];
     const master = _id('all-extensions');
     if (!master) return;
-    const checked   = subMasters.filter(id => { const el = _id(id); return el && el.checked && !el.indeterminate; }).length;
-    const unchecked = subMasters.filter(id => { const el = _id(id); return el && !el.checked && !el.indeterminate; }).length;
-    if (checked === subMasters.length) {
+    // ✅ FIX : les sous-maîtres grisés (aucune règle possible, ex. Tour sans tuiles) sont ignorés —
+    // sinon « Extensions » ne pourrait jamais devenir entièrement cochée tant que leurs tuiles sont décochées.
+    const active = subMasters.map(id => _id(id)).filter(el => el && !el.disabled);
+    if (active.length === 0) {
+        master.checked = false; master.indeterminate = false;
+        return;
+    }
+    const checked   = active.filter(el => el.checked && !el.indeterminate).length;
+    const unchecked = active.filter(el => !el.checked && !el.indeterminate).length;
+    if (checked === active.length) {
         master.checked = true; master.indeterminate = false;
-    } else if (unchecked === subMasters.length) {
+    } else if (unchecked === active.length) {
         master.checked = false; master.indeterminate = false;
     } else {
         master.checked = false; master.indeterminate = true;
@@ -164,9 +171,19 @@ function _updateAllExtensionsMaster() {
 function _updateMasterCheckboxSafe(masterId) {
     const master   = _id(masterId);
     if (!master) return;
-    const children = [...document.querySelectorAll(`input[data-group="${masterId}"]`)]
-        .filter(el => !el.disabled);
-    if (children.length === 0) return;
+    const allChildren = [...document.querySelectorAll(`input[data-group="${masterId}"]`)];
+    if (allChildren.length === 0) return;
+    const children = allChildren.filter(el => !el.disabled);
+
+    // ✅ FIX : aucune règle possible (tous les enfants grisés) → la coche maître est elle aussi
+    // grisée et décochée, au lieu de rester cliquable avec un état périmé.
+    if (children.length === 0) {
+        master.checked = false; master.indeterminate = false;
+        master.disabled = true;
+        return;
+    }
+    master.disabled = false;
+
     const checkedCount = children.filter(c => c.checked).length;
     if (checkedCount === 0) {
         master.checked = false; master.indeterminate = false;
@@ -190,15 +207,17 @@ function _onMasterChange(masterId) {
 
         if (checked) {
             // Ordre important : chaque mise à jour de disponibilité débloque
-            // les options dépendantes avant qu'on les coche
+            // les options dépendantes avant qu'on les coche.
+            // ✅ FIX : les tuiles ne sont jamais cochées par les coches maîtres de règles —
+            // seules les règles réellement disponibles sont activées.
             applyGroup('all-base');         // coche "Les champs"
             _updatePigAvailability();       // débloque Cochon si champs actif
             applyGroup('all-traders-builders'); // coche Bâtisseur + Cochon (si dispo)
             _updateMerchantsAvailability(); // débloque Marchands si tuiles TB actives
             applyGroup('all-abbot');
-            applyGroup('all-tower');        // ✨ NOUVEAU
-            _updateTowerAvailability();     // ✨ NOUVEAU (débloque aussi la rançon si capture cochée)
-            applyGroup('all-tower');        // ✨ NOUVEAU : re-coche si maintenant dispo (rançon comprise)
+            applyGroup('all-tower');        // coche la capture si dispo
+            _updateTowerAvailability();     // débloque aussi la rançon si capture cochée
+            applyGroup('all-tower');        // re-coche si maintenant dispo (rançon comprise)
             applyGroup('all-inns-cathedrals'); // Cathédrales/Auberges si tuiles actives
             _updateInnsCthdAvailability();
             applyGroup('all-dragon');       // Dragon/Princesse/Portail si tuiles actives
@@ -224,9 +243,7 @@ function _onMasterChange(masterId) {
 
     if (masterId === 'all-dragon') {
         if (checked) {
-            const tilesDragon = _id('tiles-dragon');
-            if (tilesDragon && !tilesDragon.disabled) tilesDragon.checked = true;
-
+            // ✅ FIX : plus d'activation des tuiles Dragon ici (tuiles indépendantes des règles)
             const extDragon = _id('ext-dragon');
             if (extDragon && !extDragon.disabled) extDragon.checked = true;
 
@@ -234,10 +251,6 @@ function _onMasterChange(masterId) {
 
             document.querySelectorAll(`input[data-group="${masterId}"]`)
                 .forEach(c => { if (!c.disabled) c.checked = true; });
-
-            if (tilesDragon && !tilesDragon.disabled) {
-                tilesDragon.dispatchEvent(new Event('change', { bubbles: true }));
-            }
         } else {
             document.querySelectorAll(`input[data-group="${masterId}"]`)
                 .forEach(c => { c.checked = false; });
@@ -251,22 +264,17 @@ function _onMasterChange(masterId) {
         return;
     }
 
-    // ✨ NOUVEAU : "all-tower" — même schéma que "all-dragon" mais plus simple (pas de sous-dépendances)
+    // "all-tower" — même schéma que "all-dragon" mais plus simple (pas de sous-dépendances)
     if (masterId === 'all-tower') {
         if (checked) {
-            const tilesTower = _id('tiles-tower');
-            if (tilesTower && !tilesTower.disabled) tilesTower.checked = true;
-            _updateTowerAvailability();
+            // ✅ FIX : plus d'activation des tuiles Tour ici (tuiles indépendantes des règles)
             document.querySelectorAll(`input[data-group="${masterId}"]`)
                 .forEach(c => { if (!c.disabled) c.checked = true; });
-            // ✨ NOUVEAU : la rançon n'était pas cochable tant que la capture était décochée —
+            // La rançon n'était pas cochable tant que la capture était décochée —
             // la débloquer maintenant que la capture est cochée, puis la cocher à son tour
             _updateRansomAvailability();
             document.querySelectorAll(`input[data-group="${masterId}"]`)
                 .forEach(c => { if (!c.disabled) c.checked = true; });
-            if (tilesTower && !tilesTower.disabled) {
-                tilesTower.dispatchEvent(new Event('change', { bubbles: true }));
-            }
         } else {
             document.querySelectorAll(`input[data-group="${masterId}"]`)
                 .forEach(c => { c.checked = false; });
