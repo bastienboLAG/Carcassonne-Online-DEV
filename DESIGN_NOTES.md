@@ -445,6 +445,12 @@ Règles à retenir :
   (modèle : `DragonUI.releaseFairyIfDetached`).
 - Une action qui **consomme la phase meeple** (étage, verrouillage) doit nettoyer les curseurs pour le joueur local
   (`hideAllCursors`), sinon un curseur fée déjà affiché reste cliquable.
+- **Les règles de score de la Fée (`fairyScoreTurn`, `fairyScoreZone`) sont indépendantes des tuiles Dragon** et de la
+  règle Dragon : seule `fairyProtection` (qui protège contre le dragon) en dépend. La Fée passe pourtant par
+  `DragonRules` (`getFairyTargets`, `placeFairy`) : `GameModuleInitializer` crée donc `dragonRules` aussi quand l'une de
+  ces deux règles est active, et `ReconnectionManager.applyFullStateSync` redessine la Fée dès qu'une règle Fée est
+  active (le pion Dragon, lui, reste lié à `tileGroups.dragon`). Tout nouveau code Fée doit se garder sur « règle Fée
+  active » et non sur `tileGroups.dragon`.
 
 ---
 
@@ -460,6 +466,9 @@ Règles à retenir :
    dans le clic « Démarrer », `ModalUI.showGameRules` (bloc de l'extension dans `extensionBlocks` : toutes ses règles
    y figurent toujours, avec ✓/✗ ; + total de tuiles). Les extensions s'affichent dans le lobby et dans les règles
    dans l'ordre : Base, Abbé, Auberges & Cathédrales, Marchands & Bâtisseurs, Princesse & Dragon, Tour.
+   Les cases « Tuiles » sont indépendantes des coches maîtres de règles (aucune coche maître ne coche ni ne décoche
+   de tuiles). Une coche maître dont tous les enfants sont désactivés (ex. Tour sans ses tuiles) est grisée et
+   décochée ; la coche « Extensions » ignore les sous-maîtres grisés.
 4. **Tuiles** : `data/{Groupe}/`, chargement dans `Deck.loadAllTiles`, exclusion des zones non meeple dans
    `MeepleCursorsUI.EXCLUDED_ZONE_TYPES`.
 5. **Réseau** : requêtes invité → hôte (`_attachHostCallbacks`), diffusion (`GameSync` + `attach`), `relayTypes` si

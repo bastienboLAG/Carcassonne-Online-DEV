@@ -55,8 +55,8 @@ export class ReconnectionManager {
         this._onHostIsolated = deps.onHostIsolated ?? null;
 
         // ✅ FIX : la pause est un simple drapeau ; la liste des joueurs EN ATTENTE n'est plus mémorisée (un seul
-        // pseudo ne suffisait pas) mais déduite de gameState (_waitingNames) : elle est ainsi identique chez
-        // l'hôte et chez les invités, et la pause ne se lève que lorsque plus personne n'est en attente.
+        // pseudo ne suffisait pas) mais déduite de gameState (_waitingNames) : elle est ainsi identique chez l'hôte et
+        // chez les invités, et la pause ne se lève que lorsque plus personne n'est en attente.
         this.gamePaused         = false;
         this.pauseTimerInterval = null;
         this.pauseTimerEnd      = null;
@@ -585,8 +585,16 @@ export class ReconnectionManager {
             if (meepleDisplayUI) meepleDisplayUI.showMeeple(Number(x), Number(y), position, meeple.type, meeple.color);
         }
 
+        // ✅ FIX : la Fée (règles de score) fonctionne sans les tuiles Dragon — elle doit donc être redessinée
+        // à la reconnexion dès qu'une règle Fée est active, et plus seulement si tileGroups.dragon.
+        // Le pion Dragon, lui, reste lié aux tuiles Dragon.
+        const _fairyRuleActive = !!(gameConfig.extensions?.fairyProtection
+            || gameConfig.extensions?.fairyScoreTurn
+            || gameConfig.extensions?.fairyScoreZone);
         if (gameConfig.tileGroups?.dragon) {
-            if (gameState.dragonPos)             d.renderDragonPiece(gameState.dragonPos.x, gameState.dragonPos.y);
+            if (gameState.dragonPos) d.renderDragonPiece(gameState.dragonPos.x, gameState.dragonPos.y);
+        }
+        if (gameConfig.tileGroups?.dragon || _fairyRuleActive) {
             if (gameState.fairyState?.meepleKey) d.renderFairyPiece(gameState.fairyState.meepleKey);
         }
 

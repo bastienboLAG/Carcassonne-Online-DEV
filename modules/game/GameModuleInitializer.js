@@ -140,7 +140,12 @@ export class GameModuleInitializer {
         d.setUndoManager(undoManager);
 
         // Extension Dragon
-        if (gameConfig.extensions?.dragon || gameConfig.tileGroups?.dragon) {
+        // ✅ FIX : DragonRules porte aussi la logique de la Fée (getFairyTargets, placeFairy). Les règles
+        // de score de la Fée (début de tour / fermeture de zone) doivent fonctionner SANS les tuiles
+        // Dragon ni la règle Dragon : on le crée donc aussi quand l'une d'elles est active. Sans effet de
+        // bord : tout ce qui concerne Dragon/Princesse/Portail reste protégé par tileGroups.dragon && extensions.xxx.
+        if (gameConfig.extensions?.dragon || gameConfig.tileGroups?.dragon
+            || gameConfig.extensions?.fairyScoreTurn || gameConfig.extensions?.fairyScoreZone) {
             const dragonRules = new DragonRules({
                 gameState, plateau: plateau.placedTiles, placedMeeples, eventBus, ruleRegistry
             });
